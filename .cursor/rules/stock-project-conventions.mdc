@@ -1,0 +1,90 @@
+---
+description: 物料出入库管理系统 — 项目强制约定（产品、架构、文档、开发边界）
+alwaysApply: true
+---
+
+# 物料出入库管理系统 — 项目约定（必须遵守）
+
+## 权威文档（单一事实来源）
+
+实施前必须先读，有冲突以文档为准；决策变更须同步更新文档与变更记录：
+
+- `docs/产品设计文档.md` — 场景、功能范围、权限、MVP
+- `docs/架构设计文档.md` — 技术架构、数据表、部署、安全
+
+禁止在未更新上述文档的情况下擅自扩大范围或变更技术路线。
+
+## 产品定位（不可偏离）
+
+- **场景**：机器人实验室物料管理；小团队、专人维护、低访问量
+- **目标**：记清楚、找得到、可追溯 — **不是** ERP / 高并发 WMS
+- **本质**：物料电话簿 + 出入库签到本 + 实时库存表
+
+## 技术路线（MVP 强制）
+
+MVP = **组合方案**：Bitable（fork Erniu/官方模板）+ 飞书 H5（fork lark-samples）+ 薄自研（4 页 + 8 API）。详见 `docs/架构设计文档.md` §3.4。
+
+| 必须 | 禁止（MVP 阶段） |
+|------|------------------|
+| 飞书多维表格（Bitable）作**唯一数据源** | 自建 MySQL/PostgreSQL |
+| 飞书**网页应用**嵌入工作台（[接入指南](https://open.feishu.cn/document/embed-web-app-into-feishu-workbench/introduction)） | 仅用多维表格「应用模式」替代 H5（可作库管备用，非主入口） |
+| 轻量 **H5 前端**（React） | 完整自研后台管理系统 / 复杂 SPA 框架堆砌 |
+| 轻量 **FastAPI 后端**：免登、JSAPI 鉴权、Bitable API、出入库业务 | 重量级业务中台、微服务拆分 |
+| 飞书身份 + 群组角色 + Bitable 高级权限（数据层兜底） | 自建独立 RBAC / 账号密码体系 |
+| 表结构对齐文档五表模型；fork 官方/Erniu 模板 | 随意发明表结构 |
+| 飞书接入 fork [lark-samples](https://github.com/larksuite/lark-samples) 网页应用示例 | 从零实现免登/JSAPI 鉴权 |
+| 出入库逻辑参考 [Erniu](https://github.com/dyue708/Erniu-Inventory-management-AI-agent) | 从零写完整库存引擎 |
+
+**库存变更**：由后端 API 写入入/出库记录并更新 `inventory`（或配合 Bitable 自动化），**禁止**普通用户直接改 `inventory.quantity`。
+
+可选增强（非 MVP）：Erniu 机器人卡片。InvenTree / 若依WMS **不得**作为 MVP 方案。
+
+## 数据模型（五表，字段变更需更新文档）
+
+1. `categories` 2. `locations` 3. `materials` 4. `inventory` 5. `transactions`
+
+**硬规则**：
+
+- 库存变更**只能**通过入库/出库（或调拨/盘点）触发
+- `transactions` **只追加、不删除**；纠错用 ADMIN 反向流水，备注关联原 `tx_id`
+- 同一 `(material_id, location_id)` 仅一条库存记录
+
+## 权限（三角色，三层模型）
+
+角色：`ADMIN`、`KEEPER`、`USER`（通过飞书群组成员关系判定，后端 API 校验）。
+
+| 能力 | USER | KEEPER | ADMIN |
+|------|:----:|:------:|:-----:|
+| 搜索/看库存 | ✅ | ✅ | ✅ |
+| 出库 | ✅ | ✅ | ✅ |
+| 入库 | ❌ | ✅ | ✅ |
+| 维护分类/库位/物料 | ❌ | ✅ | ✅ |
+| 直接改库存/删流水 | ❌ | ❌ | ✅ |
+
+**实现**：H5 路由/按钮按角色隐藏 + FastAPI 接口鉴权 + Bitable 高级权限兜底。不得绕过 API 直接让前端写 Bitable。
+
+## MVP 功能边界
+
+**必须交付**：飞书工作台可打开的 H5 应用；搜索、入库、出库、库存查看、流水追溯；Bitable 五表就绪。
+
+**默认不做**：审批流、采购/财务、Redis、乐观锁、统计看板、Erniu。
+
+**P1 按需**：快递暂存上架、扫码（飞书 JSAPI）、权限群组落地。
+
+## 实施顺序（组合方案）
+
+1. P0：fork Erniu/官方 Bitable 模板 → 按 PRD 改五表
+2. P1：迁入 lark-samples 免登/JSAPI → FastAPI Bitable 封装（参考 Erniu）→ 8 API → 4 H5 页
+3. P1 末：配置[工作台网页应用](https://open.feishu.cn/document/embed-web-app-into-feishu-workbench/introduction)
+
+## 开发纪律
+
+1. **文档先行**：变更先改 `docs/*.md` 与变更记录
+2. **最小改动**：禁止从零写免登/表结构；后端薄层；前端 4 业务页（搜索/出库/入库/详情）
+3. **场景驱动**：以产品设计文档 §4 七个场景验收
+4. **飞书原生优先**：免登、身份、通知用飞书能力
+5. **中文交付**
+
+## 验收口径
+
+飞书工作台内打开网页应用；库管完成「收货→入库→研发领用→查库存」；每笔出入库有操作人、时间、数量流水。
