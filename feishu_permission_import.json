@@ -4,10 +4,15 @@
       "bitable:app",
       "base:table:read",
       "base:table:update",
-      "contact:user.base:readonly"
+      "contact:user.base:readonly",
+      "im:chat",
+      "im:chat:readonly",
+      "im:chat.members:read"
     ],
     "user": [
-      "contact:user.base:readonly"
+      "contact:user.base:readonly",
+      "im:chat:readonly",
+      "im:chat.members:read"
     ]
   }
 }

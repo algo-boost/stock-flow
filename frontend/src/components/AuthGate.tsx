@@ -1,0 +1,169 @@
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { Toast } from "antd-mobile";
+import { getMe } from "../api";
+import type { User, RoleMeta } from "../api/types";
+import {
+  consumePostLoginRedirect,
+  feishuLogin,
+  isFeishuClient,
+  currentFeishuPageUrl,
+  redirectToLoginHomeIfNeeded,
+} from "../auth/feishu";
+import { apiConfig } from "../api/config";
+import { clearAuthToken, getAuthToken } from "../auth/token";
+
+interface AuthContextValue {
+  user: User | null;
+  roleMeta: RoleMeta | null;
+  loading: boolean;
+  error: string | null;
+  canInbound: boolean;
+  isFeishu: boolean;
+  refresh: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+function isAuthExpiredError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const msg = e.message;
+  return msg.includes("登录已过期") || msg.includes("未登录") || msg.includes("401");
+}
+
+async function loginWithFeishu(): Promise<{ user: User; roleMeta: RoleMeta | null }> {
+  if (!redirectToLoginHomeIfNeeded()) {
+    throw new Error("正在跳转登录页…");
+  }
+  const data = await feishuLogin();
+  consumePostLoginRedirect();
+  return { user: data.user, roleMeta: data.role_meta ?? null };
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [roleMeta, setRoleMeta] = useState<RoleMeta | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const isFeishu = isFeishuClient();
+
+  const refresh = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (isFeishu && !getAuthToken()) {
+        const login = await loginWithFeishu();
+        setUser(login.user);
+        setRoleMeta(login.roleMeta);
+        return;
+      }
+
+      try {
+        const data = await getMe();
+        setUser(data.user);
+        setRoleMeta(data.role_meta ?? null);
+      } catch (e) {
+        // 后端重启后内存 session 丢失，localStorage token 仍有效 → 自动重新免登
+        if (isFeishu && getAuthToken() && isAuthExpiredError(e)) {
+          clearAuthToken();
+          const login = await loginWithFeishu();
+          setUser(login.user);
+          setRoleMeta(login.roleMeta);
+          return;
+        }
+        throw e;
+      }
+    } catch (e) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null
+            ? JSON.stringify(e)
+            : "加载用户失败";
+      setError(msg);
+      setUser(null);
+      setRoleMeta(null);
+      if (isFeishu) {
+        Toast.show({ icon: "fail", content: msg });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const canInbound = user?.role === "KEEPER" || user?.role === "ADMIN";
+
+  return (
+    <AuthContext.Provider
+      value={{ user, roleMeta, loading, error, canInbound, isFeishu, refresh }}
+    >
+      {!loading && roleMeta?.warning && user && (
+        <div className="auth-banner role-warning">
+          {roleMeta.warning}
+          {roleMeta.permission_url && (
+            <div style={{ marginTop: 6, fontSize: 12 }}>
+              <a href={roleMeta.permission_url} target="_blank" rel="noreferrer">
+                前往开放平台开通 IM 权限
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+      {!loading && error && !user && !apiConfig.useMockAuth && (
+        <div className="auth-banner">
+          登录失败：{error}
+          {isFeishu && (
+            <>
+              <div style={{ marginTop: 4, fontSize: 12 }}>
+                当前页 URL（须与安全设置重定向 URL 一致）：{currentFeishuPageUrl()}
+              </div>
+              <button
+                type="button"
+                className="auth-retry-btn"
+                onClick={() => {
+                  clearAuthToken();
+                  void refresh();
+                }}
+              >
+                重新登录
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
+}
+
+export function AuthGate({
+  roles,
+  children,
+  fallback = null,
+}: {
+  roles?: Array<User["role"]>;
+  children: ReactNode;
+  fallback?: ReactNode;
+}) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <>{fallback}</>;
+  if (roles && !roles.includes(user.role)) return <>{fallback}</>;
+  return <>{children}</>;
+}
+
+export function useLogoutDev() {
+  return () => {
+    clearAuthToken();
+    window.location.reload();
+  };
+}
