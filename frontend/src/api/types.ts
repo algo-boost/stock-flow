@@ -44,6 +44,11 @@ export interface Material {
   default_location_id?: string | null;
 }
 
+export interface MaterialSearchItem extends Material {
+  total_quantity: number;
+  locations_summary?: string | null;
+}
+
 export interface InventoryItem {
   material_id: string;
   location_id: string;
@@ -71,7 +76,7 @@ export interface Transaction {
 }
 
 export interface PaginatedMaterials {
-  items: Material[];
+  items: MaterialSearchItem[];
   total: number;
   page: number;
   size: number;

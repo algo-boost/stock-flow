@@ -21,6 +21,7 @@ from app.models import (
     Material,
     MaterialCreate,
     MaterialDetail,
+    MaterialSearchItem,
     Transaction,
     TransactionType,
 )
@@ -230,11 +231,14 @@ class BitableRepository:
         q: str | None,
         category: str | None,
         location: str | None,
+        stock_only: bool,
         page: int,
         size: int,
-    ) -> tuple[list[Material], int]:
+    ) -> tuple[list[MaterialSearchItem], int]:
         materials = list((await self._load_materials()).values())
-        inventory = await self._load_inventory_map()
+        inv_records = await self._load_inventory_records()
+        inventory = self._inventory_map_from_records(inv_records)
+        locations = await self._load_locations()
 
         if q:
             keyword = q.lower()
@@ -252,10 +256,38 @@ class BitableRepository:
         if location:
             mat_ids = {mid for (mid, lid), qty in inventory.items() if lid == location and qty > 0}
             materials = [m for m in materials if m.id in mat_ids]
+        if stock_only:
+            mat_ids = {mid for (mid, _), qty in inventory.items() if qty > 0}
+            materials = [m for m in materials if m.id in mat_ids]
 
         total = len(materials)
         start = (page - 1) * size
-        return materials[start : start + size], total
+        return [
+            self._to_search_item(m, inventory, locations)
+            for m in materials[start : start + size]
+        ], total
+
+    def _to_search_item(
+        self,
+        material: Material,
+        inventory: dict[tuple[str, str], int],
+        locations: dict[str, Location],
+    ) -> MaterialSearchItem:
+        items = [
+            (lid, qty)
+            for (mid, lid), qty in inventory.items()
+            if mid == material.id and qty > 0
+        ]
+        total = sum(qty for _, qty in items)
+        summary = " · ".join(
+            f"{locations.get(lid).name if locations.get(lid) else lid} {qty}"
+            for lid, qty in items[:3]
+        )
+        return MaterialSearchItem(
+            **material.model_dump(),
+            total_quantity=total,
+            locations_summary=summary or None,
+        )
 
     async def get_material(self, material_id: str) -> Material | None:
         return (await self._load_materials()).get(material_id)
@@ -378,6 +410,48 @@ class BitableRepository:
             fields[s.bitable_f_tx_operator] = write_user(operator_open_id)
         return fields
 
+    async def _write_inventory_quantity(
+        self,
+        inv_records: dict[tuple[str, str], dict[str, Any]],
+        material_id: str,
+        location_id: str,
+        qty: int,
+        updated_at: int,
+    ) -> str:
+        s = self.settings
+        key = (material_id, location_id)
+        if key in inv_records:
+            inv_fields = {
+                s.bitable_f_inventory_quantity: qty,
+                s.bitable_f_inventory_updated: updated_at,
+            }
+            record_id = inv_records[key]["record_id"]
+            await self.client.update_record(
+                s.bitable_table_inventory,
+                record_id,
+                inv_fields,
+            )
+            self._upsert_cached_record(
+                s.bitable_table_inventory,
+                self._cached_record(record_id, inv_fields),
+            )
+            return record_id
+
+        inv_fields = {
+            s.bitable_f_inventory_material: write_link(material_id),
+            s.bitable_f_inventory_location: write_link(location_id),
+            s.bitable_f_inventory_quantity: qty,
+            s.bitable_f_inventory_updated: updated_at,
+        }
+        inv_rec = await self.client.create_record(s.bitable_table_inventory, inv_fields)
+        record_id = inv_rec.get("record_id", "")
+        self._upsert_cached_record(
+            s.bitable_table_inventory,
+            inv_rec if inv_rec.get("fields") else self._cached_record(record_id, inv_fields),
+        )
+        inv_records[key] = self._cached_record(record_id, inv_fields)
+        return record_id
+
     async def _load_inventory_map(self) -> dict[tuple[str, str], int]:
         return self._inventory_map_from_records(await self._load_inventory_records())
 
@@ -472,7 +546,12 @@ class BitableRepository:
             lid = field_link_id(fields.get(s.bitable_f_tx_location)) or ""
             tx_type_raw = field_text(fields.get(s.bitable_f_tx_type)) or "out"
             normalized = normalize_tx_type(tx_type_raw)
-            tx_enum = TransactionType.INBOUND if normalized == "入库" else TransactionType.OUTBOUND
+            if normalized == "入库":
+                tx_enum = TransactionType.INBOUND
+            elif normalized == "移动":
+                tx_enum = TransactionType.TRANSFER
+            else:
+                tx_enum = TransactionType.OUTBOUND
             created = fields.get(s.bitable_f_tx_created)
             created_at = datetime.now(timezone.utc)
             if isinstance(created, (int, float)):
@@ -520,35 +599,7 @@ class BitableRepository:
         new_qty = current + qty
         updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-        if key in inv_records:
-            inv_fields = {
-                s.bitable_f_inventory_quantity: new_qty,
-                s.bitable_f_inventory_updated: updated_at,
-            }
-            await self.client.update_record(
-                s.bitable_table_inventory,
-                inv_records[key]["record_id"],
-                inv_fields,
-            )
-            self._upsert_cached_record(
-                s.bitable_table_inventory,
-                self._cached_record(inv_records[key]["record_id"], inv_fields),
-            )
-        else:
-            inv_fields = {
-                s.bitable_f_inventory_material: write_link(material_id),
-                s.bitable_f_inventory_location: write_link(location_id),
-                s.bitable_f_inventory_quantity: new_qty,
-                s.bitable_f_inventory_updated: updated_at,
-            }
-            inv_rec = await self.client.create_record(
-                s.bitable_table_inventory,
-                inv_fields,
-            )
-            self._upsert_cached_record(
-                s.bitable_table_inventory,
-                inv_rec if inv_rec.get("fields") else self._cached_record(inv_rec.get("record_id", ""), inv_fields),
-            )
+        await self._write_inventory_quantity(inv_records, material_id, location_id, new_qty, updated_at)
 
         tx_fields = self._build_tx_fields(
             s.bitable_v_tx_inbound,
@@ -558,7 +609,11 @@ class BitableRepository:
             operator_open_id,
             remark,
         )
-        tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+        try:
+            tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+        except Exception:
+            await self._write_inventory_quantity(inv_records, material_id, location_id, current, updated_at)
+            raise
         self._upsert_cached_record(
             s.bitable_table_transactions,
             tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
@@ -599,28 +654,20 @@ class BitableRepository:
             raise ValueError(f"insufficient_stock:{current}")
 
         updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
-        inv_fields = {
-            s.bitable_f_inventory_quantity: current - qty,
-            s.bitable_f_inventory_updated: updated_at,
-        }
-        await self.client.update_record(
-            s.bitable_table_inventory,
-            inv_records[key]["record_id"],
-            inv_fields,
-        )
-        self._upsert_cached_record(
-            s.bitable_table_inventory,
-            self._cached_record(inv_records[key]["record_id"], inv_fields),
-        )
+        await self._write_inventory_quantity(inv_records, material_id, location_id, current - qty, updated_at)
         tx_fields = self._build_tx_fields(
             s.bitable_v_tx_outbound,
             material_id,
             location_id,
-            qty,
+            -qty,
             operator_open_id,
             remark,
         )
-        tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+        try:
+            tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+        except Exception:
+            await self._write_inventory_quantity(inv_records, material_id, location_id, current, updated_at)
+            raise
         self._upsert_cached_record(
             s.bitable_table_transactions,
             tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
@@ -634,11 +681,120 @@ class BitableRepository:
             material_name=materials[material_id].name,
             location_id=location_id,
             location_name=locations.get(location_id, Location(id=location_id, code="", name=location_id)).name,
-            quantity=qty,
+            quantity=-qty,
             operator=operator_name,
             remark=remark,
             created_at=datetime.now(timezone.utc),
         )
+
+    async def apply_transfer(
+        self,
+        material_id: str,
+        from_location_id: str,
+        to_location_id: str,
+        qty: int,
+        operator_open_id: str,
+        operator_name: str,
+        remark: str | None,
+    ) -> list[Transaction]:
+        if from_location_id == to_location_id:
+            raise ValueError("same_location")
+        if not await self.get_material(material_id):
+            raise ValueError("material_not_found")
+
+        locations = await self._load_locations()
+        if from_location_id not in locations or to_location_id not in locations:
+            raise ValueError("location_not_found")
+
+        inv_records = await self._load_inventory_records()
+        source_key = (material_id, from_location_id)
+        target_key = (material_id, to_location_id)
+        s = self.settings
+        source_current = field_number(
+            inv_records.get(source_key, {}).get("fields", {}).get(s.bitable_f_inventory_quantity)
+        )
+        if source_current < qty:
+            raise ValueError(f"insufficient_stock:{source_current}")
+        target_current = field_number(
+            inv_records.get(target_key, {}).get("fields", {}).get(s.bitable_f_inventory_quantity)
+        )
+
+        updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        await self._write_inventory_quantity(
+            inv_records,
+            material_id,
+            from_location_id,
+            source_current - qty,
+            updated_at,
+        )
+        try:
+            await self._write_inventory_quantity(
+                inv_records,
+                material_id,
+                to_location_id,
+                target_current + qty,
+                updated_at,
+            )
+        except Exception:
+            await self._write_inventory_quantity(
+                inv_records,
+                material_id,
+                from_location_id,
+                source_current,
+                updated_at,
+            )
+            raise
+
+        source_loc = locations[from_location_id]
+        target_loc = locations[to_location_id]
+        tx_fields = self._build_tx_fields(
+            s.bitable_v_tx_transfer,
+            material_id,
+            from_location_id,
+            -qty,
+            operator_open_id,
+            f"移动至 {target_loc.name}" + (f"；{remark}" if remark else ""),
+        )
+        try:
+            tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+        except Exception:
+            await self._write_inventory_quantity(
+                inv_records,
+                material_id,
+                from_location_id,
+                source_current,
+                updated_at,
+            )
+            await self._write_inventory_quantity(
+                inv_records,
+                material_id,
+                to_location_id,
+                target_current,
+                updated_at,
+            )
+            raise
+
+        self._upsert_cached_record(
+            s.bitable_table_transactions,
+            tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
+        )
+
+        material = (await self._load_materials())[material_id]
+        now = datetime.now(timezone.utc)
+        return [
+            Transaction(
+                id=tx_rec.get("record_id", "tx_transfer"),
+                type=TransactionType.TRANSFER,
+                material_id=material_id,
+                material_name=material.name,
+                location_id=from_location_id,
+                location_name=source_loc.name,
+                quantity=-qty,
+                operator=operator_name,
+                remark=tx_fields.get(s.bitable_f_tx_remark),
+                created_at=now,
+            ),
+        ]
 
     def _invalidate_cache(self, *table_ids: str) -> None:
         s = self.settings

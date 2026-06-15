@@ -119,9 +119,16 @@ export function createMaterial(payload: {
   });
 }
 
-export function searchMaterials(q: string, page = 1, size = 20) {
-  const params = new URLSearchParams({ page: String(page), size: String(size) });
+export function searchMaterials(
+  q = "",
+  opts?: { page?: number; size?: number; stockOnly?: boolean },
+) {
+  const params = new URLSearchParams({
+    page: String(opts?.page ?? 1),
+    size: String(opts?.size ?? 20),
+  });
   if (q) params.set("q", q);
+  if (opts?.stockOnly) params.set("stock_only", "true");
   return request<PaginatedMaterials>(`/materials/search?${params}`);
 }
 
@@ -174,6 +181,20 @@ export function postInbound(payload: {
   });
 }
 
+export function postTransfer(payload: {
+  material_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  qty: number;
+  idempotency_key: string;
+  note?: string;
+}) {
+  return request<{ transaction_ids: string[] }>("/transfer", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function listInventory(materialId?: string, locationId?: string) {
   const params = new URLSearchParams();
   if (materialId) params.set("material_id", materialId);
@@ -193,7 +214,7 @@ export function listLocationsForPicker() {
 }
 
 export function searchMaterialsForPicker(q?: string) {
-  return searchMaterials(q ?? "", 1, 50).then((data) =>
+  return searchMaterials(q ?? "", { page: 1, size: 50 }).then((data) =>
     data.items.map((m) => ({ value: m.id, label: `${m.name} (${m.code})` })),
   );
 }

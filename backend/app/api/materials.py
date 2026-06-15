@@ -19,12 +19,13 @@ async def search_materials(
     q: str | None = Query(default=None, max_length=100),
     category: str | None = Query(default=None, max_length=64),
     location: str | None = Query(default=None, max_length=64),
+    stock_only: bool = Query(default=False),
     page: int = Query(default=1, ge=1, le=1000),
     size: int = Query(default=20, ge=1, le=100),
     _user: User = Depends(get_current_user),
     service: InventoryService = Depends(get_service),
 ):
-    data = await service.search_materials(q, category, location, page, size)
+    data = await service.search_materials(q, category, location, stock_only, page, size)
     return success(data.model_dump())
 
 

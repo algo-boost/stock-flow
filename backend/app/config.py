@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     # Erniu 模板单选值（非中文）
     bitable_v_tx_inbound: str = "in"
     bitable_v_tx_outbound: str = "out"
+    bitable_v_tx_transfer: str = "transfer"
 
     @property
     def cors_origin_list(self) -> list[str]:

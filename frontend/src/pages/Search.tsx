@@ -1,33 +1,50 @@
-import { useState } from "react";
-import { SearchBar, Toast } from "antd-mobile";
+import { useEffect, useState } from "react";
+import { Button, SearchBar, Toast } from "antd-mobile";
 import { useNavigate } from "react-router-dom";
 import { searchMaterials } from "../api";
-import type { Material } from "../api/types";
+import type { MaterialSearchItem } from "../api/types";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, MaterialCard, PageHero, RolePermissions, SectionCard } from "../components/ui";
 
 export default function SearchPage() {
+  const pageSize = 20;
   const [keyword, setKeyword] = useState("");
-  const [items, setItems] = useState<Material[]>([]);
+  const [items, setItems] = useState<MaterialSearchItem[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
   const navigate = useNavigate();
   const { user, canInbound } = useAuth();
 
-  const onSearch = async (val: string) => {
-    setKeyword(val);
+  const loadMaterials = async (q: string, nextPage = 1, append = false) => {
     setLoading(true);
-    setSearched(true);
     try {
-      const data = await searchMaterials(val.trim());
-      setItems(data.items);
+      const data = await searchMaterials(q.trim(), { page: nextPage, size: pageSize });
+      setItems((current) => (append ? [...current, ...data.items] : data.items));
+      setPage(data.page);
+      setTotal(data.total);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "搜索失败" });
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    void loadMaterials("", 1);
+  }, []);
+
+  const onSearch = (val: string) => {
+    setKeyword(val);
+    void loadMaterials(val, 1);
+  };
+
+  const loadMore = () => {
+    void loadMaterials(keyword, page + 1, true);
+  };
+
+  const hasMore = items.length < total;
 
   return (
     <Layout title="物料管理">
@@ -49,11 +66,18 @@ export default function SearchPage() {
           <span className="quick-action-desc">记录项目领料</span>
         </button>
         {canInbound ? (
-          <button type="button" className="quick-action" onClick={() => navigate("/inbound")}>
-            <span className="quick-action-icon">📥</span>
-            <span className="quick-action-title">入库上架</span>
-            <span className="quick-action-desc">采购 / 归还入库</span>
-          </button>
+          <>
+            <button type="button" className="quick-action" onClick={() => navigate("/inbound")}>
+              <span className="quick-action-icon">📥</span>
+              <span className="quick-action-title">入库上架</span>
+              <span className="quick-action-desc">采购 / 归还入库</span>
+            </button>
+            <button type="button" className="quick-action" onClick={() => navigate("/transfer")}>
+              <span className="quick-action-icon">↔</span>
+              <span className="quick-action-title">库内移动</span>
+              <span className="quick-action-desc">暂存上架 / 整理库位</span>
+            </button>
+          </>
         ) : (
           <button type="button" className="quick-action" onClick={() => onSearch("")}>
             <span className="quick-action-icon">📋</span>
@@ -71,21 +95,18 @@ export default function SearchPage() {
             onChange={setKeyword}
             onSearch={onSearch}
             onClear={() => {
-              setItems([]);
-              setSearched(false);
+              setKeyword("");
+              void loadMaterials("", 1);
             }}
           />
         </div>
       </SectionCard>
 
       <SectionCard
-        title={loading ? "搜索中…" : searched ? `找到 ${items.length} 条` : "搜索结果"}
-        subtitle={searched ? undefined : "输入关键词或点击「浏览全部」"}
+        title={loading && items.length === 0 ? "加载中…" : keyword ? `找到 ${total} 条` : `全部物料 ${total} 条`}
+        subtitle="默认显示全部物料，搜索后按关键词筛选"
       >
-        {!searched && !loading && (
-          <EmptyState icon="🔎" text="开始搜索物料" hint="例如：电机、雷达、编码" />
-        )}
-        {searched && !loading && items.length === 0 && (
+        {!loading && items.length === 0 && (
           <EmptyState icon="📭" text="没有匹配的物料" hint="换个关键词试试" />
         )}
         {items.map((m) => (
@@ -94,10 +115,18 @@ export default function SearchPage() {
             name={m.name}
             code={m.code}
             category={m.category_name}
-            unit={m.unit}
+            unit={`库存 ${m.total_quantity} ${m.unit}`}
+            stockSummary={m.locations_summary ?? "暂无库存"}
             onClick={() => navigate(`/materials/${m.id}`)}
           />
         ))}
+        {hasMore && (
+          <div className="load-more">
+            <Button loading={loading} fill="outline" block onClick={loadMore}>
+              加载更多
+            </Button>
+          </div>
+        )}
       </SectionCard>
     </Layout>
   );

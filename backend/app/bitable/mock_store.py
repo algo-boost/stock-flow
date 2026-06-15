@@ -8,6 +8,7 @@ from app.models import (
     Material,
     MaterialCreate,
     MaterialDetail,
+    MaterialSearchItem,
     Transaction,
     TransactionType,
 )
@@ -86,9 +87,10 @@ class MockStore:
         q: str | None = None,
         category: str | None = None,
         location: str | None = None,
+        stock_only: bool = False,
         page: int = 1,
         size: int = 20,
-    ) -> tuple[list[Material], int]:
+    ) -> tuple[list[MaterialSearchItem], int]:
         items = list(self.materials.values())
         if q:
             keyword = q.lower()
@@ -106,9 +108,24 @@ class MockStore:
                 mid for (mid, lid), inv in self.inventory.items() if lid == location and inv.quantity > 0
             }
             items = [m for m in items if m.id in mat_ids]
+        if stock_only:
+            mat_ids = {
+                mid for (mid, _), inv in self.inventory.items() if inv.quantity > 0
+            }
+            items = [m for m in items if m.id in mat_ids]
         total = len(items)
         start = (page - 1) * size
-        return items[start : start + size], total
+        return [self._to_search_item(m) for m in items[start : start + size]], total
+
+    def _to_search_item(self, material: Material) -> MaterialSearchItem:
+        inventory = self.get_inventory_for_material(material.id)
+        total = sum(i.quantity for i in inventory)
+        summary = " · ".join(f"{i.location_name or i.location_id} {i.quantity}" for i in inventory[:3])
+        return MaterialSearchItem(
+            **material.model_dump(),
+            total_quantity=total,
+            locations_summary=summary or None,
+        )
 
     def get_material(self, material_id: str) -> Material | None:
         return self.materials.get(material_id)
@@ -258,13 +275,68 @@ class MockStore:
             material_name=material.name,
             location_id=location_id,
             location_name=loc.name if loc else None,
-            quantity=qty,
+            quantity=-qty,
             operator=operator,
             remark=remark,
             created_at=_utcnow(),
         )
         self.transactions[tx_id] = tx
         return tx
+
+    def apply_transfer(
+        self,
+        material_id: str,
+        from_location_id: str,
+        to_location_id: str,
+        qty: int,
+        operator: str,
+        remark: str | None,
+    ) -> list[Transaction]:
+        if material_id not in self.materials:
+            raise ValueError("material_not_found")
+        if from_location_id == to_location_id:
+            raise ValueError("same_location")
+        if from_location_id not in self.locations or to_location_id not in self.locations:
+            raise ValueError("location_not_found")
+
+        source_key = (material_id, from_location_id)
+        target_key = (material_id, to_location_id)
+        if source_key not in self.inventory or self.inventory[source_key].quantity < qty:
+            available = self.inventory[source_key].quantity if source_key in self.inventory else 0
+            raise ValueError(f"insufficient_stock:{available}")
+
+        now = _utcnow()
+        self.inventory[source_key].quantity -= qty
+        self.inventory[source_key].last_updated = now
+        target_loc = self.locations[to_location_id]
+        if target_key in self.inventory:
+            self.inventory[target_key].quantity += qty
+            self.inventory[target_key].last_updated = now
+        else:
+            self.inventory[target_key] = InventoryItem(
+                material_id=material_id,
+                location_id=to_location_id,
+                location_name=target_loc.name,
+                quantity=qty,
+                last_updated=now,
+            )
+
+        material = self.materials[material_id]
+        source_loc = self.locations[from_location_id]
+        tx = Transaction(
+            id=f"tx_{len(self.transactions) + 1:04d}",
+            type=TransactionType.TRANSFER,
+            material_id=material_id,
+            material_name=material.name,
+            location_id=from_location_id,
+            location_name=source_loc.name,
+            quantity=-qty,
+            operator=operator,
+            remark=f"移动至 {target_loc.name}" + (f"；{remark}" if remark else ""),
+            created_at=now,
+        )
+        self.transactions[tx.id] = tx
+        return [tx]
 
     def snapshot(self) -> dict[str, Any]:
         return {

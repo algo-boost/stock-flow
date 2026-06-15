@@ -90,4 +90,6 @@ def normalize_tx_type(value: Any) -> str:
         return "入库"
     if raw in {"out", "出库"}:
         return "出库"
+    if raw in {"transfer", "move", "移动", "调拨"}:
+        return "移动"
     return field_text(value) or raw

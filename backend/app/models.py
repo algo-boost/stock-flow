@@ -71,6 +71,7 @@ class InventoryItem(BaseModel):
 class TransactionType(str, Enum):
     INBOUND = "入库"
     OUTBOUND = "出库"
+    TRANSFER = "移动"
 
 
 class Transaction(BaseModel):
@@ -92,8 +93,13 @@ class MaterialDetail(BaseModel):
     total_quantity: int
 
 
+class MaterialSearchItem(Material):
+    total_quantity: int = 0
+    locations_summary: str | None = None
+
+
 class PaginatedMaterials(BaseModel):
-    items: list[Material]
+    items: list[MaterialSearchItem]
     total: int
     page: int
     size: int
@@ -115,8 +121,21 @@ class OutboundCreate(BaseModel):
     note: str = Field(min_length=1, max_length=500)
 
 
+class TransferCreate(BaseModel):
+    material_id: str
+    from_location_id: str
+    to_location_id: str
+    qty: int = Field(gt=0, le=10000)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    note: str | None = Field(default=None, max_length=500)
+
+
 class TransactionResult(BaseModel):
     transaction_id: str
+
+
+class TransferResult(BaseModel):
+    transaction_ids: list[str]
 
 
 class MeResponse(BaseModel):

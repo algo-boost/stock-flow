@@ -12,11 +12,14 @@ export function Layout({ title, children }: { title: string; children: React.Rea
     { key: "/", title: "搜索", icon: "🔍" },
     { key: "/outbound", title: "出库", icon: "📤" },
     ...(user && (user.role === "KEEPER" || user.role === "ADMIN")
-      ? [{ key: "/inbound", title: "入库", icon: "📥" }]
+      ? [
+          { key: "/inbound", title: "入库", icon: "📥" },
+          { key: "/transfer", title: "移动", icon: "↔" },
+        ]
       : []),
   ];
 
-  const showBack = location.pathname !== "/" && !["/outbound", "/inbound"].includes(location.pathname);
+  const showBack = location.pathname !== "/" && !["/outbound", "/inbound", "/transfer"].includes(location.pathname);
 
   return (
     <div className="page">

@@ -77,13 +77,18 @@ export default function DetailPage() {
           出库领用
         </Button>
         {canInbound && (
-          <Button fill="outline" onClick={() => navigate(`/inbound?material_id=${material.id}`)}>
-            入库上架
-          </Button>
+          <>
+            <Button fill="outline" onClick={() => navigate(`/inbound?material_id=${material.id}`)}>
+              入库上架
+            </Button>
+            <Button fill="outline" onClick={() => navigate(`/transfer?material_id=${material.id}`)}>
+              库内移动
+            </Button>
+          </>
         )}
       </div>
 
-      <SectionCard title="最近流水" subtitle="出入库追溯">
+      <SectionCard title="最近流水" subtitle="出入库与库内移动追溯">
         {txs.length === 0 ? (
           <EmptyState icon="📒" text="暂无流水" hint="完成出入库后会显示在这里" />
         ) : (

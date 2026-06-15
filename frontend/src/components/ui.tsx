@@ -17,10 +17,10 @@ export function RoleBadge({ role }: { role: Role }) {
   return <span className={ROLE_CLASS[role]}>{ROLE_LABEL[role]}</span>;
 }
 
-const PERMISSIONS: Record<Role, { outbound: boolean; inbound: boolean; label: string }> = {
-  USER: { outbound: true, inbound: false, label: "研发用户：可搜索、可出库" },
-  KEEPER: { outbound: true, inbound: true, label: "库管员：可搜索、可出库、可入库" },
-  ADMIN: { outbound: true, inbound: true, label: "管理员：全部功能" },
+const PERMISSIONS: Record<Role, { inbound: boolean; transfer: boolean; label: string }> = {
+  USER: { inbound: false, transfer: false, label: "研发用户：可搜索、可出库" },
+  KEEPER: { inbound: true, transfer: true, label: "库管员：可搜索、可出库、可入库、可移动" },
+  ADMIN: { inbound: true, transfer: true, label: "管理员：全部功能" },
 };
 
 export function RolePermissions({ role }: { role: Role }) {
@@ -33,6 +33,9 @@ export function RolePermissions({ role }: { role: Role }) {
         <span className="perm-tag perm-on">✓ 搜索</span>
         <span className={`perm-tag ${p.inbound ? "perm-on" : "perm-off"}`}>
           {p.inbound ? "✓ 入库" : "✗ 入库"}
+        </span>
+        <span className={`perm-tag ${p.transfer ? "perm-on" : "perm-off"}`}>
+          {p.transfer ? "✓ 移动" : "✗ 移动"}
         </span>
       </div>
     </div>
@@ -119,12 +122,14 @@ export function MaterialCard({
   code,
   category,
   unit,
+  stockSummary,
   onClick,
 }: {
   name: string;
   code: string;
   category?: string;
   unit?: string;
+  stockSummary?: string;
   onClick?: () => void;
 }) {
   return (
@@ -137,6 +142,7 @@ export function MaterialCard({
           {category && <span className="chip chip-muted">{category}</span>}
           {unit && <span className="chip chip-muted">{unit}</span>}
         </div>
+        {stockSummary && <div className="material-card-summary">{stockSummary}</div>}
       </div>
       <span className="material-card-arrow">›</span>
     </button>
@@ -145,7 +151,8 @@ export function MaterialCard({
 
 export function TxBadge({ type }: { type: string }) {
   const isIn = type.includes("入");
-  return <span className={`tx-badge ${isIn ? "tx-in" : "tx-out"}`}>{type}</span>;
+  const isTransfer = type.includes("移") || type.includes("调");
+  return <span className={`tx-badge ${isTransfer ? "tx-transfer" : isIn ? "tx-in" : "tx-out"}`}>{type}</span>;
 }
 
 export function EmptyState({ icon, text, hint }: { icon: string; text: string; hint?: string }) {

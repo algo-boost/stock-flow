@@ -2,8 +2,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.bitable.repository import BitableRepository
+from app.config import Settings, get_settings
 from app.main import app
 from app.utils.idempotency import clear_idempotency_cache
+
+app.dependency_overrides[get_settings] = lambda: Settings(
+    bitable_mode="mock",
+    mock_auth_enabled=True,
+    bitable_warmup_on_startup=False,
+)
 
 client = TestClient(app)
 HEADERS_USER = {"X-Mock-Role": "USER", "X-Mock-User": "test_user"}
@@ -37,6 +44,16 @@ def test_search_materials():
     items = resp.json()["data"]["items"]
     assert len(items) >= 1
     assert items[0]["name"] == "大喵电机"
+    assert "total_quantity" in items[0]
+    assert "locations_summary" in items[0]
+
+
+def test_search_materials_stock_only():
+    resp = client.get("/materials/search?stock_only=true", headers=HEADERS_USER)
+    assert resp.status_code == 200
+    items = resp.json()["data"]["items"]
+    assert len(items) >= 1
+    assert all(item["total_quantity"] > 0 for item in items)
 
 
 def test_list_material_categories():
@@ -114,6 +131,11 @@ def test_outbound_success():
     )
     assert resp2.json()["data"]["transaction_id"] == tx_id
 
+    tx_resp = client.get("/materials/mat_001/transactions", headers=HEADERS_USER)
+    assert tx_resp.status_code == 200
+    txs = tx_resp.json()["data"]
+    assert any(tx["id"] == tx_id and tx["quantity"] < 0 for tx in txs)
+
 
 def test_outbound_insufficient_stock():
     resp = client.post(
@@ -160,6 +182,68 @@ def test_inbound_success_for_keeper():
     )
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
+
+
+def test_transfer_forbidden_for_user():
+    resp = client.post(
+        "/transfer",
+        headers=HEADERS_USER,
+        json={
+            "material_id": "mat_002",
+            "from_location_id": "loc_01",
+            "to_location_id": "loc_staging",
+            "qty": 1,
+            "idempotency_key": "test-transfer-user-deny",
+            "note": "整理库位",
+        },
+    )
+    assert resp.status_code == 403
+
+
+def test_transfer_success_for_keeper():
+    key = "test-transfer-keeper-001"
+    resp = client.post(
+        "/transfer",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_002",
+            "from_location_id": "loc_01",
+            "to_location_id": "loc_staging",
+            "qty": 1,
+            "idempotency_key": key,
+            "note": "快递暂存上架",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    tx_ids = body["data"]["transaction_ids"]
+    assert len(tx_ids) == 1
+
+    resp2 = client.post(
+        "/transfer",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_002",
+            "from_location_id": "loc_01",
+            "to_location_id": "loc_staging",
+            "qty": 1,
+            "idempotency_key": key,
+            "note": "快递暂存上架",
+        },
+    )
+    assert resp2.json()["data"]["transaction_ids"] == tx_ids
+
+    detail = client.get("/materials/mat_002", headers=HEADERS_KEEPER).json()["data"]
+    by_location = {item["location_id"]: item["quantity"] for item in detail["inventory"]}
+    assert by_location["loc_staging"] >= 1
+
+    tx_resp = client.get("/materials/mat_002/transactions", headers=HEADERS_KEEPER)
+    txs = tx_resp.json()["data"]
+    movement = [tx for tx in txs if tx["id"] in tx_ids]
+    assert {tx["type"] for tx in movement} == {"移动"}
+    assert [tx["quantity"] for tx in movement] == [-1]
+    assert "移动至" in movement[0]["remark"]
 
 
 def test_refresh_cache_forbidden_for_user():

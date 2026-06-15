@@ -4,6 +4,7 @@ import DetailPage from "./pages/Detail";
 import InboundPage from "./pages/Inbound";
 import OutboundPage from "./pages/Outbound";
 import SearchPage from "./pages/Search";
+import TransferPage from "./pages/Transfer";
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="/materials/:id" element={<DetailPage />} />
           <Route path="/outbound" element={<OutboundPage />} />
           <Route path="/inbound" element={<InboundPage />} />
+          <Route path="/transfer" element={<TransferPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

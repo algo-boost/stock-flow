@@ -10,6 +10,7 @@ from app.models import (
     OutboundCreate,
     PaginatedMaterials,
     Transaction,
+    TransferCreate,
     User,
 )
 from app.utils.response import AppError
@@ -39,14 +40,15 @@ class InventoryService:
         q: str | None,
         category: str | None,
         location: str | None,
+        stock_only: bool,
         page: int,
         size: int,
     ) -> PaginatedMaterials:
         try:
             if self.repo:
-                items, total = await self.repo.search_materials(q, category, location, page, size)
+                items, total = await self.repo.search_materials(q, category, location, stock_only, page, size)
             else:
-                items, total = self.store.search_materials(q, category, location, page, size)
+                items, total = self.store.search_materials(q, category, location, stock_only, page, size)
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
         return PaginatedMaterials(items=items, total=total, page=page, size=size)
@@ -178,6 +180,41 @@ class InventoryService:
             if msg.startswith("insufficient_stock:"):
                 available = msg.split(":", 1)[1]
                 raise AppError(4002, f"库存不足: 当前可用 {available}", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def transfer(self, payload: TransferCreate, user: User) -> list[Transaction]:
+        try:
+            if self.repo:
+                return await self.repo.apply_transfer(
+                    payload.material_id,
+                    payload.from_location_id,
+                    payload.to_location_id,
+                    payload.qty,
+                    user.open_id,
+                    user.name,
+                    payload.note,
+                )
+            return self.store.apply_transfer(
+                payload.material_id,
+                payload.from_location_id,
+                payload.to_location_id,
+                payload.qty,
+                user.name,
+                payload.note,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "material_not_found":
+                raise AppError(4004, "物料未找到", 404) from exc
+            if msg == "location_not_found":
+                raise AppError(1001, "库位未找到", 400) from exc
+            if msg == "same_location":
+                raise AppError(1001, "源库位和目标库位不能相同", 400) from exc
+            if msg.startswith("insufficient_stock:"):
+                available = msg.split(":", 1)[1]
+                raise AppError(4002, f"源库位库存不足: 当前可用 {available}", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc

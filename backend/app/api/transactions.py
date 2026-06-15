@@ -3,7 +3,15 @@ from fastapi import APIRouter, Depends
 from app.auth.deps import get_current_user
 from app.config import Settings, get_settings
 from app.middleware.auth import require_roles
-from app.models import InboundCreate, OutboundCreate, Role, TransactionResult, User
+from app.models import (
+    InboundCreate,
+    OutboundCreate,
+    Role,
+    TransactionResult,
+    TransferCreate,
+    TransferResult,
+    User,
+)
 from app.services.inventory import InventoryService
 from app.utils.idempotency import get_idempotent, set_idempotent
 from app.utils.response import success
@@ -26,6 +34,21 @@ async def inbound(
         return success(cached)
     tx = await service.inbound(payload, user)
     result = TransactionResult(transaction_id=tx.id).model_dump()
+    set_idempotent(payload.idempotency_key, result)
+    return success(result)
+
+
+@router.post("/transfer")
+async def transfer(
+    payload: TransferCreate,
+    user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    cached = get_idempotent(payload.idempotency_key)
+    if cached:
+        return success(cached)
+    txs = await service.transfer(payload, user)
+    result = TransferResult(transaction_ids=[tx.id for tx in txs]).model_dump()
     set_idempotent(payload.idempotency_key, result)
     return success(result)
 
