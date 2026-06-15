@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # 自建前端会话有效期。飞书免登 code 仍由飞书控制，这里控制本系统 Bearer token。
+    session_ttl_seconds: int = 7 * 24 * 3600
+    session_sliding_ttl: bool = True
+    # 飞书群组角色判断缓存，减少重复登录时的 IM API 调用。
+    feishu_role_cache_ttl_seconds: int = 3600
+    # Bitable real 模式表级读缓存。写操作会同步更新缓存，低频人工改表场景下 5 分钟 TTL 较稳妥。
+    bitable_cache_ttl_seconds: int = 300
+    bitable_warmup_on_startup: bool = True
 
     # Bitable 字段名（与多维表格列名一致，可按模板调整）
     bitable_f_category_name: str = "分类名称"

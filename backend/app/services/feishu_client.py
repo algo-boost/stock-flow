@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import logging
 import secrets
 import time
@@ -15,6 +16,10 @@ BOT_NOT_ENABLED_CODE = 232025
 logger = logging.getLogger("stock-flow.feishu")
 
 _role_check_status: dict[str, Any] = {}
+_app_token_cache: dict[str, tuple[str, float]] = {}
+_tenant_token_cache: dict[str, tuple[str, float]] = {}
+_jsapi_ticket_cache: dict[str, tuple[str, float]] = {}
+_role_cache: dict[str, tuple[float, Role, dict[str, Any]]] = {}
 
 
 def get_role_check_status() -> dict[str, Any]:
@@ -43,8 +48,10 @@ class FeishuClient:
 
     async def get_app_access_token(self) -> str:
         """网页应用免登换 user_access_token 须用 app_access_token。"""
-        if self._app_token and time.time() < self._app_token_expires - 60:
-            return self._app_token
+        cache_key = self.settings.feishu_app_id
+        cached = _app_token_cache.get(cache_key)
+        if cached and time.time() < cached[1] - 60:
+            return cached[0]
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -58,13 +65,15 @@ class FeishuClient:
             payload = resp.json()
             if payload.get("code") != 0:
                 raise RuntimeError(payload.get("msg", "获取 app_access_token 失败"))
-            self._app_token = payload["app_access_token"]
-            self._app_token_expires = time.time() + payload.get("expire", 7200)
-            return self._app_token
+            token = payload["app_access_token"]
+            _app_token_cache[cache_key] = (token, time.time() + payload.get("expire", 7200))
+            return token
 
     async def get_tenant_access_token(self) -> str:
-        if self._tenant_token and time.time() < self._tenant_token_expires - 60:
-            return self._tenant_token
+        cache_key = self.settings.feishu_app_id
+        cached = _tenant_token_cache.get(cache_key)
+        if cached and time.time() < cached[1] - 60:
+            return cached[0]
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -78,9 +87,9 @@ class FeishuClient:
             payload = resp.json()
             if payload.get("code") != 0:
                 raise RuntimeError(payload.get("msg", "获取 tenant_access_token 失败"))
-            self._tenant_token = payload["tenant_access_token"]
-            self._tenant_token_expires = time.time() + payload.get("expire", 7200)
-            return self._tenant_token
+            token = payload["tenant_access_token"]
+            _tenant_token_cache[cache_key] = (token, time.time() + payload.get("expire", 7200))
+            return token
 
     async def exchange_code_for_user(self, code: str) -> tuple[User, dict[str, Any]]:
         app_token = await self.get_app_access_token()
@@ -126,10 +135,17 @@ class FeishuClient:
     async def resolve_role_with_meta(
         self, open_id: str, user_access_token: str
     ) -> tuple[Role, dict[str, Any]]:
+        cached = _role_cache.get(open_id)
+        if cached and time.time() < cached[0]:
+            role, meta = cached[1], cached[2]
+            _set_role_check_status(True, meta)
+            return role, meta
+
         override = self._override_role(open_id)
         if override:
             meta = {"source": "override", "method": "env", "warning": None}
             _set_role_check_status(True, meta)
+            self._remember_role(open_id, override, meta)
             return override, meta
 
         group_checks = [
@@ -145,11 +161,12 @@ class FeishuClient:
 
         permission_error: dict[str, Any] | None = None
 
-        # 优先：用户 token + is_in_chat（判断当前登录用户是否在群内）
-        for chat_id, role in group_checks:
-            if not chat_id:
-                continue
-            in_chat, err = await self._check_is_in_chat(user_access_token, chat_id)
+        # 优先：用户 token + is_in_chat（并发判断当前登录用户是否在群内）
+        checks = [(chat_id, role) for chat_id, role in group_checks if chat_id]
+        check_results = await asyncio.gather(
+            *(self._check_is_in_chat(user_access_token, chat_id) for chat_id, _ in checks)
+        )
+        for (chat_id, role), (in_chat, err) in zip(checks, check_results):
             if err:
                 if err.get("code") == PERMISSION_DENIED_CODE:
                     permission_error = err
@@ -159,6 +176,7 @@ class FeishuClient:
             if in_chat:
                 meta = {"source": "group", "method": "user_is_in_chat", "warning": None}
                 _set_role_check_status(True, meta)
+                self._remember_role(open_id, role, meta)
                 return role, meta
 
         # 兜底：tenant token 拉成员列表（需机器人入群 + 租户权限）
@@ -169,6 +187,7 @@ class FeishuClient:
             if await self._is_member_by_list(open_id, chat_id, tenant_token):
                 meta = {"source": "group", "method": "tenant_members", "warning": None}
                 _set_role_check_status(True, meta)
+                self._remember_role(open_id, role, meta)
                 return role, meta
 
         if permission_error:
@@ -186,6 +205,7 @@ class FeishuClient:
             }
             _set_role_check_status(False, meta)
             logger.error("群组角色判定失败 open_id=%s: %s", open_id, warning)
+            self._remember_role(open_id, Role.USER, meta)
             return Role.USER, meta
 
         meta = {
@@ -194,7 +214,14 @@ class FeishuClient:
             "warning": "当前用户不在已配置的角色群组中，或机器人未加入这些群",
         }
         _set_role_check_status(True, meta)
+        self._remember_role(open_id, Role.USER, meta)
         return Role.USER, meta
+
+    def _remember_role(self, open_id: str, role: Role, meta: dict[str, Any]) -> None:
+        ttl = max(self.settings.feishu_role_cache_ttl_seconds, 0)
+        if ttl <= 0:
+            return
+        _role_cache[open_id] = (time.time() + ttl, role, meta)
 
     async def _check_is_in_chat(
         self, access_token: str, chat_id: str
@@ -332,8 +359,10 @@ class FeishuClient:
         }
 
     async def _get_jsapi_ticket(self, tenant_token: str) -> str:
-        if self._jsapi_ticket and time.time() < self._jsapi_ticket_expires - 60:
-            return self._jsapi_ticket
+        cache_key = self.settings.feishu_app_id
+        cached = _jsapi_ticket_cache.get(cache_key)
+        if cached and time.time() < cached[1] - 60:
+            return cached[0]
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
@@ -346,6 +375,6 @@ class FeishuClient:
             if payload.get("code") != 0:
                 raise RuntimeError(payload.get("msg", "获取 jsapi_ticket 失败"))
             data = payload["data"]
-            self._jsapi_ticket = data["ticket"]
-            self._jsapi_ticket_expires = time.time() + data.get("expire_in", 7200)
-            return self._jsapi_ticket
+            ticket = data["ticket"]
+            _jsapi_ticket_cache[cache_key] = (ticket, time.time() + data.get("expire_in", 7200))
+            return ticket

@@ -50,6 +50,16 @@ class Material(BaseModel):
     default_location_id: str | None = None
 
 
+class MaterialCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    category_id: str = Field(min_length=1, max_length=128)
+    code: str | None = Field(default=None, max_length=64)
+    unit: str = Field(default="个", min_length=1, max_length=20)
+    spec: str | None = Field(default=None, max_length=200)
+    barcode: str | None = Field(default=None, max_length=100)
+    default_location_id: str | None = Field(default=None, max_length=128)
+
+
 class InventoryItem(BaseModel):
     material_id: str
     location_id: str

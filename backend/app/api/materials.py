@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, Query
 
 from app.auth.deps import get_current_user
 from app.config import Settings, get_settings
-from app.models import User
+from app.middleware.auth import require_roles
+from app.models import MaterialCreate, Role, User
 from app.services.inventory import InventoryService
 from app.utils.response import success
 
@@ -37,6 +38,25 @@ async def material_catalog(
     """从 Bitable 拉取物料目录（含各库位库存），供出入库页使用。"""
     items = await service.list_material_catalog(q, stock_only)
     return success([item.model_dump(mode="json") for item in items])
+
+
+@router.get("/categories")
+async def list_categories(
+    _user: User = Depends(get_current_user),
+    service: InventoryService = Depends(get_service),
+):
+    items = await service.list_categories()
+    return success([item.model_dump() for item in items])
+
+
+@router.post("")
+async def create_material(
+    payload: MaterialCreate,
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    material = await service.create_material(payload)
+    return success(material.model_dump())
 
 
 @router.get("/{material_id}")

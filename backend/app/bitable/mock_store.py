@@ -6,6 +6,7 @@ from app.models import (
     InventoryItem,
     Location,
     Material,
+    MaterialCreate,
     MaterialDetail,
     Transaction,
     TransactionType,
@@ -111,6 +112,31 @@ class MockStore:
 
     def get_material(self, material_id: str) -> Material | None:
         return self.materials.get(material_id)
+
+    def list_categories(self) -> list[Category]:
+        return list(self.categories.values())
+
+    def create_material(self, payload: MaterialCreate) -> Material:
+        if payload.category_id not in self.categories:
+            raise ValueError("category_not_found")
+        if payload.default_location_id and payload.default_location_id not in self.locations:
+            raise ValueError("location_not_found")
+
+        material_id = f"mat_{len(self.materials) + 1:03d}"
+        category = self.categories[payload.category_id]
+        material = Material(
+            id=material_id,
+            code=payload.code or f"M{len(self.materials) + 1:03d}",
+            name=payload.name.strip(),
+            category_id=payload.category_id,
+            category_name=category.name,
+            unit=payload.unit.strip() or "个",
+            spec=payload.spec.strip() if payload.spec else None,
+            barcode=payload.barcode.strip() if payload.barcode else None,
+            default_location_id=payload.default_location_id,
+        )
+        self.materials[material_id] = material
+        return material
 
     def list_material_catalog(
         self,

@@ -30,7 +30,13 @@ class BYTableClient:
         self._cached_token: str | None = None
         self._cached_token_expires = 0.0
 
-    async def list_records(self, table_id: str, page_size: int = 500) -> list[dict[str, Any]]:
+    async def list_records(
+        self,
+        table_id: str,
+        page_size: int = 500,
+        *,
+        retries: int = 3,
+    ) -> list[dict[str, Any]]:
         if self.mode == "mock":
             return []
         if not table_id:
@@ -48,6 +54,7 @@ class BYTableClient:
                 token=token,
                 params=params,
                 action=f"读取表 {table_id} 失败",
+                retries=retries,
             )
             payload = self._parse_response(resp, f"读取表 {table_id} 失败")
             data = payload.get("data", {})

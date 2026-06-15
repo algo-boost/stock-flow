@@ -3,9 +3,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.config import get_settings
 from app.models import User
-
-SESSION_TTL_SECONDS = 24 * 3600
 
 
 @dataclass
@@ -19,10 +18,11 @@ _sessions: dict[str, SessionEntry] = {}
 
 
 def create_session(user: User, role_meta: dict[str, Any] | None = None) -> str:
+    settings = get_settings()
     token = secrets.token_urlsafe(32)
     _sessions[token] = SessionEntry(
         user=user,
-        expires_at=time.time() + SESSION_TTL_SECONDS,
+        expires_at=time.time() + settings.session_ttl_seconds,
         role_meta=role_meta or {},
     )
     return token
@@ -40,6 +40,9 @@ def get_session_entry(token: str) -> SessionEntry | None:
     if time.time() > entry.expires_at:
         _sessions.pop(token, None)
         return None
+    settings = get_settings()
+    if settings.session_sliding_ttl:
+        entry.expires_at = time.time() + settings.session_ttl_seconds
     return entry
 
 

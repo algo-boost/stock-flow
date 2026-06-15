@@ -14,6 +14,12 @@ export interface Location {
   type: string;
 }
 
+export interface Category {
+  id: string;
+  name: string;
+  parent_id?: string | null;
+}
+
 export interface User {
   open_id: string;
   name: string;

@@ -2,7 +2,10 @@ from app.bitable.repository import BitableRepository
 from app.bitable.mock_store import get_mock_store
 from app.config import Settings
 from app.models import (
+    Category,
     InboundCreate,
+    Material,
+    MaterialCreate,
     MaterialDetail,
     OutboundCreate,
     PaginatedMaterials,
@@ -47,6 +50,29 @@ class InventoryService:
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
         return PaginatedMaterials(items=items, total=total, page=page, size=size)
+
+    async def list_categories(self) -> list[Category]:
+        try:
+            if self.repo:
+                return await self.repo.list_categories()
+            return self.store.list_categories()
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def create_material(self, payload: MaterialCreate) -> Material:
+        try:
+            if self.repo:
+                return await self.repo.create_material(payload)
+            return self.store.create_material(payload)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "category_not_found":
+                raise AppError(1001, "分类未找到", 400) from exc
+            if msg == "location_not_found":
+                raise AppError(1001, "默认库位未找到", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
 
     async def get_material_detail(self, material_id: str) -> MaterialDetail:
         try:
@@ -162,3 +188,14 @@ class InventoryService:
             return {"dry_run": dry_run, "message": "Bitable 数据快照", "tables": snap}
         snap = self.store.snapshot()
         return {"dry_run": dry_run, "message": "mock 数据快照", "tables": snap}
+
+    async def refresh_cache(self) -> dict:
+        if self.repo:
+            result = await self.repo.refresh_core_tables()
+            failed = result.get("failed") or {}
+            message = "Bitable 缓存已刷新"
+            if failed:
+                message = "Bitable 缓存部分刷新失败，已保留旧缓存"
+            return {"message": message, **result}
+        snap = self.store.snapshot()
+        return {"message": "mock 模式无需刷新缓存", "tables": snap}

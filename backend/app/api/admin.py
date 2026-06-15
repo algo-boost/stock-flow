@@ -21,3 +21,12 @@ async def bulk_sync(
 ):
     data = await service.bulk_sync(payload.dry_run)
     return success(data)
+
+
+@router.post("/cache/refresh")
+async def refresh_cache(
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    data = await service.refresh_cache()
+    return success(data)

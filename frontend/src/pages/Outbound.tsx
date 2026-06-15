@@ -3,6 +3,8 @@ import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "ant
 import { useSearchParams } from "react-router-dom";
 import { getMaterialCatalog, postOutbound } from "../api";
 import type { MaterialDetail } from "../api/types";
+import { CacheRefreshButton } from "../components/CacheRefreshButton";
+import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHero, SectionCard } from "../components/ui";
 
@@ -23,6 +25,28 @@ function filterCatalog(items: MaterialDetail[], keyword: string): MaterialDetail
   });
 }
 
+function applyLocalOutbound(
+  items: MaterialDetail[],
+  materialId: string,
+  locationId: string,
+  qty: number,
+): MaterialDetail[] {
+  return items
+    .map((item) => {
+      if (item.material.id !== materialId) return item;
+      const inventory = item.inventory
+        .map((inv) =>
+          inv.location_id === locationId
+            ? { ...inv, quantity: Math.max(0, inv.quantity - qty) }
+            : inv,
+        )
+        .filter((inv) => inv.quantity > 0);
+      const total = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
+      return { ...item, inventory, total_quantity: total };
+    })
+    .filter((item) => item.total_quantity > 0);
+}
+
 export default function OutboundPage() {
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
@@ -35,6 +59,7 @@ export default function OutboundPage() {
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { canInbound } = useAuth();
 
   const loadCatalog = useCallback(async () => {
     setLoading(true);
@@ -109,7 +134,7 @@ export default function OutboundPage() {
         note: note.trim(),
       });
       Toast.show({ icon: "success", content: `出库成功 ${result.transaction_id}` });
-      await loadCatalog();
+      setCatalog((items) => applyLocalOutbound(items, selected.material.id, locationId, qty));
       backToList();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "出库失败" });
@@ -178,7 +203,11 @@ export default function OutboundPage() {
 
   return (
     <Layout title="出库">
-      <PageHero title="出库领用" subtitle="数据来自 Bitable 物料表 · 仅显示有库存的物料" />
+      <PageHero
+        title="出库领用"
+        subtitle="数据来自 Bitable 物料表 · 仅显示有库存的物料"
+        extra={canInbound ? <CacheRefreshButton onRefreshed={loadCatalog} /> : undefined}
+      />
 
       <SectionCard title="物料列表" subtitle={loading ? "正在同步…" : `共 ${catalog.length} 种可出库`}>
         <SearchBar

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import admin, auth_routes, inventory, materials, transactions
+from app.bitable.repository import BitableRepository
 from app.config import get_settings
 from app.utils.response import AppError
 
@@ -16,6 +17,21 @@ logger = logging.getLogger("stock-flow")
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     logger.info("启动 stock-flow API env=%s bitable=%s", settings.app_env, settings.bitable_mode)
+    if (
+        settings.bitable_mode == "real"
+        and settings.bitable_configured
+        and settings.bitable_cache_ttl_seconds > 0
+        and settings.bitable_warmup_on_startup
+    ):
+        try:
+            results = await BitableRepository(settings).warmup_core_tables()
+            failures = {tid: msg for tid, msg in results.items() if msg}
+            if failures:
+                logger.warning("Bitable 缓存部分预热失败，失败表将按需读取: %s", failures)
+            else:
+                logger.info("Bitable 五表缓存预热完成")
+        except Exception as exc:
+            logger.warning("Bitable 缓存预热失败，将在首次请求时按需拉取: %s", exc)
     yield
 
 

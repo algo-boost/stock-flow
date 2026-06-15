@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.bitable.repository import BitableRepository
 from app.main import app
 from app.utils.idempotency import clear_idempotency_cache
 
@@ -36,6 +37,49 @@ def test_search_materials():
     items = resp.json()["data"]["items"]
     assert len(items) >= 1
     assert items[0]["name"] == "大喵电机"
+
+
+def test_list_material_categories():
+    resp = client.get("/materials/categories", headers=HEADERS_USER)
+    assert resp.status_code == 200
+    categories = resp.json()["data"]
+    assert any(category["name"] == "电机模组" for category in categories)
+
+
+def test_create_material_forbidden_for_user():
+    resp = client.post(
+        "/materials",
+        headers=HEADERS_USER,
+        json={
+            "name": "测试新物料-无权限",
+            "category_id": "cat_motor",
+            "unit": "个",
+        },
+    )
+    assert resp.status_code == 403
+
+
+def test_create_material_success_for_keeper():
+    resp = client.post(
+        "/materials",
+        headers=HEADERS_KEEPER,
+        json={
+            "name": "测试新物料",
+            "category_id": "cat_motor",
+            "unit": "个",
+            "spec": "测试规格",
+            "default_location_id": "loc_01",
+        },
+    )
+    assert resp.status_code == 200
+    material = resp.json()["data"]
+    assert material["id"]
+    assert material["name"] == "测试新物料"
+    assert material["category_name"] == "电机模组"
+
+    detail_resp = client.get(f"/materials/{material['id']}", headers=HEADERS_KEEPER)
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["data"]["material"]["name"] == "测试新物料"
 
 
 def test_outbound_success():
@@ -116,3 +160,16 @@ def test_inbound_success_for_keeper():
     )
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
+
+
+def test_refresh_cache_forbidden_for_user():
+    resp = client.post("/admin/cache/refresh", headers=HEADERS_USER)
+    assert resp.status_code == 403
+
+
+def test_refresh_cache_success_for_keeper():
+    resp = client.post("/admin/cache/refresh", headers=HEADERS_KEEPER)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 0
+    assert "缓存" in body["data"]["message"]
