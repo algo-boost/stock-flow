@@ -76,6 +76,18 @@ def field_user_name(value: Any) -> str | None:
     return field_text(value)
 
 
+def field_user_id(value: Any) -> str | None:
+    if isinstance(value, list) and value:
+        first = value[0]
+        if isinstance(first, dict):
+            user_id = first.get("id") or first.get("open_id") or first.get("user_id")
+            return str(user_id) if user_id else None
+    if isinstance(value, dict):
+        user_id = value.get("id") or value.get("open_id") or value.get("user_id")
+        return str(user_id) if user_id else None
+    return None
+
+
 def write_link(record_id: str) -> list[str]:
     return [record_id]
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  createStockRequest,
   createMaterial,
   getMaterial,
   listCategories,
@@ -9,8 +10,8 @@ import {
   postInbound,
   searchMaterials,
 } from "../api";
-import type { MaterialDetail, MaterialSearchItem } from "../api/types";
-import { AuthGate } from "../components/AuthGate";
+import type { Category, MaterialDetail, MaterialSearchItem } from "../api/types";
+import { useAuth } from "../components/AuthGate";
 import { CacheRefreshButton } from "../components/CacheRefreshButton";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHero, SectionCard } from "../components/ui";
@@ -29,7 +30,7 @@ function InboundForm() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [locationOptions, setLocationOptions] = useState<{ label: string; value: string }[]>([]);
-  const [categoryOptions, setCategoryOptions] = useState<{ label: string; value: string }[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
@@ -41,10 +42,15 @@ function InboundForm() {
   const [creatingMaterial, setCreatingMaterial] = useState(false);
   const [newMaterialName, setNewMaterialName] = useState("");
   const [newMaterialCode, setNewMaterialCode] = useState("");
+  const [newMaterialMajorCategory, setNewMaterialMajorCategory] = useState("");
   const [newMaterialCategoryId, setNewMaterialCategoryId] = useState("");
   const [newMaterialUnit, setNewMaterialUnit] = useState("个");
   const [newMaterialSpec, setNewMaterialSpec] = useState("");
   const [newMaterialBarcode, setNewMaterialBarcode] = useState("");
+  const [newMaterialSupplier, setNewMaterialSupplier] = useState("");
+  const [newMaterialMinStock, setNewMaterialMinStock] = useState(5);
+  const { canInbound } = useAuth();
+  const isDirectInbound = canInbound;
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -69,11 +75,9 @@ function InboundForm() {
           value: loc.id,
         })),
       );
-      setCategoryOptions(
-        categories.map((category) => ({
-          label: category.name,
-          value: category.id,
-        })),
+      setCategories(categories);
+      setNewMaterialMajorCategory(
+        (current) => current || categories[0]?.major_name || categories[0]?.name || "",
       );
       setNewMaterialCategoryId((current) => current || categories[0]?.id || "");
       setLocationId((current) => current || locs[0]?.id || "");
@@ -107,8 +111,28 @@ function InboundForm() {
     return selected.inventory.find((i) => i.location_id === locationId)?.quantity ?? 0;
   }, [selected, locationId]);
 
-  const canSubmit = Boolean(selected && locationId && qty > 0 && !loading);
+  const canSubmit = Boolean(selected && locationId && qty > 0 && !loading && (isDirectInbound || note.trim()));
   const hasMore = items.length < total;
+  const majorCategoryOptions = useMemo(() => {
+    const values = Array.from(
+      new Set(categories.map((category) => category.major_name || category.name).filter(Boolean)),
+    );
+    return values.map((value) => ({ label: value, value }));
+  }, [categories]);
+  const subCategoryOptions = useMemo(
+    () =>
+      categories
+        .filter((category) => (category.major_name || category.name) === newMaterialMajorCategory)
+        .map((category) => ({
+          label: category.sub_name || category.name,
+          value: category.id,
+        })),
+    [categories, newMaterialMajorCategory],
+  );
+  const selectedCategory = useMemo(
+    () => categories.find((category) => category.id === newMaterialCategoryId),
+    [categories, newMaterialCategoryId],
+  );
 
   const selectMaterial = async (item: MaterialSearchItem) => {
     setLoading(true);
@@ -148,11 +172,13 @@ function InboundForm() {
     setNewMaterialUnit("个");
     setNewMaterialSpec("");
     setNewMaterialBarcode("");
+    setNewMaterialSupplier("");
+    setNewMaterialMinStock(5);
   };
 
   const onCreateMaterial = async () => {
-    if (!newMaterialName.trim() || !newMaterialCategoryId) {
-      Toast.show({ content: "请填写物料名称和分类" });
+    if (!newMaterialName.trim() || !newMaterialMajorCategory || !newMaterialCategoryId) {
+      Toast.show({ content: "请填写物料名称、大类和子类" });
       return;
     }
     setCreatingMaterial(true);
@@ -160,11 +186,15 @@ function InboundForm() {
       const material = await createMaterial({
         name: newMaterialName.trim(),
         category_id: newMaterialCategoryId,
+        major_category: newMaterialMajorCategory,
+        sub_category: selectedCategory?.sub_name || selectedCategory?.name,
         code: newMaterialCode.trim() || undefined,
         unit: newMaterialUnit.trim() || "个",
         spec: newMaterialSpec.trim() || undefined,
         barcode: newMaterialBarcode.trim() || undefined,
         default_location_id: locationId || undefined,
+        supplier: newMaterialSupplier.trim() || undefined,
+        min_stock: newMaterialMinStock,
       });
       const detail: MaterialDetail = {
         material,
@@ -200,15 +230,28 @@ function InboundForm() {
     }
     setSubmitting(true);
     try {
-      const result = await postInbound({
-        material_id: selected.material.id,
-        location_id: locationId,
-        qty,
-        idempotency_key: newIdempotencyKey(),
-        note: note.trim() || undefined,
-      });
-      Toast.show({ icon: "success", content: `已同步 Bitable · ${result.transaction_id}` });
-      navigate(`/materials/${selected.material.id}`);
+      if (isDirectInbound) {
+        const result = await postInbound({
+          material_id: selected.material.id,
+          location_id: locationId,
+          qty,
+          idempotency_key: newIdempotencyKey(),
+          note: note.trim() || undefined,
+        });
+        Toast.show({ icon: "success", content: `已同步 Bitable · ${result.transaction_id}` });
+        navigate(`/materials/${selected.material.id}`);
+      } else {
+        const result = await createStockRequest({
+          type: "入库",
+          material_id: selected.material.id,
+          location_id: locationId,
+          qty,
+          idempotency_key: newIdempotencyKey(),
+          note: note.trim(),
+        });
+        Toast.show({ icon: "success", content: `已提交入库申请 ${result.request_id}` });
+        navigate("/history");
+      }
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "入库失败" });
     } finally {
@@ -219,13 +262,16 @@ function InboundForm() {
   if (selected) {
     const m = selected.material;
     return (
-      <Layout title="入库">
+      <Layout title={isDirectInbound ? "入库" : "入库申请"}>
         <PageHero
-          title="确认入库"
+          title={isDirectInbound ? "确认入库" : "提交入库申请"}
           subtitle={`${m.name} · 当前总库存 ${selected.total_quantity} ${m.unit}`}
-          extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
+          extra={isDirectInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : undefined}
         />
-        <SectionCard title="入库单" subtitle="库管 / 管理员">
+        <SectionCard
+          title={isDirectInbound ? "入库单" : "入库申请单"}
+          subtitle={isDirectInbound ? "库管 / 管理员" : "提交后等待管理员审批，审批通过后再增加库存"}
+        >
           <button type="button" className="back-link" onClick={backToList}>
             ← 返回物料列表
           </button>
@@ -254,7 +300,7 @@ function InboundForm() {
               <TextArea
                 value={note}
                 onChange={setNote}
-                placeholder="采购单号 / 归还说明 / 供应商"
+                placeholder={isDirectInbound ? "采购单号 / 归还说明 / 供应商" : "归还原因 / 来源说明（必填）"}
                 rows={3}
               />
             </Form.Item>
@@ -262,7 +308,7 @@ function InboundForm() {
         </SectionCard>
         <div className="actions single">
           <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
-            确认入库并同步
+            {isDirectInbound ? "确认入库并同步" : "提交入库申请"}
           </Button>
         </div>
       </Layout>
@@ -270,11 +316,11 @@ function InboundForm() {
   }
 
   return (
-    <Layout title="入库">
+    <Layout title={isDirectInbound ? "入库" : "入库申请"}>
       <PageHero
-        title="入库上架"
-        subtitle="默认分页显示全部物料，找不到时可快捷新增"
-        extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
+        title={isDirectInbound ? "入库上架" : "入库申请"}
+        subtitle={isDirectInbound ? "默认分页显示全部物料，找不到时可快捷新增" : "普通用户可提交归还/入库申请，等待管理员审批"}
+        extra={isDirectInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : undefined}
       />
 
       <SectionCard title="选择物料" subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种物料`}>
@@ -297,7 +343,7 @@ function InboundForm() {
           <EmptyState
             icon="📦"
             text={keyword ? "没有匹配的物料" : "暂无物料"}
-            hint="可在下方快捷新增物料"
+            hint={isDirectInbound ? "可在下方快捷新增物料" : "请联系库管先维护物料主数据"}
           />
         ) : (
           <div className="catalog-list">
@@ -312,9 +358,11 @@ function InboundForm() {
                   <div className="catalog-row-name">{item.name}</div>
                   <div className="catalog-row-meta">
                     <span className="chip">{item.code}</span>
-                    {item.category_name && (
-                      <span className="chip chip-muted">{item.category_name}</span>
+                    {(item.major_category || item.category_name) && (
+                      <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
                     )}
+                    {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
+                    {item.supplier && <span className="chip chip-muted">{item.supplier}</span>}
                     <span className="chip chip-muted">{item.unit}</span>
                   </div>
                   <div className="catalog-row-locs">{item.locations_summary ?? "暂无库存"}</div>
@@ -336,7 +384,7 @@ function InboundForm() {
         )}
       </SectionCard>
 
-      {!loading && locationOptions.length > 0 && categoryOptions.length > 0 && (
+      {isDirectInbound && !loading && locationOptions.length > 0 && categories.length > 0 && (
         <SectionCard
           title="快捷新增物料"
           subtitle="搜索不到物料时，先建档再入库"
@@ -355,9 +403,23 @@ function InboundForm() {
                   placeholder="如：力矩传感器 / 新型号电机"
                 />
               </Form.Item>
-              <Form.Item label="分类">
+              <Form.Item label="大类">
                 <Selector
-                  options={categoryOptions}
+                  options={majorCategoryOptions}
+                  value={newMaterialMajorCategory ? [newMaterialMajorCategory] : []}
+                  onChange={(arr) => {
+                    const nextMajor = arr[0] ?? "";
+                    setNewMaterialMajorCategory(nextMajor);
+                    const firstSub = categories.find(
+                      (category) => (category.major_name || category.name) === nextMajor,
+                    );
+                    setNewMaterialCategoryId(firstSub?.id ?? "");
+                  }}
+                />
+              </Form.Item>
+              <Form.Item label="子类">
+                <Selector
+                  options={subCategoryOptions}
                   value={newMaterialCategoryId ? [newMaterialCategoryId] : []}
                   onChange={(arr) => setNewMaterialCategoryId(arr[0] ?? "")}
                 />
@@ -381,6 +443,16 @@ function InboundForm() {
               <Form.Item label="条码（可选）">
                 <Input value={newMaterialBarcode} onChange={setNewMaterialBarcode} placeholder="扫码编号或外部编码" />
               </Form.Item>
+              <Form.Item label="供货商（可选）">
+                <Input
+                  value={newMaterialSupplier}
+                  onChange={setNewMaterialSupplier}
+                  placeholder="如：XX 电子 / 官方旗舰店"
+                />
+              </Form.Item>
+              <Form.Item label="安全库存">
+                <Stepper min={0} value={newMaterialMinStock} onChange={setNewMaterialMinStock} />
+              </Form.Item>
               <div className="actions two">
                 <Button disabled={creatingMaterial} onClick={() => setShowCreateMaterial(false)}>
                   取消
@@ -397,20 +469,6 @@ function InboundForm() {
   );
 }
 
-function InboundDenied() {
-  return (
-    <Layout title="入库">
-      <SectionCard>
-        <EmptyState icon="🔒" text="暂无入库权限" hint="入库操作需要库管员或管理员角色" />
-      </SectionCard>
-    </Layout>
-  );
-}
-
 export default function InboundPage() {
-  return (
-    <AuthGate roles={["KEEPER", "ADMIN"]} fallback={<InboundDenied />}>
-      <InboundForm />
-    </AuthGate>
-  );
+  return <InboundForm />;
 }

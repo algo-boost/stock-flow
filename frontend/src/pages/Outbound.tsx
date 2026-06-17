@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useSearchParams } from "react-router-dom";
-import { getMaterial, postOutbound, searchMaterials } from "../api";
+import { createStockRequest, getMaterial, postOutbound, searchMaterials } from "../api";
 import type { MaterialDetail, MaterialSearchItem } from "../api/types";
 import { CacheRefreshButton } from "../components/CacheRefreshButton";
 import { useAuth } from "../components/AuthGate";
@@ -41,6 +41,7 @@ export default function OutboundPage() {
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const { canInbound } = useAuth();
+  const isDirectOutbound = canInbound;
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -132,15 +133,27 @@ export default function OutboundPage() {
     }
     setSubmitting(true);
     try {
-      const result = await postOutbound({
-        material_id: selected.material.id,
-        location_id: locationId,
-        qty,
-        idempotency_key: newIdempotencyKey(),
-        note: note.trim(),
-      });
-      Toast.show({ icon: "success", content: `出库成功 ${result.transaction_id}` });
-      setItems((current) => applyLocalOutbound(current, selected.material.id, qty));
+      if (isDirectOutbound) {
+        const result = await postOutbound({
+          material_id: selected.material.id,
+          location_id: locationId,
+          qty,
+          idempotency_key: newIdempotencyKey(),
+          note: note.trim(),
+        });
+        Toast.show({ icon: "success", content: `出库成功 ${result.transaction_id}` });
+        setItems((current) => applyLocalOutbound(current, selected.material.id, qty));
+      } else {
+        const result = await createStockRequest({
+          type: "出库",
+          material_id: selected.material.id,
+          location_id: locationId,
+          qty,
+          idempotency_key: newIdempotencyKey(),
+          note: note.trim(),
+        });
+        Toast.show({ icon: "success", content: `已提交出库申请 ${result.request_id}` });
+      }
       backToList();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "出库失败" });
@@ -152,10 +165,13 @@ export default function OutboundPage() {
   if (selected) {
     const m = selected.material;
     return (
-      <Layout title="出库">
+      <Layout title={isDirectOutbound ? "出库" : "出库申请"}>
         <PageHero title="确认出库" subtitle={`${m.name} · 库存 ${selected.total_quantity} ${m.unit}`} />
 
-        <SectionCard title="出库信息" subtitle="用途必填，便于追溯">
+        <SectionCard
+          title={isDirectOutbound ? "出库信息" : "申请信息"}
+          subtitle={isDirectOutbound ? "用途必填，便于追溯" : "提交后等待管理员审批，审批通过后再扣减库存"}
+        >
           <button type="button" className="back-link" onClick={backToList}>
             ← 返回物料列表
           </button>
@@ -200,7 +216,7 @@ export default function OutboundPage() {
 
         <div className="actions single">
           <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
-            确认出库
+            {isDirectOutbound ? "确认出库" : "提交出库申请"}
           </Button>
         </div>
       </Layout>
@@ -208,10 +224,10 @@ export default function OutboundPage() {
   }
 
   return (
-    <Layout title="出库">
+    <Layout title={isDirectOutbound ? "出库" : "出库申请"}>
       <PageHero
-        title="出库领用"
-        subtitle="默认分页显示有库存物料，支持搜索后出库"
+        title={isDirectOutbound ? "出库领用" : "出库申请"}
+        subtitle={isDirectOutbound ? "默认分页显示有库存物料，支持搜索后出库" : "普通用户提交申请，管理员审批通过后执行出库"}
         extra={canInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : undefined}
       />
 
@@ -251,9 +267,10 @@ export default function OutboundPage() {
                   <div className="catalog-row-name">{item.name}</div>
                   <div className="catalog-row-meta">
                     <span className="chip">{item.code}</span>
-                    {item.category_name && (
-                      <span className="chip chip-muted">{item.category_name}</span>
+                    {(item.major_category || item.category_name) && (
+                      <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
                     )}
+                    {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
                     <span className="chip chip-muted">{item.unit}</span>
                   </div>
                   <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>

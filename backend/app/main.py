@@ -69,9 +69,12 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def handle_unexpected_error(_request: Request, exc: Exception):
         logger.exception("未处理异常: %s", exc)
+        message = "服务器内部错误"
+        if settings.app_env != "prod":
+            message = f"服务器内部错误: {type(exc).__name__}: {exc}"
         return JSONResponse(
             status_code=500,
-            content={"code": 500, "message": "服务器内部错误", "data": None},
+            content={"code": 500, "message": message, "data": None},
         )
 
     app.include_router(auth_routes.router)

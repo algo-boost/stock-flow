@@ -8,6 +8,7 @@ from app.bitable.fields import (
     field_link_id,
     field_number,
     field_text,
+    field_user_id,
     field_user_name,
     normalize_tx_type,
     write_link,
@@ -18,10 +19,16 @@ from app.models import (
     Category,
     InventoryItem,
     Location,
+    LocationCreate,
+    LocationUpdate,
     Material,
     MaterialCreate,
     MaterialDetail,
     MaterialSearchItem,
+    StockRequest,
+    StockRequestCreate,
+    StockRequestStatus,
+    StockRequestType,
     Transaction,
     TransactionType,
 )
@@ -101,6 +108,19 @@ class BitableRepository:
             next_records.append(record)
         _TABLE_CACHE[cache_key] = (cached_at, next_records)
 
+    def _remove_cached_record(self, table_id: str, record_id: str) -> None:
+        if not table_id or not record_id:
+            return
+        cache_key = (self.settings.bitable_app_token, table_id)
+        cached = _TABLE_CACHE.get(cache_key)
+        if not cached:
+            return
+        cached_at, records = cached
+        _TABLE_CACHE[cache_key] = (
+            cached_at,
+            [item for item in records if item.get("record_id") != record_id],
+        )
+
     def _cached_record(self, record_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         return {"record_id": record_id, "fields": fields}
 
@@ -163,6 +183,7 @@ class BitableRepository:
             s.bitable_table_materials,
             s.bitable_table_inventory,
             s.bitable_table_transactions,
+            s.bitable_table_requests,
         ]
 
     async def _load_materials(self) -> dict[str, Material]:
@@ -177,36 +198,57 @@ class BitableRepository:
             fields = rec.get("fields", {})
             rid = rec["record_id"]
             cat_id = field_link_id(fields.get(s.bitable_f_material_category)) or ""
+            category = categories.get(cat_id)
+            major_category = field_text(fields.get(s.bitable_f_material_major_category))
+            sub_category = field_text(fields.get(s.bitable_f_material_sub_category))
             loc_id = field_link_id(fields.get(s.bitable_f_material_default_location)) or ""
+            min_stock_value = field_number(fields.get(s.bitable_f_material_min_stock))
             result[rid] = Material(
                 id=rid,
                 code=field_text(fields.get(s.bitable_f_material_code)) or rid,
                 name=field_text(fields.get(s.bitable_f_material_name)) or "未命名物料",
                 category_id=cat_id,
-                category_name=categories.get(cat_id),
+                category_name=category.name if category else None,
+                major_category=major_category or (category.major_name if category else None),
+                sub_category=sub_category or (category.sub_name if category else None),
                 unit=field_text(fields.get(s.bitable_f_material_unit)) or "个",
                 spec=field_text(fields.get(s.bitable_f_material_spec)),
                 barcode=field_text(fields.get(s.bitable_f_material_barcode)),
                 default_location_id=loc_id or None,
+                supplier=field_text(fields.get(s.bitable_f_material_supplier)),
+                min_stock=min_stock_value if min_stock_value > 0 else 5,
             )
             if loc_id and loc_id in locations and not result[rid].default_location_id:
                 pass
         self._materials_cache = result
         return result
 
-    async def _load_categories(self) -> dict[str, str]:
+    async def _load_categories(self) -> dict[str, Category]:
         s = self.settings
         if not s.bitable_table_categories:
             return {}
         records = await self._list_all(s.bitable_table_categories)
-        return {
-            rec["record_id"]: field_text(rec.get("fields", {}).get(s.bitable_f_category_name)) or rec["record_id"]
-            for rec in records
-        }
+        result: dict[str, Category] = {}
+        for rec in records:
+            fields = rec.get("fields", {})
+            rid = rec["record_id"]
+            major = field_text(fields.get(s.bitable_f_category_major))
+            sub = field_text(fields.get(s.bitable_f_category_sub))
+            legacy_name = field_text(fields.get(s.bitable_f_category_name))
+            name = sub or legacy_name or major or rid
+            result[rid] = Category(
+                id=rid,
+                name=name,
+                major_name=major or legacy_name,
+                sub_name=sub or legacy_name,
+                default_location_type=field_text(fields.get(s.bitable_f_category_default_location_type)),
+                examples=field_text(fields.get(s.bitable_f_category_examples)),
+            )
+        return result
 
     async def list_categories(self) -> list[Category]:
         categories = await self._load_categories()
-        return [Category(id=cid, name=name) for cid, name in categories.items()]
+        return list(categories.values())
 
     async def _load_locations(self) -> dict[str, Location]:
         if self._locations_cache is not None:
@@ -229,6 +271,7 @@ class BitableRepository:
     async def search_materials(
         self,
         q: str | None,
+        search_by: str,
         category: str | None,
         location: str | None,
         stock_only: bool,
@@ -242,16 +285,38 @@ class BitableRepository:
 
         if q:
             keyword = q.lower()
+            def match(material: Material) -> bool:
+                if search_by == "name":
+                    return keyword in material.name.lower()
+                if search_by == "code":
+                    return keyword in material.code.lower() or (
+                        material.barcode is not None and keyword in material.barcode.lower()
+                    )
+                if search_by == "category":
+                    return (
+                        (material.category_name is not None and keyword in material.category_name.lower())
+                        or (material.major_category is not None and keyword in material.major_category.lower())
+                        or (material.sub_category is not None and keyword in material.sub_category.lower())
+                    )
+                return (
+                    keyword in material.name.lower()
+                    or keyword in material.code.lower()
+                    or (material.supplier is not None and keyword in material.supplier.lower())
+                    or (material.barcode is not None and keyword in material.barcode.lower())
+                    or (material.category_name is not None and keyword in material.category_name.lower())
+                    or (material.major_category is not None and keyword in material.major_category.lower())
+                    or (material.sub_category is not None and keyword in material.sub_category.lower())
+                )
+
+            materials = [m for m in materials if match(m)]
+        if category:
             materials = [
                 m
                 for m in materials
-                if keyword in m.name.lower()
-                or keyword in m.code.lower()
-                or (m.barcode and keyword in m.barcode.lower())
-            ]
-        if category:
-            materials = [
-                m for m in materials if m.category_id == category or m.category_name == category
+                if m.category_id == category
+                or m.category_name == category
+                or m.major_category == category
+                or m.sub_category == category
             ]
         if location:
             mat_ids = {mid for (mid, lid), qty in inventory.items() if lid == location and qty > 0}
@@ -294,7 +359,8 @@ class BitableRepository:
 
     async def create_material(self, payload: MaterialCreate) -> Material:
         categories = await self._load_categories()
-        if payload.category_id not in categories:
+        category = categories.get(payload.category_id)
+        if not category:
             raise ValueError("category_not_found")
         locations = await self._load_locations()
         if payload.default_location_id and payload.default_location_id not in locations:
@@ -306,7 +372,14 @@ class BitableRepository:
             s.bitable_f_material_code: code,
             s.bitable_f_material_name: payload.name.strip(),
             s.bitable_f_material_category: write_link(payload.category_id),
+            s.bitable_f_material_major_category: (
+                payload.major_category or category.major_name or category.name
+            ),
+            s.bitable_f_material_sub_category: (
+                payload.sub_category or category.sub_name or category.name
+            ),
             s.bitable_f_material_unit: payload.unit.strip() or "个",
+            s.bitable_f_material_min_stock: payload.min_stock,
         }
         if payload.spec:
             fields[s.bitable_f_material_spec] = payload.spec.strip()
@@ -314,6 +387,8 @@ class BitableRepository:
             fields[s.bitable_f_material_barcode] = payload.barcode.strip()
         if payload.default_location_id:
             fields[s.bitable_f_material_default_location] = write_link(payload.default_location_id)
+        if payload.supplier:
+            fields[s.bitable_f_material_supplier] = payload.supplier.strip()
 
         rec = await self.client.create_record(s.bitable_table_materials, fields)
         rid = rec.get("record_id", "")
@@ -327,12 +402,31 @@ class BitableRepository:
             code=code,
             name=payload.name.strip(),
             category_id=payload.category_id,
-            category_name=categories.get(payload.category_id),
+            category_name=category.name,
+            major_category=payload.major_category or category.major_name or category.name,
+            sub_category=payload.sub_category or category.sub_name or category.name,
             unit=payload.unit.strip() or "个",
             spec=payload.spec.strip() if payload.spec else None,
             barcode=payload.barcode.strip() if payload.barcode else None,
             default_location_id=payload.default_location_id,
+            supplier=payload.supplier.strip() if payload.supplier else None,
+            min_stock=payload.min_stock,
         )
+
+    async def update_material_supplier(self, material_id: str, supplier: str | None) -> Material:
+        material = await self.get_material(material_id)
+        if not material:
+            raise ValueError("material_not_found")
+        supplier_value = supplier.strip() if supplier else None
+        s = self.settings
+        fields = {s.bitable_f_material_supplier: supplier_value or ""}
+        rec = await self.client.update_record(s.bitable_table_materials, material_id, fields)
+        self._materials_cache = None
+        self._upsert_cached_record(
+            s.bitable_table_materials,
+            rec if rec.get("fields") else self._cached_record(material_id, fields),
+        )
+        return material.model_copy(update={"supplier": supplier_value})
 
     async def list_material_catalog(
         self,
@@ -353,8 +447,11 @@ class BitableRepository:
                 for m in materials
                 if keyword in m.name.lower()
                 or keyword in m.code.lower()
+                or (m.supplier and keyword in m.supplier.lower())
                 or (m.barcode and keyword in m.barcode.lower())
                 or (m.category_name and keyword in (m.category_name or "").lower())
+                or (m.major_category and keyword in m.major_category.lower())
+                or (m.sub_category and keyword in m.sub_category.lower())
             ]
 
         catalog: list[MaterialDetail] = []
@@ -388,6 +485,70 @@ class BitableRepository:
 
     async def list_locations(self) -> list[Location]:
         return list((await self._load_locations()).values())
+
+    async def create_location(self, payload: LocationCreate) -> Location:
+        locations = await self._load_locations()
+        code = payload.code.strip()
+        name = payload.name.strip()
+        loc_type = payload.type.strip() or "货柜"
+        if any(loc.code == code for loc in locations.values()):
+            raise ValueError("location_code_exists")
+
+        s = self.settings
+        fields = {
+            s.bitable_f_location_code: code,
+            s.bitable_f_location_name: name,
+            s.bitable_f_location_type: loc_type,
+        }
+        rec = await self.client.create_record(s.bitable_table_locations, fields)
+        rid = rec.get("record_id", "")
+        self._locations_cache = None
+        self._upsert_cached_record(
+            s.bitable_table_locations,
+            rec if rec.get("fields") else self._cached_record(rid, fields),
+        )
+        return Location(id=rid, code=code, name=name, type=loc_type)
+
+    async def update_location(self, location_id: str, payload: LocationUpdate) -> Location:
+        locations = await self._load_locations()
+        current = locations.get(location_id)
+        if not current:
+            raise ValueError("location_not_found")
+
+        code = payload.code.strip() if payload.code is not None else current.code
+        name = payload.name.strip() if payload.name is not None else current.name
+        loc_type = payload.type.strip() if payload.type is not None else current.type
+        if any(loc.id != location_id and loc.code == code for loc in locations.values()):
+            raise ValueError("location_code_exists")
+
+        s = self.settings
+        fields = {
+            s.bitable_f_location_code: code,
+            s.bitable_f_location_name: name,
+            s.bitable_f_location_type: loc_type or "货柜",
+        }
+        rec = await self.client.update_record(s.bitable_table_locations, location_id, fields)
+        self._locations_cache = None
+        self._upsert_cached_record(
+            s.bitable_table_locations,
+            rec if rec.get("fields") else self._cached_record(location_id, fields),
+        )
+        return Location(id=location_id, code=code, name=name, type=loc_type or "货柜")
+
+    async def delete_location(self, location_id: str) -> None:
+        locations = await self._load_locations()
+        if location_id not in locations:
+            raise ValueError("location_not_found")
+
+        inventory = await self._load_inventory_map()
+        occupied = sum(qty for (_, lid), qty in inventory.items() if lid == location_id and qty > 0)
+        if occupied > 0:
+            raise ValueError(f"location_not_empty:{occupied}")
+
+        s = self.settings
+        await self.client.delete_record(s.bitable_table_locations, location_id)
+        self._locations_cache = None
+        self._remove_cached_record(s.bitable_table_locations, location_id)
 
     def _build_tx_fields(
         self,
@@ -574,6 +735,329 @@ class BitableRepository:
             )
         txs.sort(key=lambda t: t.created_at, reverse=True)
         return txs[:limit]
+
+    async def list_transactions(
+        self,
+        *,
+        operator: str | None = None,
+        keyword: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        limit: int = 100,
+    ) -> list[Transaction]:
+        s = self.settings
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        records = await self._list_all(s.bitable_table_transactions)
+        txs: list[Transaction] = []
+        for rec in records:
+            fields = rec.get("fields", {})
+            mid = field_link_id(fields.get(s.bitable_f_tx_material)) or ""
+            lid = field_link_id(fields.get(s.bitable_f_tx_location)) or ""
+            tx_type_raw = field_text(fields.get(s.bitable_f_tx_type)) or "out"
+            normalized = normalize_tx_type(tx_type_raw)
+            if normalized == "入库":
+                tx_enum = TransactionType.INBOUND
+            elif normalized == "移动":
+                tx_enum = TransactionType.TRANSFER
+            else:
+                tx_enum = TransactionType.OUTBOUND
+            created = fields.get(s.bitable_f_tx_created)
+            created_at = datetime.now(timezone.utc)
+            if isinstance(created, (int, float)):
+                created_at = datetime.fromtimestamp(created / 1000, tz=timezone.utc)
+            material = materials.get(mid)
+            loc = locations.get(lid)
+            tx = Transaction(
+                id=rec["record_id"],
+                type=tx_enum,
+                material_id=mid,
+                material_name=material.name if material else None,
+                location_id=lid,
+                location_name=loc.name if loc else lid,
+                quantity=field_number(fields.get(s.bitable_f_tx_quantity)),
+                operator=field_user_name(fields.get(s.bitable_f_tx_operator)) or "未知",
+                remark=field_text(fields.get(s.bitable_f_tx_remark)),
+                created_at=created_at,
+            )
+            txs.append(tx)
+
+        if operator:
+            txs = [tx for tx in txs if tx.operator == operator]
+        if start_at:
+            txs = [tx for tx in txs if tx.created_at >= start_at]
+        if end_at:
+            txs = [tx for tx in txs if tx.created_at <= end_at]
+        if keyword:
+            text = keyword.lower()
+            txs = [
+                tx
+                for tx in txs
+                if text in (tx.material_name or "").lower()
+                or text in (tx.location_name or "").lower()
+                or text in tx.operator.lower()
+                or text in (tx.remark or "").lower()
+            ]
+        txs.sort(key=lambda t: t.created_at, reverse=True)
+        return txs[:limit]
+
+    def _require_requests_table(self) -> None:
+        if not self.settings.bitable_table_requests:
+            raise RuntimeError("Bitable 申请表未配置，请设置 BITABLE_TABLE_REQUESTS")
+
+    @staticmethod
+    def _parse_request_type(value: Any) -> StockRequestType:
+        raw = (field_text(value) or "").strip().lower()
+        if raw in {"in", "入库", "inbound"}:
+            return StockRequestType.INBOUND
+        if raw in {"out", "出库", "outbound"}:
+            return StockRequestType.OUTBOUND
+        return StockRequestType.OUTBOUND
+
+    @staticmethod
+    def _parse_request_status(value: Any) -> StockRequestStatus:
+        raw = (field_text(value) or "").strip().lower()
+        if raw in {"approved", "approve", "已通过", "通过"}:
+            return StockRequestStatus.APPROVED
+        if raw in {"rejected", "reject", "已拒绝", "拒绝"}:
+            return StockRequestStatus.REJECTED
+        return StockRequestStatus.PENDING
+
+    @staticmethod
+    def _parse_bitable_datetime(value: Any) -> datetime | None:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+        if isinstance(value, str) and value.strip():
+            raw = value.strip().replace("Z", "+00:00")
+            try:
+                parsed = datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        return None
+
+    def _parse_request(self, rec: dict[str, Any], materials: dict[str, Material], locations: dict[str, Location]) -> StockRequest:
+        s = self.settings
+        fields = rec.get("fields", {})
+        mid = field_link_id(fields.get(s.bitable_f_request_material)) or ""
+        lid = field_link_id(fields.get(s.bitable_f_request_location)) or ""
+        req_type = self._parse_request_type(fields.get(s.bitable_f_request_type))
+        status = self._parse_request_status(fields.get(s.bitable_f_request_status))
+        created_at = self._parse_bitable_datetime(fields.get(s.bitable_f_request_created)) or datetime.now(timezone.utc)
+        reviewed_at = self._parse_bitable_datetime(fields.get(s.bitable_f_request_reviewed))
+        material = materials.get(mid)
+        location = locations.get(lid)
+        requester_name = field_user_name(fields.get(s.bitable_f_request_requester)) or "未知"
+        requester_open_id = field_user_id(fields.get(s.bitable_f_request_requester)) or ""
+        approver_open_id = field_user_id(fields.get(s.bitable_f_request_approver))
+        approver_name = field_user_name(fields.get(s.bitable_f_request_approver))
+        return StockRequest(
+            id=rec["record_id"],
+            type=req_type,
+            status=status,
+            material_id=mid,
+            material_name=material.name if material else None,
+            location_id=lid,
+            location_name=location.name if location else lid,
+            quantity=field_number(fields.get(s.bitable_f_request_quantity)),
+            requester_open_id=requester_open_id,
+            requester_name=requester_name,
+            approver_open_id=approver_open_id,
+            approver_name=approver_name,
+            remark=field_text(fields.get(s.bitable_f_request_remark)),
+            reject_reason=field_text(fields.get(s.bitable_f_request_reject_reason)),
+            transaction_id=field_text(fields.get(s.bitable_f_request_transaction)),
+            created_at=created_at,
+            reviewed_at=reviewed_at,
+        )
+
+    async def create_request(
+        self,
+        payload: StockRequestCreate,
+        requester_open_id: str,
+        requester_name: str,
+    ) -> StockRequest:
+        self._require_requests_table()
+        material = await self.get_material(payload.material_id)
+        if not material:
+            raise ValueError("material_not_found")
+        locations = await self._load_locations()
+        location = locations.get(payload.location_id)
+        if not location:
+            raise ValueError("location_not_found")
+
+        s = self.settings
+        fields: dict[str, Any] = {
+            s.bitable_f_request_type: payload.type.value,
+            s.bitable_f_request_status: StockRequestStatus.PENDING.value,
+            s.bitable_f_request_material: write_link(payload.material_id),
+            s.bitable_f_request_location: write_link(payload.location_id),
+            s.bitable_f_request_quantity: payload.qty,
+            s.bitable_f_request_remark: payload.note,
+        }
+        if requester_open_id:
+            fields[s.bitable_f_request_requester] = write_user(requester_open_id)
+
+        rec = await self.client.create_record(s.bitable_table_requests, fields)
+        self._upsert_cached_record(
+            s.bitable_table_requests,
+            rec if rec.get("fields") else self._cached_record(rec.get("record_id", ""), fields),
+        )
+        return StockRequest(
+            id=rec.get("record_id", "req_new"),
+            type=payload.type,
+            status=StockRequestStatus.PENDING,
+            material_id=payload.material_id,
+            material_name=material.name,
+            location_id=payload.location_id,
+            location_name=location.name,
+            quantity=payload.qty,
+            requester_open_id=requester_open_id,
+            requester_name=requester_name,
+            remark=payload.note,
+            created_at=datetime.now(timezone.utc),
+        )
+
+    async def list_requests(
+        self,
+        *,
+        requester_open_id: str | None = None,
+        requester_name: str | None = None,
+        status: StockRequestStatus | None = None,
+        keyword: str | None = None,
+        limit: int = 100,
+    ) -> list[StockRequest]:
+        self._require_requests_table()
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        records = await self._list_all(self.settings.bitable_table_requests)
+        items = [self._parse_request(rec, materials, locations) for rec in records]
+        if requester_name:
+            items = [item for item in items if item.requester_name == requester_name]
+        if requester_open_id:
+            items = [
+                item for item in items if not item.requester_open_id or item.requester_open_id == requester_open_id
+            ]
+        if status:
+            items = [item for item in items if item.status == status]
+        if keyword:
+            text = keyword.lower()
+            items = [
+                item
+                for item in items
+                if text in (item.material_name or "").lower()
+                or text in (item.location_name or "").lower()
+                or text in item.requester_name.lower()
+                or text in (item.remark or "").lower()
+            ]
+        items.sort(key=lambda item: item.created_at, reverse=True)
+        return items[:limit]
+
+    async def approve_request(
+        self,
+        request_id: str,
+        approver_open_id: str,
+        approver_name: str,
+    ) -> StockRequest:
+        self._require_requests_table()
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        records = await self._list_all(self.settings.bitable_table_requests)
+        rec = next((item for item in records if item.get("record_id") == request_id), None)
+        if not rec:
+            raise ValueError("request_not_found")
+        req = self._parse_request(rec, materials, locations)
+        if req.status != StockRequestStatus.PENDING:
+            raise ValueError("request_already_reviewed")
+
+        approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
+        requester_open_id = req.requester_open_id or ""
+        if req.type == StockRequestType.INBOUND:
+            tx = await self.apply_inbound(
+                req.material_id,
+                req.location_id,
+                req.quantity,
+                requester_open_id,
+                req.requester_name,
+                approval_note,
+            )
+        else:
+            tx = await self.apply_outbound(
+                req.material_id,
+                req.location_id,
+                req.quantity,
+                requester_open_id,
+                req.requester_name,
+                approval_note,
+            )
+
+        reviewed_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        s = self.settings
+        fields: dict[str, Any] = {
+            s.bitable_f_request_status: StockRequestStatus.APPROVED.value,
+            s.bitable_f_request_transaction: tx.id,
+            s.bitable_f_request_reviewed: reviewed_at,
+        }
+        if approver_open_id:
+            fields[s.bitable_f_request_approver] = write_user(approver_open_id)
+        updated_rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
+        self._upsert_cached_record(
+            s.bitable_table_requests,
+            updated_rec if updated_rec.get("fields") else self._cached_record(request_id, fields),
+        )
+        return req.model_copy(
+            update={
+                "status": StockRequestStatus.APPROVED,
+                "approver_open_id": approver_open_id,
+                "approver_name": approver_name,
+                "transaction_id": tx.id,
+                "reviewed_at": datetime.fromtimestamp(reviewed_at / 1000, tz=timezone.utc),
+            }
+        )
+
+    async def reject_request(
+        self,
+        request_id: str,
+        approver_open_id: str,
+        approver_name: str,
+        reason: str,
+    ) -> StockRequest:
+        self._require_requests_table()
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        records = await self._list_all(self.settings.bitable_table_requests)
+        rec = next((item for item in records if item.get("record_id") == request_id), None)
+        if not rec:
+            raise ValueError("request_not_found")
+        req = self._parse_request(rec, materials, locations)
+        if req.status != StockRequestStatus.PENDING:
+            raise ValueError("request_already_reviewed")
+
+        reviewed_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        s = self.settings
+        fields: dict[str, Any] = {
+            s.bitable_f_request_status: StockRequestStatus.REJECTED.value,
+            s.bitable_f_request_reject_reason: reason,
+            s.bitable_f_request_reviewed: reviewed_at,
+        }
+        if approver_open_id:
+            fields[s.bitable_f_request_approver] = write_user(approver_open_id)
+        updated_rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
+        self._upsert_cached_record(
+            s.bitable_table_requests,
+            updated_rec if updated_rec.get("fields") else self._cached_record(request_id, fields),
+        )
+        return req.model_copy(
+            update={
+                "status": StockRequestStatus.REJECTED,
+                "approver_open_id": approver_open_id,
+                "approver_name": approver_name,
+                "reject_reason": reason,
+                "reviewed_at": datetime.fromtimestamp(reviewed_at / 1000, tz=timezone.utc),
+            }
+        )
 
     async def apply_inbound(
         self,

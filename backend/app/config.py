@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     bitable_table_materials: str = ""
     bitable_table_inventory: str = ""
     bitable_table_transactions: str = ""
+    bitable_table_requests: str = ""
 
     feishu_group_admin: str = ""
     feishu_group_keeper: str = ""
@@ -38,7 +39,7 @@ class Settings(BaseSettings):
     api_port: int = 8000
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # 自建前端会话有效期。飞书免登 code 仍由飞书控制，这里控制本系统 Bearer token。
-    session_ttl_seconds: int = 7 * 24 * 3600
+    session_ttl_seconds: int = 24 * 3600
     session_sliding_ttl: bool = True
     # 飞书群组角色判断缓存，减少重复登录时的 IM API 调用。
     feishu_role_cache_ttl_seconds: int = 3600
@@ -48,16 +49,24 @@ class Settings(BaseSettings):
 
     # Bitable 字段名（与多维表格列名一致，可按模板调整）
     bitable_f_category_name: str = "分类名称"
+    bitable_f_category_major: str = "大类"
+    bitable_f_category_sub: str = "子类"
+    bitable_f_category_default_location_type: str = "默认库位类型"
+    bitable_f_category_examples: str = "典型物料"
     bitable_f_location_code: str = "库位编号"
     bitable_f_location_name: str = "库位名称"
     bitable_f_location_type: str = "库位类型"
     bitable_f_material_name: str = "物料名称"
     bitable_f_material_code: str = "物料编码"
+    bitable_f_material_major_category: str = "大类"
+    bitable_f_material_sub_category: str = "子类"
     bitable_f_material_spec: str = "规格型号"
     bitable_f_material_unit: str = "单位"
     bitable_f_material_barcode: str = "条码"
     bitable_f_material_category: str = "分类ID"
     bitable_f_material_default_location: str = "默认库位ID"
+    bitable_f_material_supplier: str = "供货商"
+    bitable_f_material_min_stock: str = "安全库存"
     bitable_f_inventory_material: str = "物料ID"
     bitable_f_inventory_location: str = "库位ID"
     bitable_f_inventory_quantity: str = "库存数量"
@@ -69,6 +78,18 @@ class Settings(BaseSettings):
     bitable_f_tx_operator: str = "操作人"
     bitable_f_tx_remark: str = "备注"
     bitable_f_tx_created: str = "交易时间"
+    bitable_f_request_type: str = "申请类型"
+    bitable_f_request_status: str = "审批状态"
+    bitable_f_request_material: str = "物料ID"
+    bitable_f_request_location: str = "库位ID"
+    bitable_f_request_quantity: str = "数量"
+    bitable_f_request_requester: str = "申请人"
+    bitable_f_request_approver: str = "审批人"
+    bitable_f_request_remark: str = "申请说明"
+    bitable_f_request_reject_reason: str = "拒绝原因"
+    bitable_f_request_transaction: str = "流水ID"
+    bitable_f_request_created: str = "申请时间"
+    bitable_f_request_reviewed: str = "审批时间"
     # Erniu 模板单选值（非中文）
     bitable_v_tx_inbound: str = "in"
     bitable_v_tx_outbound: str = "out"

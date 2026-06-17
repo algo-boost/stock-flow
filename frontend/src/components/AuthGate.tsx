@@ -18,11 +18,22 @@ interface AuthContextValue {
   loading: boolean;
   error: string | null;
   canInbound: boolean;
+  canApprove: boolean;
   isFeishu: boolean;
   refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+const ROLE_RANK: Record<User["role"], number> = {
+  USER: 10,
+  KEEPER: 20,
+  ADMIN: 30,
+};
+
+function roleAllows(actual: User["role"], required: User["role"]) {
+  return ROLE_RANK[actual] >= ROLE_RANK[required];
+}
 
 function isAuthExpiredError(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
@@ -95,10 +106,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const canInbound = user?.role === "KEEPER" || user?.role === "ADMIN";
+  const canApprove = user?.role === "ADMIN";
 
   return (
     <AuthContext.Provider
-      value={{ user, roleMeta, loading, error, canInbound, isFeishu, refresh }}
+      value={{
+        user,
+        roleMeta,
+        loading,
+        error,
+        canInbound,
+        canApprove,
+        isFeishu,
+        refresh,
+      }}
     >
       {!loading && roleMeta?.warning && user && (
         <div className="auth-banner role-warning">
@@ -157,7 +178,7 @@ export function AuthGate({
   const { user, loading } = useAuth();
   if (loading) return null;
   if (!user) return <>{fallback}</>;
-  if (roles && !roles.includes(user.role)) return <>{fallback}</>;
+  if (roles && !roles.some((role) => roleAllows(user.role, role))) return <>{fallback}</>;
   return <>{children}</>;
 }
 

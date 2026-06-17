@@ -255,9 +255,10 @@ function TransferForm() {
                   <div className="catalog-row-name">{item.name}</div>
                   <div className="catalog-row-meta">
                     <span className="chip">{item.code}</span>
-                    {item.category_name && (
-                      <span className="chip chip-muted">{item.category_name}</span>
+                    {(item.major_category || item.category_name) && (
+                      <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
                     )}
+                    {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
                     <span className="chip chip-muted">{item.unit}</span>
                   </div>
                   <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>

@@ -10,7 +10,7 @@ import { EmptyState, InfoRow, SectionCard, StatCard, TxBadge } from "../componen
 export default function DetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
-  const { canInbound } = useAuth();
+  const { canInbound, canApprove } = useAuth();
   const [detail, setDetail] = useState<MaterialDetail | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
 
@@ -41,19 +41,29 @@ export default function DetailPage() {
   }
 
   const { material, inventory, total_quantity } = detail;
+  const isLowStock = total_quantity < (material.min_stock ?? 5);
 
   return (
     <Layout title={material.name}>
       <div className="stat-grid">
-        <StatCard label="总库存" value={total_quantity} unit={material.unit} tone="primary" />
+        <StatCard label="总库存" value={total_quantity} unit={material.unit} tone={isLowStock ? "warning" : "primary"} />
         <StatCard label="库位数" value={inventory.length} unit="个" />
+        <StatCard label="安全库存" value={material.min_stock ?? 5} unit={material.unit} tone={isLowStock ? "warning" : "default"} />
       </div>
+      {isLowStock && (
+        <div className="low-stock-alert">
+          缺货预警：当前库存低于安全库存 {material.min_stock ?? 5}，管理员可从进货入口补货。
+        </div>
+      )}
 
       <SectionCard title="基本信息">
         <InfoRow label="物料编码" value={material.code} />
-        <InfoRow label="分类" value={material.category_name ?? "-"} />
+        <InfoRow label="大类" value={material.major_category ?? "-"} />
+        <InfoRow label="子类" value={material.sub_category ?? material.category_name ?? "-"} />
         <InfoRow label="规格型号" value={material.spec ?? "-"} />
         <InfoRow label="单位" value={material.unit} />
+        <InfoRow label="供货商" value={material.supplier ?? "-"} />
+        <InfoRow label="安全库存" value={material.min_stock ?? 5} />
         {material.barcode && <InfoRow label="条码" value={material.barcode} />}
       </SectionCard>
 
@@ -74,7 +84,7 @@ export default function DetailPage() {
 
       <div className={`actions ${canInbound ? "" : "single"}`}>
         <Button color="primary" onClick={() => navigate(`/outbound?material_id=${material.id}`)}>
-          出库领用
+          {canInbound ? "出库领用" : "出库申请"}
         </Button>
         {canInbound && (
           <>
@@ -84,6 +94,11 @@ export default function DetailPage() {
             <Button fill="outline" onClick={() => navigate(`/transfer?material_id=${material.id}`)}>
               库内移动
             </Button>
+            {canApprove && (
+              <Button fill="outline" onClick={() => navigate(`/purchase?material_id=${material.id}`)}>
+                进货补货
+              </Button>
+            )}
           </>
         )}
       </div>

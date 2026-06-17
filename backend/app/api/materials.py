@@ -17,6 +17,7 @@ def get_service(settings: Settings = Depends(get_settings)) -> InventoryService:
 @router.get("/search")
 async def search_materials(
     q: str | None = Query(default=None, max_length=100),
+    search_by: str = Query(default="all", pattern="^(all|category|name|code)$"),
     category: str | None = Query(default=None, max_length=64),
     location: str | None = Query(default=None, max_length=64),
     stock_only: bool = Query(default=False),
@@ -25,7 +26,7 @@ async def search_materials(
     _user: User = Depends(get_current_user),
     service: InventoryService = Depends(get_service),
 ):
-    data = await service.search_materials(q, category, location, stock_only, page, size)
+    data = await service.search_materials(q, search_by, category, location, stock_only, page, size)
     return success(data.model_dump())
 
 

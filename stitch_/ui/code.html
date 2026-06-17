@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>UI States Screen - 物料管理</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Geist:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-container": "#fffbff",
+                        "on-tertiary": "#ffffff",
+                        "primary-container": "#007f9d",
+                        "surface-container": "#edeef0",
+                        "primary-fixed": "#b7eaff",
+                        "on-primary": "#ffffff",
+                        "secondary-fixed-dim": "#b7c8e1",
+                        "on-primary-container": "#fafdff",
+                        "on-secondary-fixed-variant": "#38485d",
+                        "on-tertiary-fixed": "#2d1600",
+                        "surface-container-low": "#f3f4f6",
+                        "on-primary-fixed-variant": "#004e61",
+                        "surface-container-high": "#e7e8ea",
+                        "surface": "#f8f9fb",
+                        "surface-bright": "#f8f9fb",
+                        "on-secondary-container": "#54647a",
+                        "outline": "#6e797e",
+                        "primary": "#00647c",
+                        "on-secondary-fixed": "#0b1c30",
+                        "on-error-container": "#93000a",
+                        "outline-variant": "#bdc8ce",
+                        "surface-container-lowest": "#ffffff",
+                        "on-background": "#191c1e",
+                        "on-secondary": "#ffffff",
+                        "secondary-fixed": "#d3e4fe",
+                        "primary-fixed-dim": "#6cd3f7",
+                        "secondary-container": "#d0e1fb",
+                        "inverse-on-surface": "#f0f1f3",
+                        "secondary": "#505f76",
+                        "tertiary-fixed": "#ffdcbf",
+                        "surface-dim": "#d9dadc",
+                        "on-primary-fixed": "#001f28",
+                        "on-tertiary-fixed-variant": "#6a3b00",
+                        "tertiary-container": "#a86516",
+                        "inverse-surface": "#2e3132",
+                        "error": "#ba1a1a",
+                        "surface-variant": "#e1e2e4",
+                        "tertiary-fixed-dim": "#ffb873",
+                        "on-surface": "#191c1e",
+                        "on-error": "#ffffff",
+                        "inverse-primary": "#6cd3f7",
+                        "surface-container-highest": "#e1e2e4",
+                        "tertiary": "#894e00",
+                        "error-container": "#ffdad6",
+                        "surface-tint": "#006780",
+                        "on-surface-variant": "#3e484d",
+                        "background": "#f8f9fb"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "sm": "8px",
+                        "xl": "32px",
+                        "xs": "4px",
+                        "unit": "4px",
+                        "margin-mobile": "16px",
+                        "md": "16px",
+                        "margin-desktop": "32px",
+                        "lg": "24px",
+                        "gutter": "16px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["Geist"],
+                        "headline-md": ["Inter"],
+                        "mono-data": ["Geist"],
+                        "headline-md-mobile": ["Inter"],
+                        "title-sm": ["Inter"],
+                        "body-sm": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "mono-data": ["13px", {"lineHeight": "18px", "fontWeight": "500"}],
+                        "headline-md-mobile": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+                        "title-sm": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+                        "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .skeleton-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background text-on-background font-body-md min-h-screen pb-20">
+<!-- TopAppBar -->
+<header class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-14 bg-surface border-b border-outline-variant">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container overflow-hidden">
+<span class="material-symbols-outlined text-[20px]">person</span>
+</div>
+<h1 class="font-headline-md-mobile text-headline-md-mobile font-bold text-on-surface">物料管理</h1>
+</div>
+<button class="bg-surface-container-low px-3 py-1 rounded-full text-label-caps font-label-caps text-primary hover:bg-surface-container-high transition-colors">
+            ADMIN
+        </button>
+</header>
+<main class="pt-20 px-margin-mobile max-w-5xl mx-auto space-y-10">
+<!-- SECTION 1: Skeleton Screen (Dashboard) -->
+<section class="space-y-4">
+<h2 class="font-title-sm text-title-sm text-on-surface-variant px-1 border-l-4 border-primary ml-1">数据概览 (Skeleton)</h2>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+<!-- Skeleton Cards -->
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm space-y-3">
+<div class="w-8 h-8 bg-surface-container-highest rounded-lg skeleton-pulse"></div>
+<div class="h-4 w-3/4 bg-surface-container-high rounded skeleton-pulse"></div>
+<div class="h-6 w-1/2 bg-surface-container-highest rounded skeleton-pulse"></div>
+</div>
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm space-y-3">
+<div class="w-8 h-8 bg-surface-container-highest rounded-lg skeleton-pulse"></div>
+<div class="h-4 w-3/4 bg-surface-container-high rounded skeleton-pulse"></div>
+<div class="h-6 w-1/2 bg-surface-container-highest rounded skeleton-pulse"></div>
+</div>
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm space-y-3">
+<div class="w-8 h-8 bg-surface-container-highest rounded-lg skeleton-pulse"></div>
+<div class="h-4 w-3/4 bg-surface-container-high rounded skeleton-pulse"></div>
+<div class="h-6 w-1/2 bg-surface-container-highest rounded skeleton-pulse"></div>
+</div>
+<div class="bg-surface-container-lowest p-4 rounded-xl border border-outline-variant shadow-sm space-y-3">
+<div class="w-8 h-8 bg-surface-container-highest rounded-lg skeleton-pulse"></div>
+<div class="h-4 w-3/4 bg-surface-container-high rounded skeleton-pulse"></div>
+<div class="h-6 w-1/2 bg-surface-container-highest rounded skeleton-pulse"></div>
+</div>
+</div>
+<!-- Skeleton List -->
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden">
+<div class="p-4 border-b border-outline-variant bg-surface-container-low h-12 flex items-center">
+<div class="h-4 w-24 bg-surface-container-highest rounded skeleton-pulse"></div>
+</div>
+<div class="divide-y divide-outline-variant">
+<div class="p-4 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 bg-surface-container-highest rounded-lg skeleton-pulse"></div>
+<div class="space-y-2">
+<div class="h-4 w-32 bg-surface-container-high rounded skeleton-pulse"></div>
+<div class="h-3 w-20 bg-surface-container-low rounded skeleton-pulse"></div>
+</div>
+</div>
+<div class="h-6 w-16 bg-surface-container-high rounded-full skeleton-pulse"></div>
+</div>
+<div class="p-4 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 bg-surface-container-highest rounded-lg skeleton-pulse"></div>
+<div class="space-y-2">
+<div class="h-4 w-40 bg-surface-container-high rounded skeleton-pulse"></div>
+<div class="h-3 w-24 bg-surface-container-low rounded skeleton-pulse"></div>
+</div>
+</div>
+<div class="h-6 w-16 bg-surface-container-high rounded-full skeleton-pulse"></div>
+</div>
+</div>
+</div>
+</section>
+<!-- SECTION 2: Empty State -->
+<section class="space-y-4">
+<h2 class="font-title-sm text-title-sm text-on-surface-variant px-1 border-l-4 border-primary ml-1">库存列表 (Empty)</h2>
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm py-16 flex flex-col items-center justify-center text-center px-6">
+<div class="w-32 h-32 mb-6 opacity-60">
+<!-- Minimal Robot Illustration -->
+<svg class="text-outline" fill="none" viewbox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<rect height="35" rx="4" stroke="currentColor" stroke-width="2" width="40" x="30" y="40"></rect>
+<circle cx="40" cy="55" fill="currentColor" r="3"></circle>
+<circle cx="60" cy="55" fill="currentColor" r="3"></circle>
+<path d="M45 65H55" stroke="currentColor" stroke-linecap="round" stroke-width="2"></path>
+<path d="M50 30V40" stroke="currentColor" stroke-linecap="round" stroke-width="2"></path>
+<circle cx="50" cy="28" r="4" stroke="currentColor" stroke-width="2"></circle>
+<path d="M20 50V65" stroke="currentColor" stroke-linecap="round" stroke-width="2"></path>
+<path d="M80 50V65" stroke="currentColor" stroke-linecap="round" stroke-width="2"></path>
+<rect height="8" stroke="currentColor" stroke-width="2" width="10" x="35" y="75"></rect>
+<rect height="8" stroke="currentColor" stroke-width="2" width="10" x="55" y="75"></rect>
+</svg>
+</div>
+<h3 class="font-headline-md-mobile text-headline-md-mobile text-on-surface mb-2">暂无物料</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant max-w-xs mx-auto">当前仓库没有任何存货记录。您可以点击下方按钮添加入库申请。</p>
+<button class="mt-8 bg-primary text-on-primary px-6 py-2 rounded-full font-label-caps text-label-caps flex items-center gap-2 hover:scale-95 transition-transform">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                    立即添加
+                </button>
+</div>
+</section>
+<!-- SECTION 3: Error State (Form with Banner) -->
+<section class="space-y-4">
+<h2 class="font-title-sm text-title-sm text-on-surface-variant px-1 border-l-4 border-primary ml-1">物料出库 (Error)</h2>
+<div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden">
+<!-- Error Banner -->
+<div class="bg-error-container text-on-error-container px-4 py-3 flex items-center gap-3">
+<span class="material-symbols-outlined text-error">report</span>
+<span class="font-body-sm text-body-sm font-semibold">库存不足</span>
+<span class="font-body-sm text-body-sm opacity-80">：无法完成请求，当前剩余 5 件，申请 12 件。</span>
+</div>
+<form class="p-6 space-y-6">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-1.5">
+<label class="font-label-caps text-label-caps text-on-surface-variant">物料名称</label>
+<input class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-4 py-2 focus:ring-2 focus:ring-primary focus:border-primary text-body-md" readonly="" type="text" value="高精度离心管 50ml"/>
+</div>
+<div class="space-y-1.5">
+<label class="font-label-caps text-label-caps text-on-surface-variant">出库数量</label>
+<input class="w-full bg-surface-container-lowest border-2 border-error rounded-lg px-4 py-2 focus:ring-0 focus:border-error text-body-md text-error font-semibold" type="number" value="12"/>
+<p class="text-[12px] text-error flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">error</span>
+                                数量超过当前最大可用库存 (5)
+                            </p>
+</div>
+</div>
+<div class="flex justify-end gap-3 pt-4">
+<button class="px-6 py-2 rounded-lg border border-outline-variant font-label-caps text-label-caps text-on-surface-variant hover:bg-surface-container-high" type="button">取消</button>
+<button class="px-6 py-2 rounded-lg bg-primary/50 text-on-primary font-label-caps text-label-caps cursor-not-allowed" type="button">确认提交</button>
+</div>
+</form>
+</div>
+</section>
+<!-- SECTION 4: Confirmation Modal (Overlay Simulation) -->
+<section class="space-y-4">
+<h2 class="font-title-sm text-title-sm text-on-surface-variant px-1 border-l-4 border-primary ml-1">审批流程 (Confirmation)</h2>
+<div class="relative min-h-[300px] rounded-xl border border-outline-variant overflow-hidden bg-surface-container-high flex items-center justify-center p-6">
+<!-- Background Content Simulation -->
+<div class="absolute inset-0 opacity-20 pointer-events-none p-6 grid grid-cols-1 gap-2">
+<div class="h-4 bg-on-surface rounded w-1/3"></div>
+<div class="h-20 bg-on-surface rounded w-full"></div>
+<div class="h-4 bg-on-surface rounded w-1/4"></div>
+<div class="h-20 bg-on-surface rounded w-full"></div>
+</div>
+<!-- The Modal -->
+<div class="relative z-10 w-full max-w-sm bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant p-6">
+<div class="flex flex-col items-center text-center space-y-4">
+<div class="w-12 h-12 rounded-full bg-primary-container/20 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[32px]">task_alt</span>
+</div>
+<div>
+<h3 class="font-title-sm text-title-sm text-on-surface">是否确认审批通过？</h3>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-2">一旦通过，物料出库指令将立即发送至仓储机器人，该操作不可撤回。</p>
+</div>
+<div class="flex flex-col w-full gap-3 mt-4">
+<button class="w-full bg-primary text-on-primary py-3 rounded-lg font-label-caps text-label-caps hover:brightness-110 active:scale-95 transition-all">
+                                确认通过
+                            </button>
+<button class="w-full bg-surface-container-high text-on-surface-variant py-3 rounded-lg font-label-caps text-label-caps hover:bg-outline-variant transition-colors">
+                                取消
+                            </button>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-2 pb-safe h-16 bg-surface-container-lowest shadow-md rounded-t-xl">
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high rounded-lg px-4 py-1 transition-colors">
+<span class="material-symbols-outlined">search</span>
+<span class="font-label-caps text-label-caps mt-0.5">搜索</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high rounded-lg px-4 py-1 transition-colors">
+<span class="material-symbols-outlined">add_box</span>
+<span class="font-label-caps text-label-caps mt-0.5">入库</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high rounded-lg px-4 py-1 transition-colors">
+<span class="material-symbols-outlined">outbox</span>
+<span class="font-label-caps text-label-caps mt-0.5">出库</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high rounded-lg px-4 py-1 transition-colors">
+<span class="material-symbols-outlined">history</span>
+<span class="font-label-caps text-label-caps mt-0.5">历史</span>
+</button>
+<!-- Active Tab: More/UI States -->
+<button class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-full px-4 py-1 scale-90">
+<span class="material-symbols-outlined">more_horiz</span>
+<span class="font-label-caps text-label-caps mt-0.5">更多</span>
+</button>
+</nav>
+<script>
+        // Simple Interaction logic for demo
+        document.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', function() {
+                if(!this.classList.contains('cursor-not-allowed')) {
+                    this.style.transform = 'scale(0.95)';
+                    setTimeout(() => {
+                        this.style.transform = '';
+                    }, 150);
+                }
+            });
+        });
+    </script>
+</body></html>

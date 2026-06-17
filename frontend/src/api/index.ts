@@ -8,13 +8,20 @@ import {
 import { clearAuthToken, getAuthToken } from "../auth/token";
 import type {
   ApiEnvelope,
+  AdminAudit,
+  AdminOverview,
+  AdminSystem,
   Category,
   InventoryItem,
+  LowStockItem,
   MaterialDetail,
   Location,
   Material,
   PaginatedMaterials,
   RoleMeta,
+  StockRequest,
+  StockRequestStatus,
+  StockRequestType,
   Transaction,
   User,
 } from "./types";
@@ -67,10 +74,19 @@ async function fetchJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ resp: Response; body: ApiEnvelope<T> & { detail?: string } }> {
-  const resp = await fetch(`${apiConfig.baseUrl}${path}`, {
+  const url = `${apiConfig.baseUrl}${path}`;
+  const resp = await fetch(url, {
     ...init,
     headers: { ...headers(), ...(init?.headers ?? {}) },
   });
+  const contentType = resp.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    const text = await resp.text();
+    const snippet = text.replace(/\s+/g, " ").slice(0, 120);
+    throw new Error(
+      `API 返回的不是 JSON，请检查前端 VITE_API_BASE 或 /api 反向代理配置（${url}，HTTP ${resp.status}）：${snippet}`,
+    );
+  }
   const body = (await resp.json()) as ApiEnvelope<T> & { detail?: string };
   return { resp, body };
 }
@@ -107,11 +123,15 @@ export function listCategories() {
 export function createMaterial(payload: {
   name: string;
   category_id: string;
+  major_category?: string;
+  sub_category?: string;
   code?: string;
   unit: string;
   spec?: string;
   barcode?: string;
   default_location_id?: string;
+    supplier?: string;
+    min_stock?: number;
 }) {
   return request<Material>("/materials", {
     method: "POST",
@@ -121,7 +141,12 @@ export function createMaterial(payload: {
 
 export function searchMaterials(
   q = "",
-  opts?: { page?: number; size?: number; stockOnly?: boolean },
+  opts?: {
+    page?: number;
+    size?: number;
+    stockOnly?: boolean;
+    searchBy?: "all" | "category" | "name" | "code";
+  },
 ) {
   const params = new URLSearchParams({
     page: String(opts?.page ?? 1),
@@ -129,11 +154,35 @@ export function searchMaterials(
   });
   if (q) params.set("q", q);
   if (opts?.stockOnly) params.set("stock_only", "true");
+  if (opts?.searchBy) params.set("search_by", opts.searchBy);
   return request<PaginatedMaterials>(`/materials/search?${params}`);
 }
 
 export function listLocations() {
   return request<Location[]>("/locations");
+}
+
+export function createLocation(payload: { code: string; name: string; type: string }) {
+  return request<Location>("/locations", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateLocation(
+  id: string,
+  payload: { code?: string; name?: string; type?: string },
+) {
+  return request<Location>(`/locations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteLocation(id: string) {
+  return request<{ deleted: boolean }>(`/locations/${id}`, {
+    method: "DELETE",
+  });
 }
 
 export function refreshBitableCache() {
@@ -145,6 +194,27 @@ export function refreshBitableCache() {
   }>("/admin/cache/refresh", {
     method: "POST",
   });
+}
+
+export function getAdminOverview(opts?: { startAt?: string; endAt?: string }) {
+  const params = new URLSearchParams();
+  if (opts?.startAt) params.set("start_at", opts.startAt);
+  if (opts?.endAt) params.set("end_at", opts.endAt);
+  const qs = params.toString();
+  return request<AdminOverview>(`/admin/overview${qs ? `?${qs}` : ""}`);
+}
+
+export function getAdminAudit(opts?: { startAt?: string; endAt?: string; limit?: number }) {
+  const params = new URLSearchParams();
+  if (opts?.startAt) params.set("start_at", opts.startAt);
+  if (opts?.endAt) params.set("end_at", opts.endAt);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request<AdminAudit>(`/admin/audit${qs ? `?${qs}` : ""}`);
+}
+
+export function getAdminSystem() {
+  return request<AdminSystem>("/admin/system");
 }
 
 export function getMaterial(id: string) {
@@ -166,6 +236,90 @@ export function postOutbound(payload: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function postPurchaseInbound(payload: {
+  material_id: string;
+  location_id: string;
+  qty: number;
+  idempotency_key: string;
+  supplier?: string;
+  note?: string;
+}) {
+  return request<{ transaction_id: string }>("/purchase-inbound", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createStockRequest(payload: {
+  type: StockRequestType;
+  material_id: string;
+  location_id: string;
+  qty: number;
+  idempotency_key: string;
+  note: string;
+}) {
+  return request<{ request_id: string }>("/requests", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listMyRequests(opts?: {
+  status?: StockRequestStatus;
+  keyword?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.keyword) params.set("keyword", opts.keyword);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request<StockRequest[]>(`/requests/mine${qs ? `?${qs}` : ""}`);
+}
+
+export function listApprovalRequests(opts?: {
+  status?: StockRequestStatus;
+  keyword?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.keyword) params.set("keyword", opts.keyword);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request<StockRequest[]>(`/requests${qs ? `?${qs}` : ""}`);
+}
+
+export function approveStockRequest(id: string) {
+  return request<StockRequest>(`/requests/${id}/approve`, {
+    method: "POST",
+  });
+}
+
+export function rejectStockRequest(id: string, reason: string) {
+  return request<StockRequest>(`/requests/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function listTransactions(opts?: {
+  keyword?: string;
+  operator?: string;
+  startAt?: string;
+  endAt?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.keyword) params.set("keyword", opts.keyword);
+  if (opts?.operator) params.set("operator", opts.operator);
+  if (opts?.startAt) params.set("start_at", opts.startAt);
+  if (opts?.endAt) params.set("end_at", opts.endAt);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return request<Transaction[]>(`/transactions${qs ? `?${qs}` : ""}`);
 }
 
 export function postInbound(payload: {
@@ -201,6 +355,10 @@ export function listInventory(materialId?: string, locationId?: string) {
   if (locationId) params.set("location_id", locationId);
   const qs = params.toString();
   return request<InventoryItem[]>(`/inventory${qs ? `?${qs}` : ""}`);
+}
+
+export function listLowStock() {
+  return request<LowStockItem[]>("/inventory/low-stock");
 }
 
 export function listLocationsForPicker() {

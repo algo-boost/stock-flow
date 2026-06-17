@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Geist:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-tertiary-container": "#fffbff",
+                    "on-tertiary": "#ffffff",
+                    "primary-container": "#007f9d",
+                    "surface-container": "#edeef0",
+                    "primary-fixed": "#b7eaff",
+                    "on-primary": "#ffffff",
+                    "secondary-fixed-dim": "#b7c8e1",
+                    "on-primary-container": "#fafdff",
+                    "on-secondary-fixed-variant": "#38485d",
+                    "on-tertiary-fixed": "#2d1600",
+                    "surface-container-low": "#f3f4f6",
+                    "on-primary-fixed-variant": "#004e61",
+                    "surface-container-high": "#e7e8ea",
+                    "surface": "#f8f9fb",
+                    "surface-bright": "#f8f9fb",
+                    "on-secondary-container": "#54647a",
+                    "outline": "#6e797e",
+                    "primary": "#00647c",
+                    "on-secondary-fixed": "#0b1c30",
+                    "on-error-container": "#93000a",
+                    "outline-variant": "#bdc8ce",
+                    "surface-container-lowest": "#ffffff",
+                    "on-background": "#191c1e",
+                    "on-secondary": "#ffffff",
+                    "secondary-fixed": "#d3e4fe",
+                    "primary-fixed-dim": "#6cd3f7",
+                    "secondary-container": "#d0e1fb",
+                    "inverse-on-surface": "#f0f1f3",
+                    "secondary": "#505f76",
+                    "tertiary-fixed": "#ffdcbf",
+                    "surface-dim": "#d9dadc",
+                    "on-primary-fixed": "#001f28",
+                    "on-tertiary-fixed-variant": "#6a3b00",
+                    "tertiary-container": "#a86516",
+                    "inverse-surface": "#2e3132",
+                    "error": "#ba1a1a",
+                    "surface-variant": "#e1e2e4",
+                    "tertiary-fixed-dim": "#ffb873",
+                    "on-surface": "#191c1e",
+                    "on-error": "#ffffff",
+                    "inverse-primary": "#6cd3f7",
+                    "surface-container-highest": "#e1e2e4",
+                    "tertiary": "#894e00",
+                    "error-container": "#ffdad6",
+                    "surface-tint": "#006780",
+                    "on-surface-variant": "#3e484d",
+                    "background": "#f8f9fb"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "sm": "8px",
+                    "xl": "32px",
+                    "xs": "4px",
+                    "unit": "4px",
+                    "margin-mobile": "16px",
+                    "md": "16px",
+                    "margin-desktop": "32px",
+                    "lg": "24px",
+                    "gutter": "16px"
+            },
+            "fontFamily": {
+                    "label-caps": ["Geist"],
+                    "headline-md": ["Inter"],
+                    "mono-data": ["Geist"],
+                    "headline-md-mobile": ["Inter"],
+                    "title-sm": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "display-lg": ["Inter"],
+                    "body-md": ["Inter"]
+            },
+            "fontSize": {
+                    "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "mono-data": ["13px", {"lineHeight": "18px", "fontWeight": "500"}],
+                    "headline-md-mobile": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+                    "title-sm": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+                    "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            background-color: #f8f9fb;
+            font-family: 'Inter', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .tab-active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 24px;
+            height: 3px;
+            background-color: #00647c;
+            border-radius: 99px;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="flex flex-col min-h-screen">
+<!-- TopAppBar -->
+<header class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-14 bg-surface dark:bg-background border-b border-outline-variant dark:border-outline">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-white overflow-hidden border border-outline-variant">
+<img alt="User Profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCDYTb9444fqBDz97oxP5RKtHYWqH6d6LiVUw_9y-5u13NIjLQqwIdiSt30ydtQuR82DREvYAFoIjyq1_hfZ5UiJSpITFJrCGnklxY-gGgmGNOCh-9M93_mrChAuyT0yn_UqXrraO1fX6SZWjvgmqNcHZG5LOlDOw9hlMrlu2STlB34ROPSb6pok4pMlZ2U_BGBMJ_DRilUxhpzSRuc_cjHdesJRFgj3txqXxUJbojttdCxVMtuW8arSwvMShqJ1VWzNQvSD9jJa-on"/>
+</div>
+<h1 class="font-headline-md-mobile text-headline-md-mobile font-bold text-on-surface dark:text-on-background">物料管理</h1>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-on-surface-variant hover:bg-surface-container rounded-full p-2 transition-transform active:scale-95">filter_list</button>
+<span class="font-label-caps text-label-caps text-primary dark:text-primary-fixed-dim">ADMIN</span>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow pt-14 pb-20 px-margin-mobile">
+<!-- Tab Navigation -->
+<div class="sticky top-14 bg-surface/80 backdrop-blur-md z-40 -mx-margin-mobile px-margin-mobile py-2 border-b border-outline-variant">
+<div class="flex items-center gap-8">
+<button class="relative py-2 font-title-sm text-title-sm text-primary tab-active" id="tab-apply" onclick="switchTab('apply')">
+                    申请记录
+                </button>
+<button class="relative py-2 font-title-sm text-title-sm text-on-surface-variant" id="tab-flow" onclick="switchTab('flow')">
+                    流水记录
+                </button>
+</div>
+</div>
+<!-- Filter Chips (Micro-interaction: Horizontal Scroll) -->
+<div class="flex gap-2 py-4 overflow-x-auto hide-scrollbar">
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-full border border-outline-variant bg-surface-container-lowest text-on-surface-variant text-sm whitespace-nowrap">
+<span class="material-symbols-outlined text-[18px]">calendar_today</span>
+<span>日期</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-full border border-outline-variant bg-surface-container-lowest text-on-surface-variant text-sm whitespace-nowrap">
+<span class="material-symbols-outlined text-[18px]">person</span>
+<span>人员</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-full border border-outline-variant bg-surface-container-lowest text-on-surface-variant text-sm whitespace-nowrap">
+<span class="material-symbols-outlined text-[18px]">category</span>
+<span>类型</span>
+</button>
+</div>
+<!-- Tab Content: 申请记录 -->
+<section class="space-y-3" id="content-apply">
+<!-- Row 1: 已通过 -->
+<div class="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-2">
+<span class="p-1.5 rounded bg-primary-container/10 text-primary">
+<span class="material-symbols-outlined text-[20px]">outbox</span>
+</span>
+<span class="font-title-sm text-title-sm text-on-surface">出库申请</span>
+</div>
+<span class="flex items-center gap-1 px-2 py-0.5 rounded bg-green-100 text-green-700 text-xs font-bold">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                        已通过
+                    </span>
+</div>
+<div class="grid grid-cols-2 gap-y-2 mt-4">
+<div>
+<p class="text-xs text-on-surface-variant font-medium">物料名称</p>
+<p class="font-mono-data text-mono-data text-on-surface">DJI M350 电机</p>
+</div>
+<div class="text-right">
+<p class="text-xs text-on-surface-variant font-medium">申请数量</p>
+<p class="font-mono-data text-mono-data text-on-surface">2个</p>
+</div>
+<div>
+<p class="text-xs text-on-surface-variant font-medium">申请日期</p>
+<p class="font-mono-data text-mono-data text-on-surface">2023-10-24</p>
+</div>
+</div>
+</div>
+<!-- Row 2: 已拒绝 -->
+<div class="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-2">
+<span class="p-1.5 rounded bg-secondary-container/20 text-secondary">
+<span class="material-symbols-outlined text-[20px]">add_box</span>
+</span>
+<span class="font-title-sm text-title-sm text-on-surface">入库申请</span>
+</div>
+<span class="flex items-center gap-1 px-2 py-0.5 rounded bg-error-container/30 text-error text-xs font-bold">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">cancel</span>
+                        已拒绝
+                    </span>
+</div>
+<div class="grid grid-cols-2 gap-y-2 mt-4">
+<div>
+<p class="text-xs text-on-surface-variant font-medium">物料名称</p>
+<p class="font-mono-data text-mono-data text-on-surface">螺丝螺栓</p>
+</div>
+<div class="text-right">
+<p class="text-xs text-on-surface-variant font-medium">申请数量</p>
+<p class="font-mono-data text-mono-data text-on-surface">100个</p>
+</div>
+<div class="col-span-2 mt-2 pt-2 border-t border-dashed border-outline-variant">
+<p class="text-xs text-error font-medium flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">info</span>
+                            拒绝理由: 库位已满
+                        </p>
+<p class="font-mono-data text-[12px] text-on-surface-variant mt-1">2023-10-23</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Tab Content: 流水记录 (Hidden by default) -->
+<section class="hidden space-y-3" id="content-flow">
+<!-- Row 1: 入库 -->
+<div class="flex items-center p-4 bg-surface-container-lowest rounded-xl border border-outline-variant">
+<div class="w-10 h-10 rounded-lg bg-green-50 flex flex-col items-center justify-center mr-4 border border-green-100">
+<span class="text-green-600 font-bold text-xs">+12</span>
+<span class="material-symbols-outlined text-green-600 text-[18px]">south</span>
+</div>
+<div class="flex-grow">
+<div class="flex justify-between">
+<p class="font-title-sm text-title-sm text-on-surface">DJI M350 电机</p>
+<p class="font-mono-data text-mono-data text-on-surface-variant">10:00</p>
+</div>
+<div class="flex items-center gap-3 mt-1 text-xs text-on-surface-variant">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">location_on</span>A-01</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">person</span>张三</span>
+</div>
+</div>
+</div>
+<!-- Row 2: 出库 -->
+<div class="flex items-center p-4 bg-surface-container-lowest rounded-xl border border-outline-variant">
+<div class="w-10 h-10 rounded-lg bg-error-container/10 flex flex-col items-center justify-center mr-4 border border-error-container/20">
+<span class="text-error font-bold text-xs">-1</span>
+<span class="material-symbols-outlined text-error text-[18px]">north</span>
+</div>
+<div class="flex-grow">
+<div class="flex justify-between">
+<p class="font-title-sm text-title-sm text-on-surface">RealSense D435i</p>
+<p class="font-mono-data text-mono-data text-on-surface-variant">11:30</p>
+</div>
+<div class="flex items-center gap-3 mt-1 text-xs text-on-surface-variant">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">location_on</span>A-01</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">person</span>李四</span>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-2 pb-safe h-16 bg-surface-container-lowest dark:bg-surface-dim shadow-md rounded-t-xl">
+<button class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high dark:hover:bg-surface-container-highest transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">search</span>
+<span class="font-label-caps text-label-caps">搜索</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high dark:hover:bg-surface-container-highest transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">add_box</span>
+<span class="font-label-caps text-label-caps">入库</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high dark:hover:bg-surface-container-highest transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">outbox</span>
+<span class="font-label-caps text-label-caps">出库</span>
+</button>
+<button class="flex flex-col items-center justify-center bg-secondary-container dark:bg-secondary text-on-secondary-container dark:text-on-secondary rounded-full px-4 py-1 scale-90 duration-150">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">history</span>
+<span class="font-label-caps text-label-caps">历史</span>
+</button>
+<button class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-high dark:hover:bg-surface-container-highest transition-colors rounded-xl px-2 py-1">
+<span class="material-symbols-outlined">more_horiz</span>
+<span class="font-label-caps text-label-caps">更多</span>
+</button>
+</nav>
+<script>
+        function switchTab(tab) {
+            const btnApply = document.getElementById('tab-apply');
+            const btnFlow = document.getElementById('tab-flow');
+            const contentApply = document.getElementById('content-apply');
+            const contentFlow = document.getElementById('content-flow');
+
+            if (tab === 'apply') {
+                btnApply.classList.add('text-primary', 'tab-active');
+                btnApply.classList.remove('text-on-surface-variant');
+                btnFlow.classList.remove('text-primary', 'tab-active');
+                btnFlow.classList.add('text-on-surface-variant');
+                contentApply.classList.remove('hidden');
+                contentFlow.classList.add('hidden');
+            } else {
+                btnFlow.classList.add('text-primary', 'tab-active');
+                btnFlow.classList.remove('text-on-surface-variant');
+                btnApply.classList.remove('text-primary', 'tab-active');
+                btnApply.classList.add('text-on-surface-variant');
+                contentFlow.classList.remove('hidden');
+                contentApply.classList.add('hidden');
+            }
+        }
+    </script>
+</body></html>

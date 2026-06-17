@@ -17,10 +17,10 @@ export function RoleBadge({ role }: { role: Role }) {
   return <span className={ROLE_CLASS[role]}>{ROLE_LABEL[role]}</span>;
 }
 
-const PERMISSIONS: Record<Role, { inbound: boolean; transfer: boolean; label: string }> = {
-  USER: { inbound: false, transfer: false, label: "研发用户：可搜索、可出库" },
-  KEEPER: { inbound: true, transfer: true, label: "库管员：可搜索、可出库、可入库、可移动" },
-  ADMIN: { inbound: true, transfer: true, label: "管理员：全部功能" },
+const PERMISSIONS: Record<Role, { inbound: boolean; transfer: boolean; approve: boolean; label: string }> = {
+  USER: { inbound: false, transfer: false, approve: false, label: "研发用户：可搜索、可提交出入库申请" },
+  KEEPER: { inbound: true, transfer: true, approve: false, label: "库管员：可搜索、可出库、可入库、可移动" },
+  ADMIN: { inbound: true, transfer: true, approve: true, label: "管理员：全部业务功能 + 进货、审批与运营中心" },
 };
 
 export function RolePermissions({ role }: { role: Role }) {
@@ -29,14 +29,17 @@ export function RolePermissions({ role }: { role: Role }) {
     <div className="role-permissions">
       <div className="role-permissions-title">{p.label}</div>
       <div className="role-permissions-tags">
-        <span className="perm-tag perm-on">✓ 出库</span>
+        <span className="perm-tag perm-on">{role === "USER" ? "✓ 申请出库" : "✓ 出库"}</span>
         <span className="perm-tag perm-on">✓ 搜索</span>
         <span className={`perm-tag ${p.inbound ? "perm-on" : "perm-off"}`}>
-          {p.inbound ? "✓ 入库" : "✗ 入库"}
+          {p.inbound ? "✓ 入库" : "✓ 申请入库"}
         </span>
         <span className={`perm-tag ${p.transfer ? "perm-on" : "perm-off"}`}>
           {p.transfer ? "✓ 移动" : "✗ 移动"}
         </span>
+        {p.approve && <span className="perm-tag perm-on">✓ 审批</span>}
+        {role === "ADMIN" && <span className="perm-tag perm-on">✓ 进货</span>}
+        {role === "ADMIN" && <span className="perm-tag perm-on">✓ 运营中心</span>}
       </div>
     </div>
   );
@@ -123,6 +126,7 @@ export function MaterialCard({
   category,
   unit,
   stockSummary,
+  warning,
   onClick,
 }: {
   name: string;
@@ -130,6 +134,7 @@ export function MaterialCard({
   category?: string;
   unit?: string;
   stockSummary?: string;
+  warning?: string;
   onClick?: () => void;
 }) {
   return (
@@ -142,6 +147,7 @@ export function MaterialCard({
           {category && <span className="chip chip-muted">{category}</span>}
           {unit && <span className="chip chip-muted">{unit}</span>}
         </div>
+        {warning && <div className="material-card-warning">{warning}</div>}
         {stockSummary && <div className="material-card-summary">{stockSummary}</div>}
       </div>
       <span className="material-card-arrow">›</span>

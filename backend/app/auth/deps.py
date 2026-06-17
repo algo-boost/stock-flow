@@ -38,7 +38,11 @@ async def get_current_user(
         role = _role_from_header(x_mock_role)
         return User(
             open_id=x_mock_user or "ou_mock_dev_user",
-            name={"ADMIN": "管理员", "KEEPER": "库管员", "USER": "研发用户"}.get(role.value, "用户"),
+            name={
+                "ADMIN": "管理员",
+                "KEEPER": "库管员",
+                "USER": "研发用户",
+            }.get(role.value, "用户"),
             role=role,
         )
 

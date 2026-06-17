@@ -57,11 +57,17 @@ class BYTableClient:
                 retries=retries,
             )
             payload = self._parse_response(resp, f"读取表 {table_id} 失败")
-            data = payload.get("data", {})
-            items.extend(data.get("items", []))
+            data = payload.get("data") or {}
+            page_items = data.get("items") or []
+            if not isinstance(page_items, list):
+                raise RuntimeError(f"读取表 {table_id} 失败: 返回 items 格式异常")
+            items.extend(page_items)
             if not data.get("has_more"):
                 break
             page_token = data.get("page_token")
+            if not page_token:
+                logger.warning("Bitable 表 %s 返回 has_more=true 但缺少 page_token，提前结束分页读取", table_id)
+                break
         return items
 
     async def create_record(
@@ -106,6 +112,18 @@ class BYTableClient:
         )
         payload = self._parse_response(resp, f"更新表 {table_id} 失败")
         return payload.get("data", {}).get("record", {})
+
+    async def delete_record(self, table_id: str, record_id: str) -> None:
+        if self.mode == "mock":
+            return
+        token = await self._tenant_token()
+        resp = await self._request(
+            "DELETE",
+            f"{self._base}/apps/{self.settings.bitable_app_token}/tables/{table_id}/records/{record_id}",
+            token=token,
+            action=f"删除表 {table_id} 记录失败",
+        )
+        self._parse_response(resp, f"删除表 {table_id} 记录失败")
 
     @property
     def mock_store(self):

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Geist:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-tertiary-container": "#fffbff",
+                    "on-tertiary": "#ffffff",
+                    "primary-container": "#007f9d",
+                    "surface-container": "#edeef0",
+                    "primary-fixed": "#b7eaff",
+                    "on-primary": "#ffffff",
+                    "secondary-fixed-dim": "#b7c8e1",
+                    "on-primary-container": "#fafdff",
+                    "on-secondary-fixed-variant": "#38485d",
+                    "on-tertiary-fixed": "#2d1600",
+                    "surface-container-low": "#f3f4f6",
+                    "on-primary-fixed-variant": "#004e61",
+                    "surface-container-high": "#e7e8ea",
+                    "surface": "#f8f9fb",
+                    "surface-bright": "#f8f9fb",
+                    "on-secondary-container": "#54647a",
+                    "outline": "#6e797e",
+                    "primary": "#00647c",
+                    "on-secondary-fixed": "#0b1c30",
+                    "on-error-container": "#93000a",
+                    "outline-variant": "#bdc8ce",
+                    "surface-container-lowest": "#ffffff",
+                    "on-background": "#191c1e",
+                    "on-secondary": "#ffffff",
+                    "secondary-fixed": "#d3e4fe",
+                    "primary-fixed-dim": "#6cd3f7",
+                    "secondary-container": "#d0e1fb",
+                    "inverse-on-surface": "#f0f1f3",
+                    "secondary": "#505f76",
+                    "tertiary-fixed": "#ffdcbf",
+                    "surface-dim": "#d9dadc",
+                    "on-primary-fixed": "#001f28",
+                    "on-tertiary-fixed-variant": "#6a3b00",
+                    "tertiary-container": "#a86516",
+                    "inverse-surface": "#2e3132",
+                    "error": "#ba1a1a",
+                    "surface-variant": "#e1e2e4",
+                    "tertiary-fixed-dim": "#ffb873",
+                    "on-surface": "#191c1e",
+                    "on-error": "#ffffff",
+                    "inverse-primary": "#6cd3f7",
+                    "surface-container-highest": "#e1e2e4",
+                    "tertiary": "#894e00",
+                    "error-container": "#ffdad6",
+                    "surface-tint": "#006780",
+                    "on-surface-variant": "#3e484d",
+                    "background": "#f8f9fb"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "sm": "8px",
+                    "xl": "32px",
+                    "xs": "4px",
+                    "unit": "4px",
+                    "margin-mobile": "16px",
+                    "md": "16px",
+                    "margin-desktop": "32px",
+                    "lg": "24px",
+                    "gutter": "16px"
+            },
+            "fontFamily": {
+                    "label-caps": ["Geist"],
+                    "headline-md": ["Inter"],
+                    "mono-data": ["Geist"],
+                    "headline-md-mobile": ["Inter"],
+                    "title-sm": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "display-lg": ["Inter"],
+                    "body-md": ["Inter"]
+            },
+            "fontSize": {
+                    "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "mono-data": ["13px", {"lineHeight": "18px", "fontWeight": "500"}],
+                    "headline-md-mobile": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+                    "title-sm": ["18px", {"lineHeight": "24px", "fontWeight": "600"}],
+                    "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                    "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            background-color: #f3f4f6;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .step-btn:active {
+            transform: scale(0.9);
+        }
+        #success-toast {
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="font-body-md text-on-surface">
+<!-- Top App Bar -->
+<header class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile h-14 bg-surface dark:bg-background border-b border-outline-variant dark:border-outline">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface">arrow_back</span>
+<h1 class="font-headline-md-mobile text-headline-md-mobile font-bold text-on-surface dark:text-on-background">库内移动</h1>
+</div>
+<div class="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container font-label-caps">
+            JD
+        </div>
+</header>
+<!-- Main Content -->
+<main class="pt-20 pb-24 px-margin-mobile max-w-lg mx-auto">
+<!-- Material Identity Card -->
+<div class="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant shadow-sm mb-lg">
+<div class="flex items-start gap-4">
+<div class="w-20 h-20 rounded-lg bg-surface-container overflow-hidden flex-shrink-0">
+<img class="w-full h-full object-cover" data-alt="A high-tech industrial drone motor components displayed on a clean white surface with technical laboratory lighting. The product is sharp and metallic, reflecting the systematic and transparent brand identity. The background is a soft gray, emphasizing the engineering clarity and professional industrial atmosphere of the material management system." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAl5zgZphvDoGLzvkgAgBzMnovJUVtdlc0QfT56YYmUMASFYDINLmkEcfIMQcDwfrvnF5d44u-Kpfsdg_mL1m6t6a5wwX6-LHXWPIMDaP9wRN_GxrE7IjVlmXPLYJx7utqmdVQWN4qPkvXj2I5_hu9amPsYY4GYTXtwVF2Lwk2_O3Jjp7Pl-qlxL1f7To3GxI9q20ghxXBPx5AAHahWRaudrvMoEXmje3EB_D7Jz1nj7XPj56ZoEMQZTwZDkUmaMTKMb58sgn4d8s4Q"/>
+</div>
+<div class="flex-grow">
+<div class="flex justify-between items-start">
+<h2 class="font-title-sm text-title-sm text-on-surface">DJI M350 电机</h2>
+<span class="font-label-caps text-label-caps bg-secondary-container text-on-secondary-container px-2 py-0.5 rounded">SKU: 99201</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">高性能多旋翼动力单元</p>
+<div class="mt-2 flex items-center gap-1 text-primary">
+<span class="material-symbols-outlined text-[18px]">inventory_2</span>
+<span class="font-mono-data text-mono-data">当前总库存: 142</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Transfer Form -->
+<section class="space-y-gutter">
+<!-- Source & Target Grid -->
+<div class="grid grid-cols-2 gap-gutter">
+<div class="space-y-sm">
+<label class="font-label-caps text-label-caps text-on-surface-variant">源库位</label>
+<div class="relative">
+<div class="w-full h-12 bg-surface-container-low border border-outline-variant rounded-lg flex items-center px-md">
+<span class="font-mono-data text-mono-data text-on-surface">A-01</span>
+</div>
+<div class="absolute -bottom-5 left-0 flex items-center gap-1">
+<span class="font-label-caps text-[10px] text-outline">当前余量: 10</span>
+</div>
+</div>
+</div>
+<div class="space-y-sm">
+<label class="font-label-caps text-label-caps text-on-surface-variant">目标库位</label>
+<div class="relative">
+<select class="w-full h-12 bg-white border border-primary ring-0 focus:ring-2 focus:ring-primary/20 rounded-lg appearance-none px-md font-mono-data text-mono-data text-on-surface">
+<option>B-02</option>
+<option>B-03</option>
+<option>C-01</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-3 text-outline pointer-events-none">expand_more</span>
+</div>
+</div>
+</div>
+<!-- Rules Hint -->
+<div class="flex items-center gap-2 px-1 pt-2">
+<span class="material-symbols-outlined text-[16px] text-tertiary">info</span>
+<span class="font-body-sm text-[12px] text-on-surface-variant">源库位与目标库位不可相同</span>
+</div>
+<!-- Quantity Stepper -->
+<div class="space-y-sm pt-4">
+<label class="font-label-caps text-label-caps text-on-surface-variant">移动数量</label>
+<div class="flex items-center h-14 bg-white border border-outline-variant rounded-xl overflow-hidden">
+<button class="step-btn h-full w-16 flex items-center justify-center hover:bg-surface-container transition-colors" onclick="changeQty(-1)">
+<span class="material-symbols-outlined">remove</span>
+</button>
+<div class="flex-grow h-full flex items-center justify-center border-x border-outline-variant">
+<input class="w-full text-center font-headline-md text-headline-md border-none focus:ring-0 bg-transparent" id="qty-input" max="10" min="1" type="number" value="1"/>
+</div>
+<button class="step-btn h-full w-16 flex items-center justify-center hover:bg-surface-container transition-colors" onclick="changeQty(1)">
+<span class="material-symbols-outlined">add</span>
+</button>
+</div>
+</div>
+<!-- Remark -->
+<div class="space-y-sm pt-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">备注信息</label>
+<textarea class="w-full p-md bg-white border border-outline-variant rounded-xl focus:border-primary focus:ring-1 focus:ring-primary/20 transition-all font-body-md" placeholder="请输入备注..." rows="3">库位整理</textarea>
+</div>
+</section>
+<!-- Fixed Bottom Action -->
+<div class="fixed bottom-0 left-0 w-full p-margin-mobile bg-surface/80 backdrop-blur-md z-40 border-t border-outline-variant md:relative md:bg-transparent md:border-none md:p-0 md:mt-xl">
+<button class="w-full h-14 bg-primary text-on-primary font-title-sm text-title-sm rounded-full shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2" onclick="showToast()">
+<span class="material-symbols-outlined">sync_alt</span>
+                确认移动
+            </button>
+</div>
+</main>
+<!-- Navigation Shell Placeholder (Bottom Bar as per JSON) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-2 pb-safe h-16 bg-surface-container-lowest dark:bg-surface-dim shadow-md rounded-t-xl md:hidden">
+<div class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant">
+<span class="material-symbols-outlined">search</span>
+<span class="font-label-caps text-label-caps">搜索</span>
+</div>
+<div class="flex flex-col items-center justify-center bg-secondary-container dark:bg-secondary text-on-secondary-container dark:text-on-secondary rounded-full px-4 py-1 scale-90">
+<span class="material-symbols-outlined">add_box</span>
+<span class="font-label-caps text-label-caps">入库</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant">
+<span class="material-symbols-outlined">outbox</span>
+<span class="font-label-caps text-label-caps">出库</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant">
+<span class="material-symbols-outlined">history</span>
+<span class="font-label-caps text-label-caps">历史</span>
+</div>
+<div class="flex flex-col items-center justify-center text-on-surface-variant dark:text-on-secondary-fixed-variant">
+<span class="material-symbols-outlined">more_horiz</span>
+<span class="font-label-caps text-label-caps">更多</span>
+</div>
+</nav>
+<!-- Success Toast -->
+<div class="fixed top-6 left-1/2 -translate-x-1/2 z-[60] opacity-0 pointer-events-none scale-90 translate-y-[-20px]" id="success-toast">
+<div class="bg-inverse-surface text-inverse-on-surface px-lg py-sm rounded-full flex items-center gap-3 shadow-xl border border-white/10">
+<span class="material-symbols-outlined text-primary-fixed">check_circle</span>
+<span class="font-body-md font-medium">移动成功，已记录流水</span>
+</div>
+</div>
+<script>
+        function changeQty(delta) {
+            const input = document.getElementById('qty-input');
+            let val = parseInt(input.value);
+            val = isNaN(val) ? 1 : val + delta;
+            if (val < 1) val = 1;
+            if (val > 10) val = 10;
+            input.value = val;
+        }
+
+        function showToast() {
+            const toast = document.getElementById('success-toast');
+            toast.style.opacity = '1';
+            toast.style.pointerEvents = 'auto';
+            toast.style.transform = 'translateX(-50%) translateY(0) scale(1)';
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.pointerEvents = 'none';
+                toast.style.transform = 'translateX(-50%) translateY(-20px) scale(0.9)';
+            }, 3000);
+        }
+    </script>
+</body></html>

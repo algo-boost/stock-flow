@@ -155,8 +155,9 @@ class FeishuClient:
         ]
         configured = [cid for cid, _ in group_checks if cid]
         if not configured:
-            meta = {"source": "default", "method": None, "warning": "未配置 FEISHU_GROUP_* chat_id"}
+            meta = {"source": "default", "method": "no_group_config", "warning": None}
             _set_role_check_status(True, meta)
+            self._remember_role(open_id, Role.USER, meta)
             return Role.USER, meta
 
         permission_error: dict[str, Any] | None = None
@@ -210,8 +211,8 @@ class FeishuClient:
 
         meta = {
             "source": "default",
-            "method": None,
-            "warning": "当前用户不在已配置的角色群组中，或机器人未加入这些群",
+            "method": "group_miss",
+            "warning": None,
         }
         _set_role_check_status(True, meta)
         self._remember_role(open_id, Role.USER, meta)
@@ -318,7 +319,10 @@ class FeishuClient:
             or self.settings.feishu_group_user
         )
         if not chat_id:
-            return {"ok": False, "reason": "未配置 FEISHU_GROUP_* chat_id"}
+            return {
+                "ok": True,
+                "reason": "未配置 FEISHU_GROUP_* chat_id，默认按 USER 权限处理",
+            }
 
         try:
             tenant_token = await self.get_tenant_access_token()
