@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     bitable_f_category_sub: str = "子类"
     bitable_f_category_default_location_type: str = "默认库位类型"
     bitable_f_category_examples: str = "典型物料"
-    bitable_f_location_code: str = "库位编号"
+    bitable_f_location_code: str = "库位编码"
     bitable_f_location_name: str = "库位名称"
     bitable_f_location_type: str = "库位类型"
     bitable_f_material_name: str = "物料名称"

@@ -31,11 +31,17 @@ def _wrap_bitable_error(exc: Exception) -> AppError:
         return AppError(
             5002,
             "Bitable 表 ID 无效，请检查 backend/.env 中 BITABLE_TABLE_* 是否与多维表格一致",
-            502,
+            500,
         )
     if "WrongAppToken" in msg or "app_token" in msg.lower():
-        return AppError(5002, "Bitable app_token 无效，请使用 /base/ 链接中的 ID", 502)
-    return AppError(5002, msg, 502)
+        return AppError(5002, "Bitable app_token 无效，请使用 /base/ 链接中的 ID", 500)
+    if "FieldNameNotFound" in msg:
+        return AppError(
+            5002,
+            "Bitable 字段名不匹配，请检查 backend/.env 中 BITABLE_F_* 是否与多维表格列名一致",
+            500,
+        )
+    return AppError(5002, msg, 500)
 
 
 def _wrap_data_error(area: str, exc: Exception) -> AppError:
@@ -322,7 +328,7 @@ class InventoryService:
             raise AppError(
                 5002,
                 f"进货失败：写入物料供货商字段失败，请检查 materials 表是否存在“{self.settings.bitable_f_material_supplier}”字段且为文本字段。原始错误：{exc}",
-                502,
+                500,
             ) from exc
         except Exception as exc:
             raise AppError(
