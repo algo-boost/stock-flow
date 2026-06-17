@@ -1,4 +1,3 @@
-import { NavBar, TabBar } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthGate";
 import { RoleBadge } from "./ui";
@@ -39,25 +38,47 @@ export function Layout({ title, children }: { title: string; children: React.Rea
 
   return (
     <div className="page">
-      <div className="page-navbar">
-        <NavBar
-          onBack={showBack ? () => navigate(-1) : undefined}
-          right={user ? <RoleBadge role={user.role} /> : undefined}
-        >
-          {title}
-        </NavBar>
-      </div>
+      <header className="page-navbar">
+        <div className="page-navbar-main">
+          {showBack ? (
+            <button type="button" className="nav-back" aria-label="返回" onClick={() => navigate(-1)}>
+              <span aria-hidden>‹</span>
+            </button>
+          ) : (
+            <div className="lab-mark" aria-hidden>
+              SF
+            </div>
+          )}
+          <div className="page-title-block">
+            <div className="page-title-kicker">ROBOTICS LAB</div>
+            <h1 className="page-title">{title}</h1>
+          </div>
+        </div>
+        <div className="page-navbar-right">
+          {user && <span className="user-pill">{user.name}</span>}
+          {user ? <RoleBadge role={user.role} /> : undefined}
+        </div>
+      </header>
       <div className="page-body">{children}</div>
       {!location.pathname.startsWith("/materials/") && (
-        <TabBar
-          className="page-tabbar"
-          activeKey={location.pathname}
-          onChange={(key) => navigate(key)}
-        >
-          {tabs.map((t) => (
-            <TabBar.Item key={t.key} icon={<span aria-hidden>{t.icon}</span>} title={t.title} />
-          ))}
-        </TabBar>
+        <nav className="page-tabbar" aria-label="主导航">
+          {tabs.map((t) => {
+            const active = location.pathname === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                className={`page-tabbar-item ${active ? "page-tabbar-item-active" : ""}`}
+                onClick={() => navigate(t.key)}
+              >
+                <span className="page-tabbar-icon" aria-hidden>
+                  {t.icon}
+                </span>
+                <span className="page-tabbar-label">{t.title}</span>
+              </button>
+            );
+          })}
+        </nav>
       )}
     </div>
   );

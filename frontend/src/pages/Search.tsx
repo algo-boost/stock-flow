@@ -113,6 +113,14 @@ export default function SearchPage() {
     }));
   }, [categories]);
 
+  const activeCategoryGroup = useMemo(
+    () =>
+      categoryGroups.find(
+        (group) => selectedCategoryLabel === group.major || group.subs.includes(selectedCategoryLabel),
+      ) ?? categoryGroups[0],
+    [categoryGroups, selectedCategoryLabel],
+  );
+
   useEffect(() => {
     const text = keyword.trim().toLowerCase();
     if (!text) {
@@ -322,56 +330,64 @@ export default function SearchPage() {
 
       <SectionCard
         title="分类筛选"
-        subtitle={selectedCategoryLabel ? `当前筛选：${selectedCategoryLabel}` : "点击大类或子类直接筛选物料"}
+        subtitle={selectedCategoryLabel ? `当前：${selectedCategoryLabel}` : "先选大类，再点子类；默认展示第一组"}
       >
         {categoryGroups.length === 0 ? (
           <EmptyState icon="🏷️" text="暂无分类数据" hint="请先在 Bitable categories 表维护大类和子类" />
         ) : (
-          <div className="category-filter-table">
-            {categoryGroups.map((group) => (
-              <div className="category-filter-row" key={group.major}>
-                <button
-                  type="button"
-                  className={`category-filter-major ${
-                    selectedCategoryLabel === group.major ? "category-filter-active" : ""
-                  }`}
-                  onClick={() => chooseCategory(group.major)}
-                >
-                  {group.major}
-                </button>
-                <div className="category-filter-subs">
-                  {group.subs.length === 0 ? (
+          <div className="category-filter-compact">
+            <div className="category-filter-toolbar">
+              <div className="category-filter-major-scroll" aria-label="大类筛选">
+                {categoryGroups.map((group) => {
+                  const isActive =
+                    selectedCategoryLabel === group.major || group.subs.includes(selectedCategoryLabel);
+                  return (
                     <button
                       type="button"
-                      className={`category-filter-sub ${
-                        selectedCategoryLabel === group.major ? "category-filter-active" : ""
-                      }`}
+                      className={`category-filter-major ${isActive ? "category-filter-active" : ""}`}
+                      key={group.major}
                       onClick={() => chooseCategory(group.major)}
                     >
-                      全部
+                      <span>{group.major}</span>
+                      <span className="category-filter-count">{Math.max(group.subs.length, 1)}</span>
                     </button>
-                  ) : (
-                    group.subs.map((sub) => (
-                      <button
-                        key={`${group.major}-${sub}`}
-                        type="button"
-                        className={`category-filter-sub ${
-                          selectedCategoryLabel === sub ? "category-filter-active" : ""
-                        }`}
-                        onClick={() => chooseCategory(sub)}
-                      >
-                        {sub}
-                      </button>
-                    ))
-                  )}
-                </div>
+                  );
+                })}
               </div>
-            ))}
-            {selectedCategoryLabel && (
-              <div className="category-filter-clear">
-                <Button size="small" fill="outline" onClick={clearCategoryFilter}>
-                  清除分类筛选
+              {selectedCategoryLabel && (
+                <Button size="mini" fill="none" onClick={clearCategoryFilter}>
+                  清除
                 </Button>
+              )}
+            </div>
+
+            {activeCategoryGroup && (
+              <div className="category-filter-subs" aria-label={`${activeCategoryGroup.major} 子类筛选`}>
+                <button
+                  type="button"
+                  className={`category-filter-sub ${
+                    selectedCategoryLabel === activeCategoryGroup.major ? "category-filter-active" : ""
+                  }`}
+                  onClick={() => chooseCategory(activeCategoryGroup.major)}
+                >
+                  全部
+                </button>
+                {activeCategoryGroup.subs.length === 0 ? (
+                  <span className="category-filter-empty">该大类暂无子类</span>
+                ) : (
+                  activeCategoryGroup.subs.map((sub) => (
+                    <button
+                      key={`${activeCategoryGroup.major}-${sub}`}
+                      type="button"
+                      className={`category-filter-sub ${
+                        selectedCategoryLabel === sub ? "category-filter-active" : ""
+                      }`}
+                      onClick={() => chooseCategory(sub)}
+                    >
+                      {sub}
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>

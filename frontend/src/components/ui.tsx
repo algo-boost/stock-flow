@@ -57,6 +57,7 @@ export function PageHero({
   return (
     <div className="page-hero">
       <div className="page-hero-text">
+        <div className="page-hero-kicker">LAB INVENTORY</div>
         <h1 className="page-hero-title">{title}</h1>
         {subtitle && <p className="page-hero-subtitle">{subtitle}</p>}
       </div>
@@ -139,11 +140,13 @@ export function MaterialCard({
 }) {
   return (
     <button type="button" className="material-card" onClick={onClick}>
-      <div className="material-card-icon">📦</div>
       <div className="material-card-main">
+        <div className="material-card-header">
+          <span className="chip chip-code">{code}</span>
+          {warning ? <span className="status-dot status-warning">LOW</span> : <span className="status-dot status-ok">OK</span>}
+        </div>
         <div className="material-card-name">{name}</div>
         <div className="material-card-meta">
-          <span className="chip">{code}</span>
           {category && <span className="chip chip-muted">{category}</span>}
           {unit && <span className="chip chip-muted">{unit}</span>}
         </div>
@@ -164,6 +167,20 @@ export function TxBadge({ type }: { type: string }) {
 export function EmptyState({ icon, text, hint }: { icon: string; text: string; hint?: string }) {
   return (
     <div className="empty-state">
+      <div className="empty-state-illustration" aria-hidden>
+        <svg viewBox="0 0 120 120" role="img">
+          <rect x="34" y="44" width="52" height="38" rx="6" />
+          <path d="M60 32v12" />
+          <circle cx="60" cy="28" r="5" />
+          <circle cx="50" cy="60" r="3" />
+          <circle cx="70" cy="60" r="3" />
+          <path d="M52 72h16" />
+          <path d="M26 56v20" />
+          <path d="M94 56v20" />
+          <path d="M43 92h12" />
+          <path d="M65 92h12" />
+        </svg>
+      </div>
       <div className="empty-state-icon">{icon}</div>
       <div className="empty-state-text">{text}</div>
       {hint && <div className="empty-state-hint">{hint}</div>}
