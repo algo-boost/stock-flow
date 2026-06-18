@@ -3,10 +3,9 @@ import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "ant
 import { useSearchParams } from "react-router-dom";
 import { createStockRequest, getMaterial, postOutbound, searchMaterials } from "../api";
 import type { MaterialDetail, MaterialSearchItem } from "../api/types";
-import { CacheRefreshButton } from "../components/CacheRefreshButton";
-import { useAuth } from "../components/AuthGate";
-import { Layout } from "../components/Layout";
-import { EmptyState, PageHero, SectionCard } from "../components/ui";
+import { CacheRefreshButton } from "./CacheRefreshButton";
+import { useAuth } from "./AuthGate";
+import { EmptyState, SectionCard } from "./ui";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
@@ -25,10 +24,12 @@ function applyLocalOutbound(
     .filter((item) => item.total_quantity > 0);
 }
 
-export default function OutboundPage() {
+export function StockOutboundPanel() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
+  const activeTab = params.get("tab");
+  const shouldLoadPreset = !activeTab || activeTab === "outbound";
 
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
@@ -65,7 +66,7 @@ export default function OutboundPage() {
   }, [loadMaterials]);
 
   useEffect(() => {
-    if (!presetMaterialId) return;
+    if (!presetMaterialId || !shouldLoadPreset) return;
     void (async () => {
       try {
         const detail = await getMaterial(presetMaterialId);
@@ -77,7 +78,7 @@ export default function OutboundPage() {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
-  }, [presetMaterialId]);
+  }, [presetMaterialId, shouldLoadPreset]);
 
   const selectMaterial = async (item: MaterialSearchItem) => {
     setLoading(true);
@@ -123,7 +124,6 @@ export default function OutboundPage() {
   );
 
   const maxQty = selected?.inventory.find((i) => i.location_id === locationId)?.quantity ?? 0;
-
   const canSubmit = Boolean(selected && locationId && qty > 0 && qty <= maxQty && note.trim());
 
   const onSubmit = async () => {
@@ -165,12 +165,12 @@ export default function OutboundPage() {
   if (selected) {
     const m = selected.material;
     return (
-      <Layout title={isDirectOutbound ? "出库" : "出库申请"}>
-        <PageHero title="确认出库" subtitle={`${m.name} · 库存 ${selected.total_quantity} ${m.unit}`} />
-
+      <>
         <SectionCard
-          title={isDirectOutbound ? "出库信息" : "申请信息"}
-          subtitle={isDirectOutbound ? "用途必填，便于追溯" : "提交后等待管理员审批，审批通过后再扣减库存"}
+          title="确认出库"
+          subtitle={`${m.name} · 库存 ${selected.total_quantity} ${m.unit} · ${
+            isDirectOutbound ? "用途必填，便于追溯" : "提交后等待管理员审批"
+          }`}
         >
           <button type="button" className="back-link" onClick={backToList}>
             ← 返回物料列表
@@ -219,78 +219,69 @@ export default function OutboundPage() {
             {isDirectOutbound ? "确认出库" : "提交出库申请"}
           </Button>
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout title={isDirectOutbound ? "出库" : "出库申请"}>
-      <PageHero
-        title={isDirectOutbound ? "出库领用" : "出库申请"}
-        subtitle={isDirectOutbound ? "默认分页显示有库存物料，支持搜索后出库" : "普通用户提交申请，管理员审批通过后执行出库"}
-        extra={canInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : undefined}
+    <SectionCard
+      title={isDirectOutbound ? "出库领用" : "出库申请"}
+      subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种可出库物料`}
+    >
+      <SearchBar
+        placeholder="搜索名称 / 编码 / 条码 / 分类"
+        value={keyword}
+        onChange={setKeyword}
+        onSearch={onSearch}
+        onClear={() => {
+          setKeyword("");
+          void loadMaterials("", 1);
+        }}
       />
+      <div className="catalog-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
+        {canInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : null}
+      </div>
 
-      <SectionCard title="物料列表" subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种可出库`}>
-        <SearchBar
-          placeholder="搜索名称 / 编码 / 条码 / 分类"
-          value={keyword}
-          onChange={setKeyword}
-          onSearch={onSearch}
-          onClear={() => {
-            setKeyword("");
-            void loadMaterials("", 1);
-          }}
+      {loading && items.length === 0 ? (
+        <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon="📦"
+          text={keyword ? "没有匹配的物料" : "暂无可出库物料"}
+          hint={keyword ? "换个关键词试试" : "请先在 Bitable 维护库存"}
         />
-        <div className="catalog-meta">
-          {loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}
-        </div>
-
-        {loading && items.length === 0 ? (
-          <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
-        ) : items.length === 0 ? (
-          <EmptyState
-            icon="📦"
-            text={keyword ? "没有匹配的物料" : "暂无可出库物料"}
-            hint={keyword ? "换个关键词试试" : "请先在 Bitable 维护库存"}
-          />
-        ) : (
-          <div className="catalog-list">
-            {items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="catalog-row"
-                onClick={() => selectMaterial(item)}
-              >
-                <div className="catalog-row-main">
-                  <div className="catalog-row-name">{item.name}</div>
-                  <div className="catalog-row-meta">
-                    <span className="chip">{item.code}</span>
-                    {(item.major_category || item.category_name) && (
-                      <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
-                    )}
-                    {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
-                    <span className="chip chip-muted">{item.unit}</span>
-                  </div>
-                  <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>
+      ) : (
+        <div className="catalog-list">
+          {items.map((item) => (
+            <button key={item.id} type="button" className="catalog-row" onClick={() => selectMaterial(item)}>
+              <div className="catalog-row-main">
+                <div className="catalog-row-name">{item.name}</div>
+                <div className="catalog-row-meta">
+                  <span className="chip">{item.code}</span>
+                  {(item.major_category || item.category_name) && (
+                    <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
+                  )}
+                  {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
+                  <span className="chip chip-muted">{item.unit}</span>
                 </div>
-                <div className="catalog-row-right">
-                  <span className="stock-badge">{item.total_quantity}</span>
-                  <span className="material-card-arrow">›</span>
-                </div>
-              </button>
-            ))}
-            {hasMore && (
-              <div className="load-more">
-                <Button loading={loading} fill="outline" block onClick={loadMore}>
-                  加载更多
-                </Button>
+                <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>
               </div>
-            )}
-          </div>
-        )}
-      </SectionCard>
-    </Layout>
+              <div className="catalog-row-right">
+                <span className="stock-badge">{item.total_quantity}</span>
+                <span className="material-card-arrow">›</span>
+              </div>
+            </button>
+          ))}
+          {hasMore && (
+            <div className="load-more">
+              <Button loading={loading} fill="outline" block onClick={loadMore}>
+                加载更多
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </SectionCard>
   );
 }

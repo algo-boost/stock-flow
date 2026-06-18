@@ -120,6 +120,24 @@ export function listCategories() {
   return request<Category[]>("/materials/categories");
 }
 
+export function createCategory(payload: {
+  name: string;
+  parent_id?: string | null;
+  default_location_type?: string;
+  examples?: string;
+}) {
+  return request<Category>("/materials/categories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCategory(categoryId: string) {
+  return request<{ deleted: boolean }>(`/materials/categories/${categoryId}`, {
+    method: "DELETE",
+  });
+}
+
 export function createMaterial(payload: {
   name: string;
   category_id: string;
@@ -146,6 +164,7 @@ export function searchMaterials(
     size?: number;
     stockOnly?: boolean;
     searchBy?: "all" | "category" | "name" | "code";
+    category?: string;
   },
 ) {
   const params = new URLSearchParams({
@@ -155,6 +174,7 @@ export function searchMaterials(
   if (q) params.set("q", q);
   if (opts?.stockOnly) params.set("stock_only", "true");
   if (opts?.searchBy) params.set("search_by", opts.searchBy);
+  if (opts?.category) params.set("category", opts.category);
   return request<PaginatedMaterials>(`/materials/search?${params}`);
 }
 
@@ -328,9 +348,22 @@ export function postInbound(payload: {
   qty: number;
   idempotency_key: string;
   note?: string;
+  row?: number;
+  column?: number;
 }) {
   return request<{ transaction_id: string }>("/inbound", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateInventorySlot(
+  materialId: string,
+  locationId: string,
+  payload: { row: number; column: number },
+) {
+  return request<InventoryItem>(`/materials/${materialId}/inventory/${locationId}/slot`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -342,6 +375,8 @@ export function postTransfer(payload: {
   qty: number;
   idempotency_key: string;
   note?: string;
+  to_row?: number;
+  to_column?: number;
 }) {
   return request<{ transaction_ids: string[] }>("/transfer", {
     method: "POST",

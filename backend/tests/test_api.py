@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 
 import httpx
@@ -10,6 +12,7 @@ from app.config import Settings, get_settings
 from app.main import app
 from app.models import Role
 from app.services.feishu_client import FeishuClient
+from app.bitable.mock_store import reset_mock_store
 from app.utils.idempotency import clear_idempotency_cache
 
 app.dependency_overrides[get_settings] = lambda: Settings(
@@ -26,8 +29,10 @@ HEADERS_ADMIN = {"X-Mock-Role": "ADMIN", "X-Mock-User": "test_admin"}
 
 @pytest.fixture(autouse=True)
 def reset_idempotency():
+    reset_mock_store()
     clear_idempotency_cache()
     yield
+    reset_mock_store()
     clear_idempotency_cache()
 
 
@@ -113,12 +118,12 @@ def test_search_materials_by_code():
     assert all("M001" in item["code"] or item.get("barcode") == "M001" for item in items)
 
 
-def test_search_materials_by_category():
-    resp = client.get("/materials/search?q=电机&search_by=category", headers=HEADERS_USER)
+def test_search_materials_by_category_tree():
+    resp = client.get("/materials/search?category=cat_sensing", headers=HEADERS_USER)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
-    assert len(items) >= 1
-    assert all("电机" in (item.get("major_category") or item.get("sub_category") or "") for item in items)
+    assert len(items) >= 2
+    assert all(item["sub_category"] == "感知设备" for item in items)
 
 
 def test_search_materials_stock_only():
@@ -133,10 +138,46 @@ def test_list_material_categories():
     resp = client.get("/materials/categories", headers=HEADERS_USER)
     assert resp.status_code == 200
     categories = resp.json()["data"]
-    assert any(
-        category["major_name"] == "电机模组" and category["sub_name"] == "达妙电机"
-        for category in categories
+    assert any(category["name"] == "达妙电机" for category in categories)
+    assert any(category["name"] == "电器类" and category["parent_id"] is None for category in categories)
+
+
+def test_category_crud_admin():
+    create_resp = client.post(
+        "/materials/categories",
+        headers=HEADERS_ADMIN,
+        json={"name": "测试一级", "parent_id": None},
     )
+    assert create_resp.status_code == 200
+    category = create_resp.json()["data"]
+    assert category["name"] == "测试一级"
+
+    child_resp = client.post(
+        "/materials/categories",
+        headers=HEADERS_ADMIN,
+        json={"name": "测试子类", "parent_id": category["id"]},
+    )
+    assert child_resp.status_code == 200
+
+    delete_parent = client.delete(f"/materials/categories/{category['id']}", headers=HEADERS_ADMIN)
+    assert delete_parent.status_code == 200
+
+
+def test_delete_leaf_category_reassigns_material():
+    resp = client.delete("/materials/categories/cat_motor_dm", headers=HEADERS_ADMIN)
+    assert resp.status_code == 200
+    material = client.get("/materials/mat_001", headers=HEADERS_USER).json()["data"]["material"]
+    assert material["category_id"] == "cat_motor_module"
+    assert material["category_name"] == "电机模组"
+
+
+def test_category_create_forbidden_for_user():
+    resp = client.post(
+        "/materials/categories",
+        headers=HEADERS_USER,
+        json={"name": "无权限分类", "parent_id": None},
+    )
+    assert resp.status_code == 403
 
 
 def test_location_create_forbidden_for_user():
@@ -203,7 +244,7 @@ def test_create_material_success_for_keeper():
         json={
             "name": "测试新物料",
             "category_id": "cat_motor_dm",
-            "major_category": "电机模组",
+            "major_category": "电器类",
             "sub_category": "达妙电机",
             "unit": "个",
             "spec": "测试规格",
@@ -217,7 +258,7 @@ def test_create_material_success_for_keeper():
     assert material["id"]
     assert material["name"] == "测试新物料"
     assert material["category_name"] == "达妙电机"
-    assert material["major_category"] == "电机模组"
+    assert material["major_category"] == "电器类"
     assert material["sub_category"] == "达妙电机"
     assert material["supplier"] == "测试供货商"
     assert material["min_stock"] == 5
@@ -390,7 +431,7 @@ def test_user_request_approved_by_admin_creates_history():
         headers=HEADERS_USER,
         json={
             "type": "出库",
-            "material_id": "mat_002",
+            "material_id": "mat_realsense",
             "location_id": "loc_01",
             "qty": 1,
             "idempotency_key": "test-request-outbound-001",
@@ -456,7 +497,7 @@ def test_transfer_forbidden_for_user():
         "/transfer",
         headers=HEADERS_USER,
         json={
-            "material_id": "mat_002",
+            "material_id": "mat_realsense",
             "from_location_id": "loc_01",
             "to_location_id": "loc_staging",
             "qty": 1,
@@ -473,7 +514,7 @@ def test_transfer_success_for_keeper():
         "/transfer",
         headers=HEADERS_KEEPER,
         json={
-            "material_id": "mat_002",
+            "material_id": "mat_realsense",
             "from_location_id": "loc_01",
             "to_location_id": "loc_staging",
             "qty": 1,
@@ -491,7 +532,7 @@ def test_transfer_success_for_keeper():
         "/transfer",
         headers=HEADERS_KEEPER,
         json={
-            "material_id": "mat_002",
+            "material_id": "mat_realsense",
             "from_location_id": "loc_01",
             "to_location_id": "loc_staging",
             "qty": 1,
@@ -501,11 +542,11 @@ def test_transfer_success_for_keeper():
     )
     assert resp2.json()["data"]["transaction_ids"] == tx_ids
 
-    detail = client.get("/materials/mat_002", headers=HEADERS_KEEPER).json()["data"]
+    detail = client.get("/materials/mat_realsense", headers=HEADERS_KEEPER).json()["data"]
     by_location = {item["location_id"]: item["quantity"] for item in detail["inventory"]}
     assert by_location["loc_staging"] >= 1
 
-    tx_resp = client.get("/materials/mat_002/transactions", headers=HEADERS_KEEPER)
+    tx_resp = client.get("/materials/mat_realsense/transactions", headers=HEADERS_KEEPER)
     txs = tx_resp.json()["data"]
     movement = [tx for tx in txs if tx["id"] in tx_ids]
     assert {tx["type"] for tx in movement} == {"移动"}

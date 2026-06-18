@@ -3,16 +3,14 @@ import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "ant
 import { useSearchParams } from "react-router-dom";
 import { getMaterial, listLocations, postTransfer, searchMaterials } from "../api";
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
-import { AuthGate } from "../components/AuthGate";
-import { CacheRefreshButton } from "../components/CacheRefreshButton";
-import { Layout } from "../components/Layout";
-import { EmptyState, PageHero, SectionCard } from "../components/ui";
+import { CacheRefreshButton } from "./CacheRefreshButton";
+import { EmptyState, SectionCard } from "./ui";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
 }
 
-function TransferForm() {
+export function LocationTransferPanel() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
@@ -152,6 +150,7 @@ function TransferForm() {
       });
       Toast.show({ icon: "success", content: `移动成功 ${result.transaction_ids.length} 条流水` });
       backToList();
+      void loadMaterials(keyword, 1);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "移动失败" });
     } finally {
@@ -161,13 +160,11 @@ function TransferForm() {
 
   if (selected) {
     return (
-      <Layout title="库内移动">
-        <PageHero
+      <>
+        <SectionCard
           title="确认移动"
-          subtitle={`${selected.material.name} · 总库存 ${selected.total_quantity} ${selected.material.unit}`}
-          extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
-        />
-        <SectionCard title="移动信息" subtitle="移动不改变总库存，只调整库位分布">
+          subtitle={`${selected.material.name} · 总库存 ${selected.total_quantity} ${selected.material.unit} · 移动不改变总库存`}
+        >
           <button type="button" className="back-link" onClick={backToList}>
             ← 返回物料列表
           </button>
@@ -213,90 +210,64 @@ function TransferForm() {
             确认移动
           </Button>
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout title="库内移动">
-      <PageHero
-        title="库内移动"
-        subtitle="默认分页显示有库存物料，用于暂存上架和库位整理"
-        extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
+    <SectionCard
+      title="库内移动"
+      subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种有库存物料，用于暂存上架和库位整理`}
+    >
+      <SearchBar
+        placeholder="搜索名称 / 编码 / 条码 / 分类"
+        value={keyword}
+        onChange={setKeyword}
+        onSearch={onSearch}
+        onClear={() => {
+          setKeyword("");
+          void loadMaterials("", 1);
+        }}
       />
-      <SectionCard title="选择物料" subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种有库存物料`}>
-        <SearchBar
-          placeholder="搜索名称 / 编码 / 条码 / 分类"
-          value={keyword}
-          onChange={setKeyword}
-          onSearch={onSearch}
-          onClear={() => {
-            setKeyword("");
-            void loadMaterials("", 1);
-          }}
-        />
-        <div className="catalog-meta">
-          {loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}
-        </div>
-        {loading && items.length === 0 ? (
-          <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
-        ) : items.length === 0 ? (
-          <EmptyState icon="📦" text={keyword ? "没有匹配的物料" : "暂无可移动物料"} />
-        ) : (
-          <div className="catalog-list">
-            {items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="catalog-row"
-                onClick={() => selectMaterial(item)}
-              >
-                <div className="catalog-row-main">
-                  <div className="catalog-row-name">{item.name}</div>
-                  <div className="catalog-row-meta">
-                    <span className="chip">{item.code}</span>
-                    {(item.major_category || item.category_name) && (
-                      <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
-                    )}
-                    {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
-                    <span className="chip chip-muted">{item.unit}</span>
-                  </div>
-                  <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>
+      <div className="catalog-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
+        <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />
+      </div>
+      {loading && items.length === 0 ? (
+        <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+      ) : items.length === 0 ? (
+        <EmptyState icon="📦" text={keyword ? "没有匹配的物料" : "暂无可移动物料"} />
+      ) : (
+        <div className="catalog-list">
+          {items.map((item) => (
+            <button key={item.id} type="button" className="catalog-row" onClick={() => selectMaterial(item)}>
+              <div className="catalog-row-main">
+                <div className="catalog-row-name">{item.name}</div>
+                <div className="catalog-row-meta">
+                  <span className="chip">{item.code}</span>
+                  {(item.major_category || item.category_name) && (
+                    <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
+                  )}
+                  {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
+                  <span className="chip chip-muted">{item.unit}</span>
                 </div>
-                <div className="catalog-row-right">
-                  <span className="stock-badge">{item.total_quantity}</span>
-                  <span className="material-card-arrow">›</span>
-                </div>
-              </button>
-            ))}
-            {hasMore && (
-              <div className="load-more">
-                <Button loading={loading} fill="outline" block onClick={loadMore}>
-                  加载更多
-                </Button>
+                <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>
               </div>
-            )}
-          </div>
-        )}
-      </SectionCard>
-    </Layout>
-  );
-}
-
-function TransferDenied() {
-  return (
-    <Layout title="库内移动">
-      <SectionCard>
-        <EmptyState icon="🔒" text="暂无移动权限" hint="库内移动需要库管员或管理员角色" />
-      </SectionCard>
-    </Layout>
-  );
-}
-
-export default function TransferPage() {
-  return (
-    <AuthGate roles={["KEEPER", "ADMIN"]} fallback={<TransferDenied />}>
-      <TransferForm />
-    </AuthGate>
+              <div className="catalog-row-right">
+                <span className="stock-badge">{item.total_quantity}</span>
+                <span className="material-card-arrow">›</span>
+              </div>
+            </button>
+          ))}
+          {hasMore && (
+            <div className="load-more">
+              <Button loading={loading} fill="outline" block onClick={loadMore}>
+                加载更多
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </SectionCard>
   );
 }

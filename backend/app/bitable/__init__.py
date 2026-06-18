@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.bitable.client import BYTableClient
 from app.bitable.mock_store import get_mock_store
 

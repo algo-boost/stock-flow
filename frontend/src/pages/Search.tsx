@@ -1,124 +1,81 @@
-import { useEffect, useMemo, useState } from "react";
-import { Button, SearchBar, Selector, Toast } from "antd-mobile";
-import { useNavigate } from "react-router-dom";
-import { listCategories, searchMaterials } from "../api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, SearchBar, Toast } from "antd-mobile";
+import { useLocation, useNavigate } from "react-router-dom";
+import { createCategory, deleteCategory, listCategories, searchMaterials } from "../api";
 import type { Category, MaterialSearchItem } from "../api/types";
+import { CategoryTree } from "../components/CategoryTree";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, MaterialCard, PageHero, RolePermissions, SectionCard } from "../components/ui";
-
-type SearchMode = "category" | "name" | "code";
+import { formatCategoryPath } from "../utils/categoryTree";
 
 interface SearchSuggestion {
   label: string;
   value: string;
   hint: string;
+  kind: "category" | "material";
+  categoryId?: string;
 }
-
-interface CategoryGroup {
-  major: string;
-  subs: string[];
-}
-
-const SEARCH_MODE_OPTIONS: Array<{ label: string; value: SearchMode }> = [
-  { label: "按分类", value: "category" },
-  { label: "按名称", value: "name" },
-  { label: "按编码", value: "code" },
-];
 
 export default function SearchPage() {
   const pageSize = 20;
   const [keyword, setKeyword] = useState("");
-  const [searchMode, setSearchMode] = useState<SearchMode>("name");
   const [categories, setCategories] = useState<Category[]>([]);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
-  const [selectedCategoryLabel, setSelectedCategoryLabel] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, canInbound, canApprove } = useAuth();
 
-  const loadMaterials = async (
-    q: string,
-    nextPage = 1,
-    append = false,
-    mode: SearchMode | "all" = searchMode,
-  ) => {
-    setLoading(true);
-    try {
-      const data = await searchMaterials(q.trim(), {
-        page: nextPage,
-        size: pageSize,
-        searchBy: q.trim() ? mode : "all",
-      });
-      setItems((current) => (append ? [...current, ...data.items] : data.items));
-      setPage(data.page);
-      setTotal(data.total);
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "搜索失败" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadMaterials("", 1);
+  const loadCategories = useCallback(async () => {
+    const data = await listCategories();
+    setCategories(data);
   }, []);
 
+  const loadMaterials = useCallback(
+    async (q: string, nextPage = 1, append = false, categoryId: string | null = null) => {
+      setLoading(true);
+      try {
+        const data = await searchMaterials(q.trim(), {
+          page: nextPage,
+          size: pageSize,
+          searchBy: "all",
+          category: categoryId ?? undefined,
+        });
+        setItems((current) => (append ? [...current, ...data.items] : data.items));
+        setPage(data.page);
+        setTotal(data.total);
+      } catch (e) {
+        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "搜索失败" });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
-    void listCategories()
-      .then(setCategories)
-      .catch((e) => {
-        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载分类失败" });
-      });
-  }, []);
+    if (location.pathname !== "/") return;
+    void loadCategories().catch((e) => {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载分类失败" });
+    });
+    void loadMaterials(keyword, 1, false, selectedCategoryId);
+  }, [location.pathname, location.key, loadCategories, loadMaterials, keyword, selectedCategoryId]);
 
-  const categorySuggestionPool = useMemo(() => {
-    const seen = new Set<string>();
-    const result: SearchSuggestion[] = [];
-    for (const category of categories) {
-      const major = category.major_name || category.name;
-      const sub = category.sub_name || category.name;
-      const full = major && sub && major !== sub ? `${major} / ${sub}` : sub;
-      for (const item of [
-        { label: full, value: sub, hint: major ? `子类 · ${major}` : "子类" },
-        { label: major, value: major, hint: "大类" },
-      ]) {
-        if (!item.label || seen.has(item.label)) continue;
-        seen.add(item.label);
-        result.push(item);
-      }
-    }
-    return result;
-  }, [categories]);
-
-  const categoryGroups = useMemo<CategoryGroup[]>(() => {
-    const groups = new Map<string, Set<string>>();
-    for (const category of categories) {
-      const major = category.major_name || category.name;
-      const sub = category.sub_name || category.name;
-      if (!major) continue;
-      if (!groups.has(major)) {
-        groups.set(major, new Set());
-      }
-      if (sub && sub !== major) {
-        groups.get(major)?.add(sub);
-      }
-    }
-    return Array.from(groups.entries()).map(([major, subs]) => ({
-      major,
-      subs: Array.from(subs),
-    }));
-  }, [categories]);
-
-  const activeCategoryGroup = useMemo(
+  const categorySuggestionPool = useMemo(
     () =>
-      categoryGroups.find(
-        (group) => selectedCategoryLabel === group.major || group.subs.includes(selectedCategoryLabel),
-      ) ?? categoryGroups[0],
-    [categoryGroups, selectedCategoryLabel],
+      categories.map((category) => ({
+        label: formatCategoryPath(categories, category.id) || category.name,
+        value: category.name,
+        hint: "分类",
+        kind: "category" as const,
+        categoryId: category.id,
+      })),
+    [categories],
   );
 
   useEffect(() => {
@@ -128,91 +85,80 @@ export default function SearchPage() {
       return;
     }
 
-    if (searchMode === "category") {
-      setSuggestions(
-        categorySuggestionPool
-          .filter((item) => item.label.toLowerCase().includes(text) || item.value.toLowerCase().includes(text))
-          .slice(0, 5),
-      );
-      return;
-    }
-
     const timer = window.setTimeout(() => {
-      void searchMaterials(keyword.trim(), { page: 1, size: 5, searchBy: searchMode })
-        .then((data) => {
+      void (async () => {
+        try {
+          const categoryMatches = categorySuggestionPool
+            .filter(
+              (item) =>
+                item.label.toLowerCase().includes(text) || item.value.toLowerCase().includes(text),
+            )
+            .slice(0, 3);
+
+          const data = await searchMaterials(keyword.trim(), { page: 1, size: 5, searchBy: "all" });
           const seen = new Set<string>();
-          const next: SearchSuggestion[] = [];
+          const materialMatches: SearchSuggestion[] = [];
           for (const item of data.items) {
-            const value = searchMode === "code" ? item.code : item.name;
-            if (!value || seen.has(value)) continue;
-            seen.add(value);
-            next.push({
-              label: value,
-              value,
-              hint:
-                searchMode === "code"
-                  ? item.name
-                  : item.major_category && item.sub_category
-                    ? `${item.major_category} / ${item.sub_category}`
-                    : item.category_name ?? item.code,
+            if (seen.has(item.id)) continue;
+            seen.add(item.id);
+            const meta = [item.code, item.spec].filter(Boolean).join(" · ");
+            const category =
+              item.major_category && item.sub_category
+                ? `${item.major_category} / ${item.sub_category}`
+                : item.category_name;
+            materialMatches.push({
+              label: item.name,
+              value: item.name,
+              hint: meta || category || "物料",
+              kind: "material",
             });
           }
-          setSuggestions(next.slice(0, 5));
-        })
-        .catch(() => setSuggestions([]));
+
+          setSuggestions([...categoryMatches, ...materialMatches].slice(0, 6));
+        } catch {
+          setSuggestions([]);
+        }
+      })();
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [categorySuggestionPool, keyword, searchMode]);
+  }, [categorySuggestionPool, keyword]);
 
   const onSearch = (val: string) => {
     setKeyword(val);
-    setSelectedCategoryLabel(searchMode === "category" ? val.trim() : "");
+    setSelectedCategoryId(null);
     setSuggestions([]);
-    void loadMaterials(val, 1, false, searchMode);
+    void loadMaterials(val, 1, false, null);
   };
 
   const chooseSuggestion = (suggestion: SearchSuggestion) => {
+    setSuggestions([]);
+    if (suggestion.kind === "category" && suggestion.categoryId) {
+      setKeyword("");
+      setSelectedCategoryId(suggestion.categoryId);
+      void loadMaterials("", 1, false, suggestion.categoryId);
+      return;
+    }
     setKeyword(suggestion.value);
-    setSelectedCategoryLabel(searchMode === "category" ? suggestion.value : "");
-    setSuggestions([]);
-    void loadMaterials(suggestion.value, 1, false, searchMode);
+    setSelectedCategoryId(null);
+    void loadMaterials(suggestion.value, 1, false, null);
   };
 
-  const changeSearchMode = (mode: SearchMode) => {
-    setSearchMode(mode);
-    if (mode !== "category") {
-      setSelectedCategoryLabel("");
-    }
-    setSuggestions([]);
-    if (keyword.trim()) {
-      void loadMaterials(keyword, 1, false, mode);
-    }
-  };
-
-  const chooseCategory = (value: string) => {
-    setSearchMode("category");
-    setKeyword(value);
-    setSelectedCategoryLabel(value);
-    setSuggestions([]);
-    void loadMaterials(value, 1, false, "category");
-  };
-
-  const clearCategoryFilter = () => {
+  const onCategorySelect = (categoryId: string | null) => {
+    setSelectedCategoryId(categoryId);
     setKeyword("");
-    setSelectedCategoryLabel("");
     setSuggestions([]);
-    void loadMaterials("", 1, false, "all");
+    void loadMaterials("", 1, false, categoryId);
   };
 
   const loadMore = () => {
-    void loadMaterials(keyword, page + 1, true);
+    void loadMaterials(keyword, page + 1, true, selectedCategoryId);
   };
 
   const hasMore = items.length < total;
 
   return (
-    <Layout title="物料管理">
+    <Layout title="物料管理系统">
       <PageHero
         title={`你好，${user?.name ?? "用户"}`}
         subtitle="搜索物料、查看库存、快速出入库"
@@ -225,33 +171,25 @@ export default function SearchPage() {
       )}
 
       <div className="quick-actions">
-        <button type="button" className="quick-action outbound" onClick={() => navigate("/outbound")}>
-          <span className="quick-action-icon">📤</span>
-          <span className="quick-action-title">{canInbound ? "出库领用" : "出库申请"}</span>
-          <span className="quick-action-desc">{canInbound ? "记录项目领料" : "审批通过后扣减库存"}</span>
+        <button type="button" className="quick-action outbound" onClick={() => navigate("/stock")}>
+          <span className="quick-action-icon">↕</span>
+          <span className="quick-action-title">出入库</span>
+          <span className="quick-action-desc">
+            {canInbound ? "出库领用 / 入库上架" : "提交出入库申请"}
+          </span>
         </button>
         {canInbound ? (
           <>
-            <button type="button" className="quick-action" onClick={() => navigate("/inbound")}>
-              <span className="quick-action-icon">📥</span>
-              <span className="quick-action-title">入库上架</span>
-              <span className="quick-action-desc">采购 / 归还入库</span>
-            </button>
-            <button type="button" className="quick-action" onClick={() => navigate("/transfer")}>
-              <span className="quick-action-icon">↔</span>
-              <span className="quick-action-title">库内移动</span>
-              <span className="quick-action-desc">暂存上架 / 整理库位</span>
-            </button>
             <button type="button" className="quick-action" onClick={() => navigate("/locations")}>
               <span className="quick-action-icon">📍</span>
               <span className="quick-action-title">库位管理</span>
-              <span className="quick-action-desc">新增 / 改名 / 删除</span>
+              <span className="quick-action-desc">维护库位 / 库内移动</span>
             </button>
             {canApprove && (
-              <button type="button" className="quick-action" onClick={() => navigate("/approvals")}>
-                <span className="quick-action-icon">✅</span>
-                <span className="quick-action-title">审批申请</span>
-                <span className="quick-action-desc">通过后执行库存变更</span>
+              <button type="button" className="quick-action" onClick={() => navigate("/admin-center")}>
+                <span className="quick-action-icon">⚙</span>
+                <span className="quick-action-title">运营中心</span>
+                <span className="quick-action-desc">审批 / 缺货预警 / 配置审计</span>
               </button>
             )}
             {canApprove && (
@@ -261,21 +199,9 @@ export default function SearchPage() {
                 <span className="quick-action-desc">供货商 / 入库 / 预警</span>
               </button>
             )}
-            {canApprove && (
-              <button type="button" className="quick-action" onClick={() => navigate("/admin-center")}>
-                <span className="quick-action-icon">⚙</span>
-                <span className="quick-action-title">运营中心</span>
-                <span className="quick-action-desc">组织 / 配置 / 审计 / 统计</span>
-              </button>
-            )}
           </>
         ) : (
           <>
-            <button type="button" className="quick-action" onClick={() => navigate("/inbound")}>
-              <span className="quick-action-icon">📥</span>
-              <span className="quick-action-title">入库申请</span>
-              <span className="quick-action-desc">归还 / 入库待审批</span>
-            </button>
             <button type="button" className="quick-action" onClick={() => navigate("/history")}>
               <span className="quick-action-icon">📒</span>
               <span className="quick-action-title">我的历史</span>
@@ -290,31 +216,25 @@ export default function SearchPage() {
         )}
       </div>
 
-      <SectionCard title="搜索物料" subtitle="可按分类、名称或编码搜索">
+      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词，自动组合搜索">
         <div className="search-card">
-          <Selector
-            className="search-mode-selector"
-            options={SEARCH_MODE_OPTIONS}
-            value={[searchMode]}
-            onChange={(arr) => changeSearchMode((arr[0] as SearchMode | undefined) ?? "name")}
-          />
           <SearchBar
-            placeholder="输入关键词搜索…"
+            placeholder="搜索名称、编码、型号、分类…"
             value={keyword}
             onChange={setKeyword}
             onSearch={onSearch}
             onClear={() => {
               setKeyword("");
-              setSelectedCategoryLabel("");
+              setSelectedCategoryId(null);
               setSuggestions([]);
-              void loadMaterials("", 1);
+              void loadMaterials("", 1, false, null);
             }}
           />
           {suggestions.length > 0 && (
             <div className="search-suggestions">
               {suggestions.map((suggestion) => (
                 <button
-                  key={`${suggestion.hint}-${suggestion.value}`}
+                  key={`${suggestion.kind}-${suggestion.hint}-${suggestion.value}`}
                   type="button"
                   className="search-suggestion"
                   onClick={() => chooseSuggestion(suggestion)}
@@ -329,74 +249,31 @@ export default function SearchPage() {
       </SectionCard>
 
       <SectionCard
-        title="分类筛选"
-        subtitle={selectedCategoryLabel ? `当前：${selectedCategoryLabel}` : "先选大类，再点子类；默认展示第一组"}
+        title="分类浏览"
+        subtitle="展开大类后选中类筛选；数字为该类及下级物料库存合计"
       >
-        {categoryGroups.length === 0 ? (
-          <EmptyState icon="🏷️" text="暂无分类数据" hint="请先在 Bitable categories 表维护大类和子类" />
+        {categories.length === 0 ? (
+          <EmptyState icon="🏷️" text="暂无分类数据" hint="管理员可添加顶层分类，或先在 Bitable 维护 categories 表" />
         ) : (
-          <div className="category-filter-compact">
-            <div className="category-filter-toolbar">
-              <div className="category-filter-major-scroll" aria-label="大类筛选">
-                {categoryGroups.map((group) => {
-                  const isActive =
-                    selectedCategoryLabel === group.major || group.subs.includes(selectedCategoryLabel);
-                  return (
-                    <button
-                      type="button"
-                      className={`category-filter-major ${isActive ? "category-filter-active" : ""}`}
-                      key={group.major}
-                      onClick={() => chooseCategory(group.major)}
-                    >
-                      <span>{group.major}</span>
-                      <span className="category-filter-count">{Math.max(group.subs.length, 1)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {selectedCategoryLabel && (
-                <Button size="mini" fill="none" onClick={clearCategoryFilter}>
-                  清除
-                </Button>
-              )}
-            </div>
-
-            {activeCategoryGroup && (
-              <div className="category-filter-subs" aria-label={`${activeCategoryGroup.major} 子类筛选`}>
-                <button
-                  type="button"
-                  className={`category-filter-sub ${
-                    selectedCategoryLabel === activeCategoryGroup.major ? "category-filter-active" : ""
-                  }`}
-                  onClick={() => chooseCategory(activeCategoryGroup.major)}
-                >
-                  全部
-                </button>
-                {activeCategoryGroup.subs.length === 0 ? (
-                  <span className="category-filter-empty">该大类暂无子类</span>
-                ) : (
-                  activeCategoryGroup.subs.map((sub) => (
-                    <button
-                      key={`${activeCategoryGroup.major}-${sub}`}
-                      type="button"
-                      className={`category-filter-sub ${
-                        selectedCategoryLabel === sub ? "category-filter-active" : ""
-                      }`}
-                      onClick={() => chooseCategory(sub)}
-                    >
-                      {sub}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+          <CategoryTree
+            categories={categories}
+            selectedId={selectedCategoryId}
+            onSelect={onCategorySelect}
+            canManage={user?.role === "ADMIN"}
+            onCreate={async (payload) => {
+              await createCategory(payload);
+            }}
+            onDelete={async (categoryId) => {
+              await deleteCategory(categoryId);
+            }}
+            onRefresh={loadCategories}
+          />
         )}
       </SectionCard>
 
       <SectionCard
-        title={loading && items.length === 0 ? "加载中…" : keyword ? `找到 ${total} 条` : `全部物料 ${total} 条`}
-        subtitle="默认显示全部物料，搜索后按关键词筛选"
+        title={loading && items.length === 0 ? "加载中…" : keyword || selectedCategoryId ? `找到 ${total} 条` : `全部物料 ${total} 条`}
+        subtitle="红色库存表示低于安全库存"
       >
         {!loading && items.length === 0 && (
           <EmptyState icon="📭" text="没有匹配的物料" hint="换个关键词试试" />

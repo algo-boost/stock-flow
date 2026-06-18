@@ -11,6 +11,7 @@ import {
 } from "../auth/feishu";
 import { apiConfig } from "../api/config";
 import { clearAuthToken, getAuthToken } from "../auth/token";
+import { EmptyState } from "./ui";
 
 interface AuthContextValue {
   user: User | null;
@@ -176,7 +177,15 @@ export function AuthGate({
   fallback?: ReactNode;
 }) {
   const { user, loading } = useAuth();
-  if (loading) return null;
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="page-body">
+          <EmptyState icon="⏳" text="正在加载…" hint="验证登录与权限" />
+        </div>
+      </div>
+    );
+  }
   if (!user) return <>{fallback}</>;
   if (roles && !roles.some((role) => roleAllows(user.role, role))) return <>{fallback}</>;
   return <>{children}</>;

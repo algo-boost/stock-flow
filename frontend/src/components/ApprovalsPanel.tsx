@@ -2,9 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, SearchBar, Selector, Toast } from "antd-mobile";
 import { approveStockRequest, listApprovalRequests, rejectStockRequest } from "../api";
 import type { StockRequest, StockRequestStatus } from "../api/types";
-import { AuthGate } from "../components/AuthGate";
-import { Layout } from "../components/Layout";
-import { EmptyState, SectionCard, TxBadge } from "../components/ui";
+import { EmptyState, SectionCard, TxBadge } from "./ui";
 
 const STATUS_OPTIONS: Array<{ label: string; value: StockRequestStatus | "ALL" }> = [
   { label: "待审批", value: "待审批" },
@@ -13,7 +11,7 @@ const STATUS_OPTIONS: Array<{ label: string; value: StockRequestStatus | "ALL" }
   { label: "全部", value: "ALL" },
 ];
 
-function ApprovalsContent() {
+export function ApprovalsPanel({ onReviewed }: { onReviewed?: () => void }) {
   const [items, setItems] = useState<StockRequest[]>([]);
   const [status, setStatus] = useState<StockRequestStatus | "ALL">("待审批");
   const [keyword, setKeyword] = useState("");
@@ -46,6 +44,7 @@ function ApprovalsContent() {
       await approveStockRequest(id);
       Toast.show({ icon: "success", content: "已审批通过并执行库存变更" });
       await load();
+      onReviewed?.();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "审批失败" });
     } finally {
@@ -61,6 +60,7 @@ function ApprovalsContent() {
       await rejectStockRequest(id, reason.trim());
       Toast.show({ icon: "success", content: "已拒绝申请" });
       await load();
+      onReviewed?.();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "拒绝失败" });
     } finally {
@@ -69,7 +69,7 @@ function ApprovalsContent() {
   };
 
   return (
-    <Layout title="审批">
+    <>
       <SectionCard title="出入库审批" subtitle="审批通过后才会真正写入库存流水">
         <Selector
           options={STATUS_OPTIONS}
@@ -112,18 +112,10 @@ function ApprovalsContent() {
                 {item.reject_reason && <div className="tx-meta">拒绝原因：{item.reject_reason}</div>}
                 {item.status === "待审批" && (
                   <div className="actions two request-actions">
-                    <Button
-                      fill="outline"
-                      loading={reviewingId === item.id}
-                      onClick={() => reject(item.id)}
-                    >
+                    <Button fill="outline" loading={reviewingId === item.id} onClick={() => reject(item.id)}>
                       拒绝
                     </Button>
-                    <Button
-                      color="primary"
-                      loading={reviewingId === item.id}
-                      onClick={() => approve(item.id)}
-                    >
+                    <Button color="primary" loading={reviewingId === item.id} onClick={() => approve(item.id)}>
                       通过并执行
                     </Button>
                   </div>
@@ -133,24 +125,6 @@ function ApprovalsContent() {
           </div>
         )}
       </SectionCard>
-    </Layout>
-  );
-}
-
-function Denied() {
-  return (
-    <Layout title="审批">
-      <SectionCard>
-        <EmptyState icon="🔒" text="暂无审批权限" hint="审批功能仅管理员可用" />
-      </SectionCard>
-    </Layout>
-  );
-}
-
-export default function ApprovalsPage() {
-  return (
-    <AuthGate roles={["ADMIN"]} fallback={<Denied />}>
-      <ApprovalsContent />
-    </AuthGate>
+    </>
   );
 }

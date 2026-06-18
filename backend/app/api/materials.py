@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, Depends, Query
 
 from app.auth.deps import get_current_user
 from app.config import Settings, get_settings
 from app.middleware.auth import require_roles
-from app.models import MaterialCreate, Role, User
+from app.models import CategoryCreate, InventorySlotUpdate, MaterialCreate, Role, User
 from app.services.inventory import InventoryService
 from app.utils.response import success
 
@@ -51,6 +53,26 @@ async def list_categories(
     return success([item.model_dump() for item in items])
 
 
+@router.post("/categories")
+async def create_category(
+    payload: CategoryCreate,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    category = await service.create_category(payload)
+    return success(category.model_dump())
+
+
+@router.delete("/categories/{category_id}")
+async def delete_category(
+    category_id: str,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    await service.delete_category(category_id)
+    return success({"deleted": True})
+
+
 @router.post("")
 async def create_material(
     payload: MaterialCreate,
@@ -80,3 +102,15 @@ async def get_material_transactions(
 ):
     txs = await service.list_transactions(material_id, limit)
     return success([t.model_dump(mode="json") for t in txs])
+
+
+@router.patch("/{material_id}/inventory/{location_id}/slot")
+async def update_inventory_slot(
+    material_id: str,
+    location_id: str,
+    payload: InventorySlotUpdate,
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    item = await service.update_inventory_slot(material_id, location_id, payload)
+    return success(item.model_dump(mode="json"))

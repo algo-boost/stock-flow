@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -22,7 +24,7 @@ class User(BaseModel):
 class ApiResponse(BaseModel, Generic[T]):
     code: int = 0
     message: str = "ok"
-    data: T | None = None
+    data: Optional[T] = None
 
 
 class Category(BaseModel):
@@ -33,6 +35,15 @@ class Category(BaseModel):
     sub_name: str | None = None
     default_location_type: str | None = None
     examples: str | None = None
+    material_count: int = 0
+    stock_quantity: int = 0
+
+
+class CategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    parent_id: str | None = Field(default=None, max_length=128)
+    default_location_type: str | None = Field(default="货柜", max_length=50)
+    examples: str | None = Field(default=None, max_length=200)
 
 
 class Location(BaseModel):
@@ -88,6 +99,8 @@ class InventoryItem(BaseModel):
     material_id: str
     location_id: str
     location_name: str | None = None
+    row: int | None = Field(default=None, ge=1, le=99)
+    column: int | None = Field(default=None, ge=1, le=99)
     quantity: int
     last_updated: datetime | None = None
 
@@ -170,6 +183,13 @@ class InboundCreate(BaseModel):
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str | None = Field(default=None, max_length=500)
+    row: int | None = Field(default=None, ge=1, le=99)
+    column: int | None = Field(default=None, ge=1, le=99)
+
+
+class InventorySlotUpdate(BaseModel):
+    row: int = Field(ge=1, le=99)
+    column: int = Field(ge=1, le=99)
 
 
 class PurchaseInboundCreate(InboundCreate):
@@ -204,6 +224,8 @@ class TransferCreate(BaseModel):
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str | None = Field(default=None, max_length=500)
+    to_row: int | None = Field(default=None, ge=1, le=99)
+    to_column: int | None = Field(default=None, ge=1, le=99)
 
 
 class TransactionResult(BaseModel):

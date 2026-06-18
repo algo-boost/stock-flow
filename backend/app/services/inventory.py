@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from app.bitable.repository import BitableRepository
 from app.bitable.mock_store import get_mock_store
 from app.config import Settings
 from app.models import (
     Category,
+    CategoryCreate,
     InboundCreate,
+    InventoryItem,
+    InventorySlotUpdate,
     Location,
     LocationCreate,
     LocationUpdate,
@@ -22,6 +27,8 @@ from app.models import (
     TransferCreate,
     User,
 )
+from app.utils.categories import attach_category_stats
+from app.utils.inventory_display import format_inventory_summary
 from app.utils.response import AppError
 
 
@@ -94,8 +101,59 @@ class InventoryService:
     async def list_categories(self) -> list[Category]:
         try:
             if self.repo:
-                return await self.repo.list_categories()
-            return self.store.list_categories()
+                categories = await self.repo.list_categories()
+                materials = list((await self.repo._load_materials()).values())
+                inventory_map = await self.repo._load_inventory_map()
+            else:
+                categories = self.store.list_categories()
+                materials = list(self.store.materials.values())
+                inventory_map = {
+                    key: item.quantity for key, item in self.store.inventory.items()
+                }
+            stock_by_material: dict[str, int] = {}
+            for (material_id, _location_id), quantity in inventory_map.items():
+                stock_by_material[material_id] = stock_by_material.get(material_id, 0) + quantity
+            return attach_category_stats(categories, materials, stock_by_material)
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+        except Exception as exc:
+            raise _wrap_data_error("Bitable 分类表", exc) from exc
+
+    async def create_category(self, payload: CategoryCreate) -> Category:
+        try:
+            if self.repo:
+                return await self.repo.create_category(payload)
+            return self.store.create_category(payload)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "parent_not_found":
+                raise AppError(1001, "上级分类不存在", 400) from exc
+            if msg == "category_name_exists":
+                raise AppError(1001, "同级分类名称已存在", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+        except Exception as exc:
+            raise _wrap_data_error("Bitable 分类表", exc) from exc
+
+    async def delete_category(self, category_id: str) -> None:
+        try:
+            if self.repo:
+                await self.repo.delete_category(category_id)
+                return
+            self.store.delete_category(category_id)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "category_not_found":
+                raise AppError(1001, "分类不存在", 404) from exc
+            if msg.startswith("category_in_use"):
+                detail = "顶层分类下仍有物料，请先在物料详情中修改分类后再删除"
+                if not self.repo:
+                    raw = msg.split(":", 1)
+                    if len(raw) == 2 and raw[1]:
+                        detail = f"分类已被物料使用，无法删除（关联：{raw[1].replace(',', '、')}）"
+                raise AppError(1001, detail, 400) from exc
+            raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
         except Exception as exc:
@@ -203,10 +261,7 @@ class InventoryService:
         for detail in catalog:
             threshold = detail.material.min_stock or 5
             if detail.total_quantity < threshold:
-                summary = " · ".join(
-                    f"{item.location_name or item.location_id} {item.quantity}"
-                    for item in detail.inventory[:3]
-                )
+                summary = format_inventory_summary(detail.inventory)
                 items.append(
                     LowStockItem(
                         **detail.material.model_dump(),
@@ -290,6 +345,8 @@ class InventoryService:
                 payload.qty,
                 user.name,
                 payload.note,
+                row=payload.row,
+                column=payload.column,
             )
         except ValueError as exc:
             msg = str(exc)
@@ -297,9 +354,36 @@ class InventoryService:
                 raise AppError(4004, "物料未找到", 404) from exc
             if msg == "location_not_found":
                 raise AppError(1001, "库位未找到", 400) from exc
+            if msg == "slot_incomplete":
+                raise AppError(1001, "货柜格位需同时填写行号和列号", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
+
+    async def update_inventory_slot(
+        self,
+        material_id: str,
+        location_id: str,
+        payload: InventorySlotUpdate,
+    ) -> InventoryItem:
+        try:
+            if self.repo:
+                raise AppError(1001, "格位编辑当前仅支持 mock 模式，请在 Bitable 库存表补充行列字段后启用", 400)
+            return self.store.update_inventory_slot(
+                material_id,
+                location_id,
+                payload.row,
+                payload.column,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "material_not_found":
+                raise AppError(4004, "物料未找到", 404) from exc
+            if msg == "location_not_found":
+                raise AppError(1001, "库位未找到", 400) from exc
+            if msg == "inventory_not_found":
+                raise AppError(4004, "该库位暂无库存记录", 404) from exc
+            raise
 
     async def purchase_inbound(self, payload: PurchaseInboundCreate, user: User) -> Transaction:
         note_parts = ["管理员进货"]
@@ -474,6 +558,8 @@ class InventoryService:
                 payload.qty,
                 user.name,
                 payload.note,
+                to_row=payload.to_row,
+                to_column=payload.to_column,
             )
         except ValueError as exc:
             msg = str(exc)
@@ -483,6 +569,8 @@ class InventoryService:
                 raise AppError(1001, "库位未找到", 400) from exc
             if msg == "same_location":
                 raise AppError(1001, "源库位和目标库位不能相同", 400) from exc
+            if msg == "slot_incomplete":
+                raise AppError(1001, "目标格位需同时填写行号和列号", 400) from exc
             if msg.startswith("insufficient_stock:"):
                 available = msg.split(":", 1)[1]
                 raise AppError(4002, f"源库位库存不足: 当前可用 {available}", 400) from exc

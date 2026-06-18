@@ -9,16 +9,11 @@ export function Layout({ title, children }: { title: string; children: React.Rea
 
   const tabs = [
     { key: "/", title: "搜索", icon: "🔍" },
-    { key: "/outbound", title: user?.role === "USER" ? "申请" : "出库", icon: "📤" },
-    { key: "/history", title: "历史", icon: "📒" },
+    { key: "/stock", title: "出入库", icon: "↕" },
     ...(user && (user.role === "KEEPER" || user.role === "ADMIN")
-      ? [
-          { key: "/inbound", title: "入库", icon: "📥" },
-          { key: "/transfer", title: "移动", icon: "↔" },
-          { key: "/locations", title: "库位", icon: "📍" },
-        ]
+      ? [{ key: "/locations", title: "库位", icon: "📍" }]
       : []),
-    ...(canApprove ? [{ key: "/approvals", title: "审批", icon: "✅" }] : []),
+    { key: "/history", title: "历史", icon: "📒" },
     ...(canApprove ? [{ key: "/purchase", title: "进货", icon: "🛒" }] : []),
     ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "⚙" }] : []),
   ];
@@ -26,12 +21,9 @@ export function Layout({ title, children }: { title: string; children: React.Rea
   const showBack =
     location.pathname !== "/" &&
     ![
-      "/outbound",
-      "/inbound",
-      "/transfer",
+      "/stock",
       "/locations",
       "/history",
-      "/approvals",
       "/purchase",
       "/admin-center",
     ].includes(location.pathname);
@@ -45,14 +37,19 @@ export function Layout({ title, children }: { title: string; children: React.Rea
               <span aria-hidden>‹</span>
             </button>
           ) : (
-            <div className="lab-mark" aria-hidden>
-              SF
+            <button type="button" className="app-brand" onClick={() => navigate("/")} aria-label="返回首页">
+              <img
+                src="/logo.png"
+                alt="知来具身 FORESEE ROBOTICS · 物料管理系统"
+                className="app-logo"
+              />
+            </button>
+          )}
+          {showBack && (
+            <div className="page-title-block">
+              <h1 className="page-title">{title}</h1>
             </div>
           )}
-          <div className="page-title-block">
-            <div className="page-title-kicker">ROBOTICS LAB</div>
-            <h1 className="page-title">{title}</h1>
-          </div>
         </div>
         <div className="page-navbar-right">
           {user && <span className="user-pill">{user.name}</span>}

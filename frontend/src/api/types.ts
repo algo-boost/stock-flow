@@ -22,6 +22,8 @@ export interface Category {
   sub_name?: string | null;
   default_location_type?: string | null;
   examples?: string | null;
+  material_count?: number;
+  stock_quantity?: number;
 }
 
 export interface User {
@@ -65,7 +67,10 @@ export interface InventoryItem {
   material_id: string;
   location_id: string;
   location_name?: string;
+  row?: number | null;
+  column?: number | null;
   quantity: number;
+  last_updated?: string | null;
 }
 
 export interface MaterialDetail {

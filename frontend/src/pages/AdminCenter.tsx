@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Form, Input, Tabs, Toast } from "antd-mobile";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getAdminAudit, getAdminOverview, getAdminSystem } from "../api";
 import type { AdminAudit, AdminOverview, AdminSystem } from "../api/types";
+import { ApprovalsPanel } from "../components/ApprovalsPanel";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, InfoRow, SectionCard, StatCard, TxBadge } from "../components/ui";
+import { EmptyState, InfoRow, PageHero, SectionCard, StatCard, TxBadge } from "../components/ui";
 
 const ORG_PRESETS = [
   { department: "机器人实验室", position: "实验室负责人", owner: "管理员" },
@@ -36,6 +37,8 @@ function stringifyMeta(value: unknown) {
 
 function AdminCenterContent() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") ?? "approvals";
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [audit, setAudit] = useState<AdminAudit | null>(null);
   const [system, setSystem] = useState<AdminSystem | null>(null);
@@ -72,8 +75,20 @@ function AdminCenterContent() {
     });
   };
 
+  const onTabChange = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (key === "approvals") {
+      next.delete("tab");
+    } else {
+      next.set("tab", key);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <Layout title="运营中心">
+      <PageHero title="运营中心" subtitle="审批申请、缺货预警、组织配置与系统审计" />
+
       <SectionCard title="运营概览" subtitle="基于现有 Bitable、申请和流水数据实时汇总">
         <div className="stat-grid">
           <StatCard label="库存总数" value={overview?.totals.inventory_quantity ?? "-"} unit="件" tone="primary" />
@@ -122,7 +137,11 @@ function AdminCenterContent() {
         )}
       </SectionCard>
 
-      <Tabs>
+      <Tabs activeKey={activeTab} onChange={onTabChange}>
+        <Tabs.Tab title="审批" key="approvals">
+          <ApprovalsPanel onReviewed={() => void load()} />
+        </Tabs.Tab>
+
         <Tabs.Tab title="组织" key="org">
           <SectionCard title="用户与组织管理" subtitle="一阶段展示/编辑壳层；真实人员仍以飞书通讯录与角色群组为准">
             <div className="editable-table">

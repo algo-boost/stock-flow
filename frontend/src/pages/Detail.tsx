@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Button, DotLoading, Toast } from "antd-mobile";
 import { useNavigate, useParams } from "react-router-dom";
 import { getMaterial, getMaterialTransactions } from "../api";
-import type { MaterialDetail, Transaction } from "../api/types";
+import type { InventoryItem, MaterialDetail, Transaction } from "../api/types";
 import { useAuth } from "../components/AuthGate";
+import { InventorySlotEditor } from "../components/InventorySlotEditor";
 import { Layout } from "../components/Layout";
 import { EmptyState, InfoRow, SectionCard, StatCard, TxBadge } from "../components/ui";
 
@@ -14,18 +15,30 @@ export default function DetailPage() {
   const [detail, setDetail] = useState<MaterialDetail | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
 
+  const reloadDetail = async () => {
+    const [d, t] = await Promise.all([getMaterial(id), getMaterialTransactions(id)]);
+    setDetail(d);
+    setTxs(t);
+  };
+
   useEffect(() => {
     if (!id) return;
-    void (async () => {
-      try {
-        const [d, t] = await Promise.all([getMaterial(id), getMaterialTransactions(id)]);
-        setDetail(d);
-        setTxs(t);
-      } catch (e) {
-        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
-      }
-    })();
+    void reloadDetail().catch((e) => {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
+    });
   }, [id]);
+
+  const onInventoryUpdated = (updated: InventoryItem) => {
+    setDetail((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        inventory: current.inventory.map((item) =>
+          item.location_id === updated.location_id ? updated : item,
+        ),
+      };
+    });
+  };
 
   if (!detail) {
     return (
@@ -67,31 +80,32 @@ export default function DetailPage() {
         {material.barcode && <InfoRow label="条码" value={material.barcode} />}
       </SectionCard>
 
-      <SectionCard title="各库位库存" subtitle="按库位查看可用数量">
+      <SectionCard title="各库位库存" subtitle="货柜类库位可设置第几行、第几列，便于现场找货">
         {inventory.length === 0 ? (
           <EmptyState icon="🏷️" text="暂无库存记录" />
         ) : (
           inventory.map((inv) => (
-            <div className="location-card" key={inv.location_id}>
-              <div className="location-name">{inv.location_name ?? inv.location_id}</div>
-              <div className="location-qty">
-                {inv.quantity} {material.unit}
-              </div>
-            </div>
+            <InventorySlotEditor
+              key={inv.location_id}
+              materialId={material.id}
+              item={inv}
+              canEdit={canInbound}
+              onUpdated={onInventoryUpdated}
+            />
           ))
         )}
       </SectionCard>
 
       <div className={`actions ${canInbound ? "" : "single"}`}>
-        <Button color="primary" onClick={() => navigate(`/outbound?material_id=${material.id}`)}>
+        <Button color="primary" onClick={() => navigate(`/stock?material_id=${material.id}`)}>
           {canInbound ? "出库领用" : "出库申请"}
         </Button>
         {canInbound && (
           <>
-            <Button fill="outline" onClick={() => navigate(`/inbound?material_id=${material.id}`)}>
+            <Button fill="outline" onClick={() => navigate(`/stock?tab=inbound&material_id=${material.id}`)}>
               入库上架
             </Button>
-            <Button fill="outline" onClick={() => navigate(`/transfer?material_id=${material.id}`)}>
+            <Button fill="outline" onClick={() => navigate(`/locations?tab=transfer&material_id=${material.id}`)}>
               库内移动
             </Button>
             {canApprove && (

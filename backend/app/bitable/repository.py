@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timezone
 import time
@@ -17,6 +19,7 @@ from app.bitable.fields import (
 from app.config import Settings
 from app.models import (
     Category,
+    CategoryCreate,
     InventoryItem,
     Location,
     LocationCreate,
@@ -32,6 +35,7 @@ from app.models import (
     Transaction,
     TransactionType,
 )
+from app.utils.categories import category_descendant_ids, derive_major_sub_names
 
 _TABLE_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 _TABLE_INFLIGHT: dict[tuple[str, str], asyncio.Task[list[dict[str, Any]]]] = {}
@@ -250,6 +254,12 @@ class BitableRepository:
         categories = await self._load_categories()
         return list(categories.values())
 
+    async def create_category(self, payload: CategoryCreate) -> Category:
+        raise RuntimeError("category_crud_requires_mock_or_bitable_parent_field")
+
+    async def delete_category(self, category_id: str) -> None:
+        raise RuntimeError("category_crud_requires_mock_or_bitable_parent_field")
+
     async def _load_locations(self) -> dict[str, Location]:
         if self._locations_cache is not None:
             return self._locations_cache
@@ -301,6 +311,7 @@ class BitableRepository:
                 return (
                     keyword in material.name.lower()
                     or keyword in material.code.lower()
+                    or (material.spec is not None and keyword in material.spec.lower())
                     or (material.supplier is not None and keyword in material.supplier.lower())
                     or (material.barcode is not None and keyword in material.barcode.lower())
                     or (material.category_name is not None and keyword in material.category_name.lower())
@@ -310,14 +321,19 @@ class BitableRepository:
 
             materials = [m for m in materials if match(m)]
         if category:
-            materials = [
-                m
-                for m in materials
-                if m.category_id == category
-                or m.category_name == category
-                or m.major_category == category
-                or m.sub_category == category
-            ]
+            categories = await self._load_categories()
+            if category in categories:
+                allowed_ids = category_descendant_ids(categories, category)
+                materials = [m for m in materials if m.category_id in allowed_ids]
+            else:
+                materials = [
+                    m
+                    for m in materials
+                    if m.category_id == category
+                    or m.category_name == category
+                    or m.major_category == category
+                    or m.sub_category == category
+                ]
         if location:
             mat_ids = {mid for (mid, lid), qty in inventory.items() if lid == location and qty > 0}
             materials = [m for m in materials if m.id in mat_ids]
@@ -447,6 +463,7 @@ class BitableRepository:
                 for m in materials
                 if keyword in m.name.lower()
                 or keyword in m.code.lower()
+                or (m.spec and keyword in m.spec.lower())
                 or (m.supplier and keyword in m.supplier.lower())
                 or (m.barcode and keyword in m.barcode.lower())
                 or (m.category_name and keyword in (m.category_name or "").lower())

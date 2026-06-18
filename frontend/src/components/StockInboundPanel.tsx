@@ -10,26 +10,28 @@ import {
   postInbound,
   searchMaterials,
 } from "../api";
-import type { Category, MaterialDetail, MaterialSearchItem } from "../api/types";
-import { useAuth } from "../components/AuthGate";
-import { CacheRefreshButton } from "../components/CacheRefreshButton";
-import { Layout } from "../components/Layout";
-import { EmptyState, PageHero, SectionCard } from "../components/ui";
+import type { Category, Location, MaterialDetail, MaterialSearchItem } from "../api/types";
+import { useAuth } from "./AuthGate";
+import { CacheRefreshButton } from "./CacheRefreshButton";
+import { EmptyState, SectionCard } from "./ui";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
 }
 
-function InboundForm() {
+export function StockInboundPanel() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
+  const activeTab = params.get("tab");
+  const shouldLoadPreset = activeTab === "inbound";
   const navigate = useNavigate();
 
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [locationOptions, setLocationOptions] = useState<{ label: string; value: string }[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
@@ -49,6 +51,8 @@ function InboundForm() {
   const [newMaterialBarcode, setNewMaterialBarcode] = useState("");
   const [newMaterialSupplier, setNewMaterialSupplier] = useState("");
   const [newMaterialMinStock, setNewMaterialMinStock] = useState(5);
+  const [slotRow, setSlotRow] = useState(1);
+  const [slotColumn, setSlotColumn] = useState(1);
   const { canInbound } = useAuth();
   const isDirectInbound = canInbound;
 
@@ -68,18 +72,19 @@ function InboundForm() {
 
   const loadMeta = useCallback(async () => {
     try {
-      const [locs, categories] = await Promise.all([listLocations(), listCategories()]);
+      const [locs, cats] = await Promise.all([listLocations(), listCategories()]);
+      setLocations(locs);
       setLocationOptions(
         locs.map((loc) => ({
           label: `${loc.name}（${loc.code}）`,
           value: loc.id,
         })),
       );
-      setCategories(categories);
+      setCategories(cats);
       setNewMaterialMajorCategory(
-        (current) => current || categories[0]?.major_name || categories[0]?.name || "",
+        (current) => current || cats[0]?.major_name || cats[0]?.name || "",
       );
-      setNewMaterialCategoryId((current) => current || categories[0]?.id || "");
+      setNewMaterialCategoryId((current) => current || cats[0]?.id || "");
       setLocationId((current) => current || locs[0]?.id || "");
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载库位/分类失败" });
@@ -92,7 +97,7 @@ function InboundForm() {
   }, [loadMaterials, loadMeta]);
 
   useEffect(() => {
-    if (!presetMaterialId) return;
+    if (!presetMaterialId || !shouldLoadPreset) return;
     void (async () => {
       try {
         const detail = await getMaterial(presetMaterialId);
@@ -104,7 +109,7 @@ function InboundForm() {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
-  }, [locationId, presetMaterialId]);
+  }, [locationId, presetMaterialId, shouldLoadPreset]);
 
   const selectedStock = useMemo(() => {
     if (!selected || !locationId) return null;
@@ -134,6 +139,12 @@ function InboundForm() {
     [categories, newMaterialCategoryId],
   );
 
+  const selectedLocation = useMemo(
+    () => locations.find((loc) => loc.id === locationId),
+    [locationId, locations],
+  );
+  const showCabinetSlot = selectedLocation?.type === "货柜";
+
   const selectMaterial = async (item: MaterialSearchItem) => {
     setLoading(true);
     try {
@@ -144,6 +155,8 @@ function InboundForm() {
       if (defaultLoc) setLocationId(defaultLoc);
       setQty(1);
       setNote("");
+      setSlotRow(1);
+      setSlotColumn(1);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
     } finally {
@@ -155,6 +168,8 @@ function InboundForm() {
     setSelected(null);
     setQty(1);
     setNote("");
+    setSlotRow(1);
+    setSlotColumn(1);
   };
 
   const onSearch = (val: string) => {
@@ -237,6 +252,8 @@ function InboundForm() {
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim() || undefined,
+          row: showCabinetSlot ? slotRow : undefined,
+          column: showCabinetSlot ? slotColumn : undefined,
         });
         Toast.show({ icon: "success", content: `已同步 Bitable · ${result.transaction_id}` });
         navigate(`/materials/${selected.material.id}`);
@@ -262,15 +279,12 @@ function InboundForm() {
   if (selected) {
     const m = selected.material;
     return (
-      <Layout title={isDirectInbound ? "入库" : "入库申请"}>
-        <PageHero
-          title={isDirectInbound ? "确认入库" : "提交入库申请"}
-          subtitle={`${m.name} · 当前总库存 ${selected.total_quantity} ${m.unit}`}
-          extra={isDirectInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : undefined}
-        />
+      <>
         <SectionCard
-          title={isDirectInbound ? "入库单" : "入库申请单"}
-          subtitle={isDirectInbound ? "库管 / 管理员" : "提交后等待管理员审批，审批通过后再增加库存"}
+          title={isDirectInbound ? "确认入库" : "提交入库申请"}
+          subtitle={`${m.name} · 当前总库存 ${selected.total_quantity} ${m.unit} · ${
+            isDirectInbound ? "库管 / 管理员直接入库" : "提交后等待管理员审批"
+          }`}
         >
           <button type="button" className="back-link" onClick={backToList}>
             ← 返回物料列表
@@ -293,6 +307,16 @@ function InboundForm() {
             {locationId && selectedStock !== null && (
               <div className="stock-hint">该库位当前库存：{selectedStock}</div>
             )}
+            {showCabinetSlot && (
+              <>
+                <Form.Item label="货柜行号">
+                  <Stepper min={1} max={20} value={slotRow} onChange={setSlotRow} />
+                </Form.Item>
+                <Form.Item label="货柜列号">
+                  <Stepper min={1} max={20} value={slotColumn} onChange={setSlotColumn} />
+                </Form.Item>
+              </>
+            )}
             <Form.Item label="入库数量">
               <Stepper min={1} value={qty} onChange={setQty} />
             </Form.Item>
@@ -311,19 +335,16 @@ function InboundForm() {
             {isDirectInbound ? "确认入库并同步" : "提交入库申请"}
           </Button>
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout title={isDirectInbound ? "入库" : "入库申请"}>
-      <PageHero
+    <>
+      <SectionCard
         title={isDirectInbound ? "入库上架" : "入库申请"}
-        subtitle={isDirectInbound ? "默认分页显示全部物料，找不到时可快捷新增" : "普通用户可提交归还/入库申请，等待管理员审批"}
-        extra={isDirectInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : undefined}
-      />
-
-      <SectionCard title="选择物料" subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种物料`}>
+        subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种物料`}
+      >
         <SearchBar
           placeholder="搜索名称 / 编码 / 条码 / 分类"
           value={keyword}
@@ -334,8 +355,9 @@ function InboundForm() {
             void loadMaterials("", 1);
           }}
         />
-        <div className="catalog-meta">
-          {loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}
+        <div className="catalog-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
+          {isDirectInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : null}
         </div>
         {loading && items.length === 0 ? (
           <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
@@ -348,12 +370,7 @@ function InboundForm() {
         ) : (
           <div className="catalog-list">
             {items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="catalog-row"
-                onClick={() => selectMaterial(item)}
-              >
+              <button key={item.id} type="button" className="catalog-row" onClick={() => selectMaterial(item)}>
                 <div className="catalog-row-main">
                   <div className="catalog-row-name">{item.name}</div>
                   <div className="catalog-row-meta">
@@ -465,10 +482,6 @@ function InboundForm() {
           )}
         </SectionCard>
       )}
-    </Layout>
+    </>
   );
-}
-
-export default function InboundPage() {
-  return <InboundForm />;
 }

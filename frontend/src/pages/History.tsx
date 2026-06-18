@@ -123,7 +123,7 @@ export default function HistoryPage() {
         .filter((item) => item.label.toLowerCase().includes(text) || item.value.toLowerCase().includes(text))
         .slice(0, 5);
 
-      void searchMaterials(keyword.trim(), { page: 1, size: 5, searchBy: "name" })
+      void searchMaterials(keyword.trim(), { page: 1, size: 5, searchBy: "all" })
         .then((data) => {
           const seen = new Set(categoryMatches.map((item) => item.value));
           const next: SearchSuggestion[] = [...categoryMatches];

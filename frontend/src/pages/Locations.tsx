@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Form, Input, Selector, Toast } from "antd-mobile";
+import { Button, Form, Input, Selector, Tabs, Toast } from "antd-mobile";
+import { useSearchParams } from "react-router-dom";
 import {
   createLocation,
   deleteLocation,
@@ -10,6 +11,7 @@ import {
 import type { InventoryItem, Location } from "../api/types";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
+import { LocationTransferPanel } from "../components/LocationTransferPanel";
 import { EmptyState, PageHero, SectionCard } from "../components/ui";
 
 const LOCATION_TYPES = ["货柜", "货架", "专用螺栓架", "工具架", "快递暂存"];
@@ -18,7 +20,7 @@ function emptyForm() {
   return { code: "", name: "", type: "货柜" };
 }
 
-function LocationsManager() {
+function LocationManagePanel() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,9 +114,7 @@ function LocationsManager() {
   };
 
   return (
-    <Layout title="库位管理">
-      <PageHero title="库位管理" subtitle="维护货柜、货架、暂存区；删除前需先确保库位库存为 0" />
-
+    <>
       <SectionCard title={editingId ? "编辑库位" : "新增库位"} subtitle="仅库管 / 管理员可操作">
         <Form layout="vertical" className="form-card">
           <Form.Item label="库位编号">
@@ -178,6 +178,37 @@ function LocationsManager() {
           </div>
         )}
       </SectionCard>
+    </>
+  );
+}
+
+function LocationsManager() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") === "transfer" ? "transfer" : "manage";
+
+  const onTabChange = (key: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (key === "transfer") {
+      next.set("tab", "transfer");
+    } else {
+      next.delete("tab");
+      next.delete("material_id");
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  return (
+    <Layout title="库位管理">
+      <PageHero title="库位管理" subtitle="维护货柜与货架，以及库内移动、暂存上架" />
+
+      <Tabs activeKey={activeTab} onChange={onTabChange}>
+        <Tabs.Tab title="库位维护" key="manage">
+          <LocationManagePanel />
+        </Tabs.Tab>
+        <Tabs.Tab title="库内移动" key="transfer">
+          <LocationTransferPanel />
+        </Tabs.Tab>
+      </Tabs>
     </Layout>
   );
 }
@@ -186,7 +217,7 @@ function LocationsDenied() {
   return (
     <Layout title="库位管理">
       <SectionCard>
-        <EmptyState icon="🔒" text="暂无库位维护权限" hint="新增、改名和删除库位需要库管员或管理员角色" />
+        <EmptyState icon="🔒" text="暂无库位维护权限" hint="库位维护与库内移动需要库管员或管理员角色" />
       </SectionCard>
     </Layout>
   );

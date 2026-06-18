@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.bitable.fields import field_link_id, field_link_ids, field_number, normalize_tx_type
 
 

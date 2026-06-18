@@ -57,7 +57,7 @@ export function PageHero({
   return (
     <div className="page-hero">
       <div className="page-hero-text">
-        <div className="page-hero-kicker">LAB INVENTORY</div>
+        <div className="page-hero-kicker">物料管理系统</div>
         <h1 className="page-hero-title">{title}</h1>
         {subtitle && <p className="page-hero-subtitle">{subtitle}</p>}
       </div>
