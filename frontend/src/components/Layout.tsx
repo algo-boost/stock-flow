@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthGate";
-import { RoleBadge } from "./ui";
+import { ROLE_LABEL, RoleBadge } from "./ui";
 
 export function Layout({ title, children }: { title: string; children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -52,7 +52,9 @@ export function Layout({ title, children }: { title: string; children: React.Rea
           )}
         </div>
         <div className="page-navbar-right">
-          {user && <span className="user-pill">{user.name}</span>}
+          {user && user.name !== ROLE_LABEL[user.role] && (
+            <span className="user-pill">{user.name}</span>
+          )}
           {user ? <RoleBadge role={user.role} /> : undefined}
         </div>
       </header>

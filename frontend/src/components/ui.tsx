@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { Role } from "../api/types";
 
-const ROLE_LABEL: Record<Role, string> = {
+export const ROLE_LABEL: Record<Role, string> = {
   ADMIN: "管理员",
   KEEPER: "库管",
   USER: "研发",
