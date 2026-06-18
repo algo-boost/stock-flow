@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     # Bitable 字段名（与多维表格列名一致，可按模板调整）
     bitable_f_category_name: str = "分类名称"
+    bitable_f_category_parent: str = "父分类ID"
     bitable_f_category_major: str = "大类"
     bitable_f_category_sub: str = "子类"
     bitable_f_category_default_location_type: str = "默认库位类型"

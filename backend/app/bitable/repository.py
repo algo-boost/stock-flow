@@ -236,6 +236,7 @@ class BitableRepository:
         for rec in records:
             fields = rec.get("fields", {})
             rid = rec["record_id"]
+            parent_id = field_link_id(fields.get(s.bitable_f_category_parent))
             major = field_text(fields.get(s.bitable_f_category_major))
             sub = field_text(fields.get(s.bitable_f_category_sub))
             legacy_name = field_text(fields.get(s.bitable_f_category_name))
@@ -243,10 +244,21 @@ class BitableRepository:
             result[rid] = Category(
                 id=rid,
                 name=name,
-                major_name=major or legacy_name,
-                sub_name=sub or legacy_name,
+                parent_id=parent_id,
+                major_name=major,
+                sub_name=sub,
                 default_location_type=field_text(fields.get(s.bitable_f_category_default_location_type)),
                 examples=field_text(fields.get(s.bitable_f_category_examples)),
+            )
+        for category_id, category in list(result.items()):
+            if category.major_name and category.sub_name is not None:
+                continue
+            major_name, sub_name = derive_major_sub_names(result, category.parent_id, category.name)
+            result[category_id] = category.model_copy(
+                update={
+                    "major_name": category.major_name or major_name or category.name,
+                    "sub_name": category.sub_name if category.sub_name is not None else sub_name,
+                }
             )
         return result
 
@@ -255,10 +267,89 @@ class BitableRepository:
         return list(categories.values())
 
     async def create_category(self, payload: CategoryCreate) -> Category:
-        raise RuntimeError("category_crud_requires_mock_or_bitable_parent_field")
+        categories = await self._load_categories()
+        name = payload.name.strip()
+        parent_id = payload.parent_id
+        if parent_id and parent_id not in categories:
+            raise ValueError("parent_not_found")
+        if any(category.name == name and category.parent_id == parent_id for category in categories.values()):
+            raise ValueError("category_name_exists")
+
+        major_name, sub_name = derive_major_sub_names(categories, parent_id, name)
+        s = self.settings
+        fields: dict[str, Any] = {
+            s.bitable_f_category_name: name,
+            s.bitable_f_category_major: major_name or name,
+            s.bitable_f_category_default_location_type: payload.default_location_type or "货柜",
+        }
+        if parent_id:
+            fields[s.bitable_f_category_parent] = write_link(parent_id)
+        if sub_name:
+            fields[s.bitable_f_category_sub] = sub_name
+        if payload.examples:
+            fields[s.bitable_f_category_examples] = payload.examples.strip()
+
+        rec = await self.client.create_record(s.bitable_table_categories, fields)
+        rid = rec.get("record_id", "")
+        category = Category(
+            id=rid,
+            name=name,
+            parent_id=parent_id,
+            major_name=major_name or name,
+            sub_name=sub_name,
+            default_location_type=payload.default_location_type or "货柜",
+            examples=payload.examples.strip() if payload.examples else None,
+        )
+        self._upsert_cached_record(
+            s.bitable_table_categories,
+            rec if rec.get("fields") else self._cached_record(rid, fields),
+        )
+        return category
 
     async def delete_category(self, category_id: str) -> None:
-        raise RuntimeError("category_crud_requires_mock_or_bitable_parent_field")
+        categories = await self._load_categories()
+        category = categories.get(category_id)
+        if not category:
+            raise ValueError("category_not_found")
+
+        descendant_ids = category_descendant_ids(categories, category_id)
+        materials = await self._load_materials()
+        linked_materials = [
+            material for material in materials.values() if material.category_id in descendant_ids
+        ]
+        if category.parent_id is None and linked_materials:
+            names = ",".join(material.name for material in linked_materials)
+            raise ValueError(f"category_in_use:{names}")
+
+        parent = categories.get(category.parent_id) if category.parent_id else None
+        s = self.settings
+        if parent:
+            parent_major = parent.major_name or parent.name
+            parent_sub = parent.sub_name or parent.name
+            for material in linked_materials:
+                fields = {
+                    s.bitable_f_material_category: write_link(parent.id),
+                    s.bitable_f_material_major_category: parent_major,
+                    s.bitable_f_material_sub_category: parent_sub,
+                }
+                rec = await self.client.update_record(s.bitable_table_materials, material.id, fields)
+                self._upsert_cached_record(
+                    s.bitable_table_materials,
+                    rec if rec.get("fields") else self._cached_record(material.id, fields),
+                )
+
+        def depth(item_id: str) -> int:
+            level = 0
+            current = categories.get(item_id)
+            while current and current.parent_id:
+                level += 1
+                current = categories.get(current.parent_id)
+            return level
+
+        for item_id in sorted(descendant_ids, key=depth, reverse=True):
+            await self.client.delete_record(s.bitable_table_categories, item_id)
+            self._remove_cached_record(s.bitable_table_categories, item_id)
+        self._materials_cache = None
 
     async def _load_locations(self) -> dict[str, Location]:
         if self._locations_cache is not None:
