@@ -3,6 +3,12 @@ import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "ant
 import { useSearchParams } from "react-router-dom";
 import { createStockRequest, getMaterial, postOutbound, searchMaterials } from "../api";
 import type { MaterialDetail, MaterialSearchItem } from "../api/types";
+import {
+  findInventoryBySlotKey,
+  formatInventorySlot,
+  inventorySlotKey,
+  parseInventorySlotKey,
+} from "../utils/inventoryDisplay";
 import { CacheRefreshButton } from "./CacheRefreshButton";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard } from "./ui";
@@ -37,9 +43,11 @@ export function StockOutboundPanel() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
-  const [locationId, setLocationId] = useState("");
+  const [slotKey, setSlotKey] = useState("");
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
+  const [returnPolicy, setReturnPolicy] = useState<"" | "required" | "not_required">("");
+  const [returnDueDate, setReturnDueDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const { canInbound } = useAuth();
   const isDirectOutbound = canInbound;
@@ -71,9 +79,11 @@ export function StockOutboundPanel() {
       try {
         const detail = await getMaterial(presetMaterialId);
         setSelected(detail);
-        setLocationId(detail.inventory[0]?.location_id ?? "");
+        setSlotKey(detail.inventory[0] ? inventorySlotKey(detail.inventory[0]) : "");
         setQty(1);
         setNote("");
+        setReturnPolicy("");
+        setReturnDueDate("");
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
@@ -86,9 +96,11 @@ export function StockOutboundPanel() {
       const detail = await getMaterial(item.id);
       setSelected(detail);
       const first = detail.inventory[0];
-      setLocationId(first?.location_id ?? "");
+      setSlotKey(first ? inventorySlotKey(first) : "");
       setQty(1);
       setNote("");
+      setReturnPolicy("");
+      setReturnDueDate("");
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
     } finally {
@@ -109,22 +121,31 @@ export function StockOutboundPanel() {
 
   const backToList = () => {
     setSelected(null);
-    setLocationId("");
+    setSlotKey("");
     setQty(1);
     setNote("");
+    setReturnPolicy("");
+    setReturnDueDate("");
   };
 
   const locationOptions = useMemo(
     () =>
       (selected?.inventory ?? []).map((inv) => ({
-        label: `${inv.location_name ?? inv.location_id}（可用 ${inv.quantity}）`,
-        value: inv.location_id,
+        label: `${formatInventorySlot(inv)}（可用 ${inv.quantity}）`,
+        value: inventorySlotKey(inv),
       })),
     [selected],
   );
 
-  const maxQty = selected?.inventory.find((i) => i.location_id === locationId)?.quantity ?? 0;
-  const canSubmit = Boolean(selected && locationId && qty > 0 && qty <= maxQty && note.trim());
+  const selectedInventory = selected ? findInventoryBySlotKey(selected.inventory, slotKey) : undefined;
+  const maxQty = selectedInventory?.quantity ?? 0;
+  const slotParsed = parseInventorySlotKey(slotKey);
+  const returnPolicyOk =
+    isDirectOutbound ||
+    (returnPolicy === "not_required" || (returnPolicy === "required" && returnDueDate));
+  const canSubmit = Boolean(
+    selected && slotKey && qty > 0 && qty <= maxQty && note.trim() && returnPolicyOk,
+  );
 
   const onSubmit = async () => {
     if (!selected || !canSubmit) {
@@ -136,10 +157,12 @@ export function StockOutboundPanel() {
       if (isDirectOutbound) {
         const result = await postOutbound({
           material_id: selected.material.id,
-          location_id: locationId,
+          location_id: slotParsed.location_id,
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim(),
+          row: slotParsed.row,
+          column: slotParsed.column,
         });
         Toast.show({ icon: "success", content: `出库成功 ${result.transaction_id}` });
         setItems((current) => applyLocalOutbound(current, selected.material.id, qty));
@@ -147,10 +170,14 @@ export function StockOutboundPanel() {
         const result = await createStockRequest({
           type: "出库",
           material_id: selected.material.id,
-          location_id: locationId,
+          location_id: slotParsed.location_id,
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim(),
+          return_required: returnPolicy === "required",
+          return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
+          row: slotParsed.row,
+          column: slotParsed.column,
         });
         Toast.show({ icon: "success", content: `已提交出库申请 ${result.request_id}` });
       }
@@ -187,11 +214,11 @@ export function StockOutboundPanel() {
             <EmptyState icon="🏷️" text="该物料暂无库存" hint="请联系库管入库" />
           ) : (
             <Form layout="vertical" className="form-card">
-              <Form.Item label="出库库位">
+              <Form.Item label="出库库位 / 格位">
                 <Selector
                   options={locationOptions}
-                  value={locationId ? [locationId] : []}
-                  onChange={(arr) => setLocationId(arr[0] ?? "")}
+                  value={slotKey ? [slotKey] : []}
+                  onChange={(arr) => setSlotKey(arr[0] ?? "")}
                 />
               </Form.Item>
               <Form.Item label="出库数量">
@@ -210,6 +237,34 @@ export function StockOutboundPanel() {
                   rows={3}
                 />
               </Form.Item>
+              {!isDirectOutbound && (
+                <>
+                  <Form.Item label="归还计划">
+                    <Selector
+                      options={[
+                        { label: "需要归还", value: "required" },
+                        { label: "无须归还", value: "not_required" },
+                      ]}
+                      value={returnPolicy ? [returnPolicy] : []}
+                      onChange={(arr) => {
+                        const next = (arr[0] as "required" | "not_required" | undefined) ?? "";
+                        setReturnPolicy(next);
+                        if (next !== "required") setReturnDueDate("");
+                      }}
+                    />
+                  </Form.Item>
+                  {returnPolicy === "required" && (
+                    <Form.Item label="预计归还时间">
+                      <input
+                        type="date"
+                        className="native-date-input"
+                        value={returnDueDate}
+                        onChange={(e) => setReturnDueDate(e.target.value)}
+                      />
+                    </Form.Item>
+                  )}
+                </>
+              )}
             </Form>
           )}
         </SectionCard>

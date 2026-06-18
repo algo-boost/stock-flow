@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Form, Input, SearchBar, Toast } from "antd-mobile";
 import { listCategories, listMyRequests, listTransactions, searchMaterials } from "../api";
 import type { Category, StockRequest, Transaction } from "../api/types";
+import { formatReturnPlan } from "../utils/requestDisplay";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, SectionCard, TxBadge } from "../components/ui";
@@ -311,8 +312,13 @@ export default function HistoryPage() {
                   {item.material_name ?? item.material_id} × {item.quantity}
                 </div>
                 <div className="tx-meta">
-                  {item.location_name ?? item.location_id} · {new Date(item.created_at).toLocaleString()}
+                  {item.type === "入库" && !item.location_id
+                    ? "库位待库管指定"
+                    : (item.location_name ?? item.location_id ?? "—")}{" "}
+                  · {new Date(item.created_at).toLocaleString()}
                 </div>
+                {item.remark && <div className="tx-meta">说明：{item.remark}</div>}
+                {formatReturnPlan(item) && <div className="tx-meta">归还：{formatReturnPlan(item)}</div>}
                 {item.approver_name && <div className="tx-meta">审批人：{item.approver_name}</div>}
                 {item.reject_reason && <div className="tx-meta">拒绝原因：{item.reject_reason}</div>}
               </div>

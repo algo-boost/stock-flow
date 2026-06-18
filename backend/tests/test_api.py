@@ -436,6 +436,8 @@ def test_user_request_approved_by_admin_creates_history():
             "qty": 1,
             "idempotency_key": "test-request-outbound-001",
             "note": "项目申请领用",
+            "return_required": True,
+            "return_due_at": "2026-07-01",
         },
     )
     assert create_resp.status_code == 200
@@ -459,6 +461,154 @@ def test_user_request_approved_by_admin_creates_history():
     assert history_resp.status_code == 200
     txs = history_resp.json()["data"]
     assert any(tx["id"] == approved["transaction_id"] and tx["operator"] == "研发用户" for tx in txs)
+
+
+def test_user_inbound_request_without_location_approved_by_admin():
+    create_resp = client.post(
+        "/requests",
+        headers=HEADERS_USER,
+        json={
+            "type": "入库",
+            "material_id": "mat_001",
+            "qty": 1,
+            "idempotency_key": "test-request-inbound-no-loc-001",
+            "note": "项目结束归还",
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["data"]["request_id"]
+
+    pending_resp = client.get("/requests?status=待审批", headers=HEADERS_ADMIN)
+    pending_item = next(item for item in pending_resp.json()["data"] if item["id"] == request_id)
+    assert pending_item["location_id"] is None
+
+    approve_resp = client.post(
+        f"/requests/{request_id}/approve",
+        headers=HEADERS_ADMIN,
+        json={"location_id": "loc_01", "row": 2, "column": 3},
+    )
+    assert approve_resp.status_code == 200
+    approved = approve_resp.json()["data"]
+    assert approved["status"] == "已通过"
+    assert approved["location_id"] == "loc_01"
+    assert approved["transaction_id"]
+
+
+def test_inbound_keeps_separate_cabinet_slots():
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 5,
+            "idempotency_key": "slot-inbound-1-9",
+            "note": "首批",
+            "row": 1,
+            "column": 9,
+        },
+    )
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 2,
+            "idempotency_key": "slot-inbound-1-10",
+            "note": "第二批",
+            "row": 1,
+            "column": 10,
+        },
+    )
+    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    slots = {
+        (item["row"], item["column"]): item["quantity"]
+        for item in detail["inventory"]
+        if item["location_id"] == "loc_01"
+    }
+    assert slots[(1, 9)] == 5
+    assert slots[(1, 10)] == 2
+    assert detail["total_quantity"] == 10
+
+
+def test_outbound_request_approval_uses_cabinet_slot():
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 5,
+            "idempotency_key": "slot-outbound-setup",
+            "note": "格位备货",
+            "row": 1,
+            "column": 6,
+        },
+    )
+    create_resp = client.post(
+        "/requests",
+        headers=HEADERS_USER,
+        json={
+            "type": "出库",
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "slot-outbound-req-01",
+            "note": "实验领用",
+            "return_required": True,
+            "return_due_at": "2026-07-01",
+            "row": 1,
+            "column": 6,
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["data"]["request_id"]
+
+    approve_resp = client.post(f"/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    assert approve_resp.status_code == 200
+
+    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    slots = {
+        (item["row"], item["column"]): item["quantity"]
+        for item in detail["inventory"]
+        if item["location_id"] == "loc_01" and item.get("row") is not None
+    }
+    assert slots[(1, 6)] == 4
+
+
+def test_outbound_request_approval_auto_picks_slot_when_missing():
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 2,
+            "idempotency_key": "slot-outbound-auto-setup",
+            "note": "格位备货",
+            "row": 1,
+            "column": 7,
+        },
+    )
+    create_resp = client.post(
+        "/requests",
+        headers=HEADERS_USER,
+        json={
+            "type": "出库",
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "slot-outbound-req-02",
+            "note": "无格位旧申请",
+            "return_required": False,
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["data"]["request_id"]
+
+    approve_resp = client.post(f"/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    assert approve_resp.status_code == 200
 
 
 def test_inbound_forbidden_for_user():

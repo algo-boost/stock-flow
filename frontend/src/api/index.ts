@@ -91,6 +91,20 @@ async function fetchJson<T>(
   return { resp, body };
 }
 
+function formatValidationDetail(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail;
+  if (!Array.isArray(detail)) return undefined;
+  const messages = detail
+    .map((item) => {
+      if (typeof item !== "object" || item === null) return "";
+      const msg = "msg" in item && typeof item.msg === "string" ? item.msg : "";
+      const loc = "loc" in item && Array.isArray(item.loc) ? item.loc.join(".") : "";
+      return loc ? `${loc}: ${msg}` : msg;
+    })
+    .filter(Boolean);
+  return messages.length ? messages.join("；") : undefined;
+}
+
 async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized = true): Promise<T> {
   let { resp, body } = await fetchJson<T>(path, init);
   if (retryOnUnauthorized && isUnauthorized(resp, body) && isFeishuClient()) {
@@ -98,7 +112,10 @@ async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized 
     ({ resp, body } = await fetchJson<T>(path, init));
   }
   if (!resp.ok || body.code !== 0) {
-    const detail = typeof body.detail === "string" ? body.detail : undefined;
+    const detail =
+      typeof body.detail === "string"
+        ? body.detail
+        : formatValidationDetail((body as { detail?: unknown }).detail);
     throw new Error(body.message || detail || `请求失败 (${resp.status})`);
   }
   return body.data;
@@ -251,6 +268,8 @@ export function postOutbound(payload: {
   qty: number;
   idempotency_key: string;
   note: string;
+  row?: number;
+  column?: number;
 }) {
   return request<{ transaction_id: string }>("/outbound", {
     method: "POST",
@@ -275,10 +294,14 @@ export function postPurchaseInbound(payload: {
 export function createStockRequest(payload: {
   type: StockRequestType;
   material_id: string;
-  location_id: string;
+  location_id?: string;
   qty: number;
   idempotency_key: string;
   note: string;
+  return_required?: boolean;
+  return_due_at?: string;
+  row?: number;
+  column?: number;
 }) {
   return request<{ request_id: string }>("/requests", {
     method: "POST",
@@ -312,9 +335,17 @@ export function listApprovalRequests(opts?: {
   return request<StockRequest[]>(`/requests${qs ? `?${qs}` : ""}`);
 }
 
-export function approveStockRequest(id: string) {
+export function approveStockRequest(
+  id: string,
+  payload?: {
+    location_id?: string;
+    row?: number;
+    column?: number;
+  },
+) {
   return request<StockRequest>(`/requests/${id}/approve`, {
     method: "POST",
+    body: JSON.stringify(payload ?? {}),
   });
 }
 
@@ -360,7 +391,7 @@ export function postInbound(payload: {
 export function updateInventorySlot(
   materialId: string,
   locationId: string,
-  payload: { row: number; column: number },
+  payload: { row: number; column: number; from_row?: number; from_column?: number },
 ) {
   return request<InventoryItem>(`/materials/${materialId}/inventory/${locationId}/slot`, {
     method: "PATCH",
@@ -377,6 +408,8 @@ export function postTransfer(payload: {
   note?: string;
   to_row?: number;
   to_column?: number;
+  from_row?: number;
+  from_column?: number;
 }) {
   return request<{ transaction_ids: string[] }>("/transfer", {
     method: "POST",

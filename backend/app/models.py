@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Generic, Optional, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 T = TypeVar("T")
 
@@ -141,7 +141,7 @@ class StockRequest(BaseModel):
     status: StockRequestStatus
     material_id: str
     material_name: str | None = None
-    location_id: str
+    location_id: str | None = None
     location_name: str | None = None
     quantity: int
     requester_open_id: str
@@ -150,6 +150,10 @@ class StockRequest(BaseModel):
     approver_name: str | None = None
     remark: str | None = None
     reject_reason: str | None = None
+    return_required: bool | None = None
+    return_due_at: date | None = None
+    row: int | None = None
+    column: int | None = None
     transaction_id: str | None = None
     created_at: datetime
     reviewed_at: datetime | None = None
@@ -190,6 +194,8 @@ class InboundCreate(BaseModel):
 class InventorySlotUpdate(BaseModel):
     row: int = Field(ge=1, le=99)
     column: int = Field(ge=1, le=99)
+    from_row: int | None = Field(default=None, ge=1, le=99)
+    from_column: int | None = Field(default=None, ge=1, le=99)
 
 
 class PurchaseInboundCreate(InboundCreate):
@@ -202,15 +208,40 @@ class OutboundCreate(BaseModel):
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str = Field(min_length=1, max_length=500)
+    row: int | None = Field(default=None, ge=1, le=99)
+    column: int | None = Field(default=None, ge=1, le=99)
 
 
 class StockRequestCreate(BaseModel):
     type: StockRequestType
     material_id: str
-    location_id: str
+    location_id: str | None = None
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str = Field(min_length=1, max_length=500)
+    return_required: bool | None = None
+    return_due_at: date | None = None
+    row: int | None = Field(default=None, ge=1, le=99)
+    column: int | None = Field(default=None, ge=1, le=99)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "StockRequestCreate":
+        if self.type == StockRequestType.OUTBOUND:
+            if not self.location_id:
+                raise ValueError("outbound_requires_location")
+            if self.return_required is None:
+                raise ValueError("return_policy_required")
+            if self.return_required and not self.return_due_at:
+                raise ValueError("return_due_required")
+            if (self.row is None) ^ (self.column is None):
+                raise ValueError("slot_incomplete")
+        return self
+
+
+class RequestApprove(BaseModel):
+    location_id: str | None = None
+    row: int | None = Field(default=None, ge=1, le=99)
+    column: int | None = Field(default=None, ge=1, le=99)
 
 
 class RequestReject(BaseModel):
@@ -226,6 +257,8 @@ class TransferCreate(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     to_row: int | None = Field(default=None, ge=1, le=99)
     to_column: int | None = Field(default=None, ge=1, le=99)
+    from_row: int | None = Field(default=None, ge=1, le=99)
+    from_column: int | None = Field(default=None, ge=1, le=99)
 
 
 class TransactionResult(BaseModel):

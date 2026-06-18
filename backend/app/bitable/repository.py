@@ -859,13 +859,13 @@ class BitableRepository:
         s = self.settings
         fields = rec.get("fields", {})
         mid = field_link_id(fields.get(s.bitable_f_request_material)) or ""
-        lid = field_link_id(fields.get(s.bitable_f_request_location)) or ""
+        lid = field_link_id(fields.get(s.bitable_f_request_location)) or None
         req_type = self._parse_request_type(fields.get(s.bitable_f_request_type))
         status = self._parse_request_status(fields.get(s.bitable_f_request_status))
         created_at = self._parse_bitable_datetime(fields.get(s.bitable_f_request_created)) or datetime.now(timezone.utc)
         reviewed_at = self._parse_bitable_datetime(fields.get(s.bitable_f_request_reviewed))
         material = materials.get(mid)
-        location = locations.get(lid)
+        location = locations.get(lid) if lid else None
         requester_name = field_user_name(fields.get(s.bitable_f_request_requester)) or "未知"
         requester_open_id = field_user_id(fields.get(s.bitable_f_request_requester)) or ""
         approver_open_id = field_user_id(fields.get(s.bitable_f_request_approver))
@@ -877,7 +877,7 @@ class BitableRepository:
             material_id=mid,
             material_name=material.name if material else None,
             location_id=lid,
-            location_name=location.name if location else lid,
+            location_name=location.name if location else None,
             quantity=field_number(fields.get(s.bitable_f_request_quantity)),
             requester_open_id=requester_open_id,
             requester_name=requester_name,
@@ -901,19 +901,24 @@ class BitableRepository:
         if not material:
             raise ValueError("material_not_found")
         locations = await self._load_locations()
-        location = locations.get(payload.location_id)
-        if not location:
+        location = locations.get(payload.location_id) if payload.location_id else None
+        if payload.type == StockRequestType.OUTBOUND:
+            if not location:
+                raise ValueError("location_not_found")
+        elif payload.location_id and not location:
             raise ValueError("location_not_found")
 
         s = self.settings
+        remark = self._format_request_remark(payload)
         fields: dict[str, Any] = {
             s.bitable_f_request_type: payload.type.value,
             s.bitable_f_request_status: StockRequestStatus.PENDING.value,
             s.bitable_f_request_material: write_link(payload.material_id),
-            s.bitable_f_request_location: write_link(payload.location_id),
             s.bitable_f_request_quantity: payload.qty,
-            s.bitable_f_request_remark: payload.note,
+            s.bitable_f_request_remark: remark,
         }
+        if payload.location_id:
+            fields[s.bitable_f_request_location] = write_link(payload.location_id)
         if requester_open_id:
             fields[s.bitable_f_request_requester] = write_user(requester_open_id)
 
@@ -929,13 +934,24 @@ class BitableRepository:
             material_id=payload.material_id,
             material_name=material.name,
             location_id=payload.location_id,
-            location_name=location.name,
+            location_name=location.name if location else None,
             quantity=payload.qty,
             requester_open_id=requester_open_id,
             requester_name=requester_name,
-            remark=payload.note,
+            remark=remark,
+            return_required=payload.return_required,
+            return_due_at=payload.return_due_at,
             created_at=datetime.now(timezone.utc),
         )
+
+    @staticmethod
+    def _format_request_remark(payload: StockRequestCreate) -> str:
+        if payload.type != StockRequestType.OUTBOUND or payload.return_required is None:
+            return payload.note
+        if payload.return_required:
+            due = payload.return_due_at.isoformat() if payload.return_due_at else ""
+            return f"{payload.note} | 需归还：{due}"
+        return f"{payload.note} | 无须归还"
 
     async def list_requests(
         self,
@@ -977,6 +993,10 @@ class BitableRepository:
         request_id: str,
         approver_open_id: str,
         approver_name: str,
+        *,
+        location_id: str | None = None,
+        row: int | None = None,
+        column: int | None = None,
     ) -> StockRequest:
         self._require_requests_table()
         materials = await self._load_materials()
@@ -992,15 +1012,23 @@ class BitableRepository:
         approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
         requester_open_id = req.requester_open_id or ""
         if req.type == StockRequestType.INBOUND:
+            target_location_id = location_id or req.location_id
+            if not target_location_id or target_location_id not in locations:
+                raise ValueError("location_required_for_inbound_approval")
             tx = await self.apply_inbound(
                 req.material_id,
-                req.location_id,
+                target_location_id,
                 req.quantity,
                 requester_open_id,
                 req.requester_name,
                 approval_note,
+                row=row,
+                column=column,
             )
+            target_location = locations[target_location_id]
         else:
+            if not req.location_id or req.location_id not in locations:
+                raise ValueError("location_not_found")
             tx = await self.apply_outbound(
                 req.material_id,
                 req.location_id,
@@ -1009,6 +1037,8 @@ class BitableRepository:
                 req.requester_name,
                 approval_note,
             )
+            target_location_id = req.location_id
+            target_location = locations[target_location_id]
 
         reviewed_at = int(datetime.now(timezone.utc).timestamp() * 1000)
         s = self.settings
@@ -1016,6 +1046,7 @@ class BitableRepository:
             s.bitable_f_request_status: StockRequestStatus.APPROVED.value,
             s.bitable_f_request_transaction: tx.id,
             s.bitable_f_request_reviewed: reviewed_at,
+            s.bitable_f_request_location: write_link(target_location_id),
         }
         if approver_open_id:
             fields[s.bitable_f_request_approver] = write_user(approver_open_id)
@@ -1027,6 +1058,8 @@ class BitableRepository:
         return req.model_copy(
             update={
                 "status": StockRequestStatus.APPROVED,
+                "location_id": target_location_id,
+                "location_name": target_location.name,
                 "approver_open_id": approver_open_id,
                 "approver_name": approver_name,
                 "transaction_id": tx.id,

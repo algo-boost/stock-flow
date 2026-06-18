@@ -3,6 +3,12 @@ import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "ant
 import { useSearchParams } from "react-router-dom";
 import { getMaterial, listLocations, postTransfer, searchMaterials } from "../api";
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
+import {
+  findInventoryBySlotKey,
+  formatInventorySlot,
+  inventorySlotKey,
+  parseInventorySlotKey,
+} from "../utils/inventoryDisplay";
 import { CacheRefreshButton } from "./CacheRefreshButton";
 import { EmptyState, SectionCard } from "./ui";
 
@@ -21,7 +27,7 @@ export function LocationTransferPanel() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
-  const [fromLocationId, setFromLocationId] = useState("");
+  const [fromSlotKey, setFromSlotKey] = useState("");
   const [toLocationId, setToLocationId] = useState("");
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
@@ -61,7 +67,7 @@ export function LocationTransferPanel() {
         const detail = await getMaterial(presetMaterialId);
         setSelected(detail);
         const first = detail.inventory[0];
-        setFromLocationId(first?.location_id ?? "");
+        setFromSlotKey(first ? inventorySlotKey(first) : "");
         setToLocationId(locations.find((loc) => loc.id !== first?.location_id)?.id ?? "");
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
@@ -81,18 +87,20 @@ export function LocationTransferPanel() {
   const sourceOptions = useMemo(
     () =>
       (selected?.inventory ?? []).map((inv) => ({
-        label: `${inv.location_name ?? inv.location_id}（可用 ${inv.quantity}）`,
-        value: inv.location_id,
+        label: `${formatInventorySlot(inv)}（可用 ${inv.quantity}）`,
+        value: inventorySlotKey(inv),
       })),
     [selected],
   );
 
-  const maxQty = selected?.inventory.find((inv) => inv.location_id === fromLocationId)?.quantity ?? 0;
+  const fromParsed = parseInventorySlotKey(fromSlotKey);
+  const selectedSource = selected ? findInventoryBySlotKey(selected.inventory, fromSlotKey) : undefined;
+  const maxQty = selectedSource?.quantity ?? 0;
   const canSubmit = Boolean(
     selected &&
-      fromLocationId &&
+      fromSlotKey &&
       toLocationId &&
-      fromLocationId !== toLocationId &&
+      fromParsed.location_id !== toLocationId &&
       qty > 0 &&
       qty <= maxQty,
   );
@@ -103,7 +111,7 @@ export function LocationTransferPanel() {
       const detail = await getMaterial(item.id);
       const first = detail.inventory[0];
       setSelected(detail);
-      setFromLocationId(first?.location_id ?? "");
+      setFromSlotKey(first ? inventorySlotKey(first) : "");
       setToLocationId(locations.find((loc) => loc.id !== first?.location_id)?.id ?? "");
       setQty(1);
       setNote("");
@@ -127,7 +135,7 @@ export function LocationTransferPanel() {
 
   const backToList = () => {
     setSelected(null);
-    setFromLocationId("");
+    setFromSlotKey("");
     setToLocationId("");
     setQty(1);
     setNote("");
@@ -142,11 +150,13 @@ export function LocationTransferPanel() {
     try {
       const result = await postTransfer({
         material_id: selected.material.id,
-        from_location_id: fromLocationId,
+        from_location_id: fromParsed.location_id,
         to_location_id: toLocationId,
         qty,
         idempotency_key: newIdempotencyKey(),
         note: note.trim() || undefined,
+        from_row: fromParsed.row,
+        from_column: fromParsed.column,
       });
       Toast.show({ icon: "success", content: `移动成功 ${result.transaction_ids.length} 条流水` });
       backToList();
@@ -176,15 +186,16 @@ export function LocationTransferPanel() {
             <span className="stock-badge">总库存 {selected.total_quantity}</span>
           </div>
           <Form layout="vertical" className="form-card">
-            <Form.Item label="源库位">
+            <Form.Item label="源库位 / 格位">
               <Selector
                 options={sourceOptions}
-                value={fromLocationId ? [fromLocationId] : []}
+                value={fromSlotKey ? [fromSlotKey] : []}
                 onChange={(arr) => {
                   const next = arr[0] ?? "";
-                  setFromLocationId(next);
-                  if (next === toLocationId) {
-                    setToLocationId(locations.find((loc) => loc.id !== next)?.id ?? "");
+                  setFromSlotKey(next);
+                  const nextLoc = parseInventorySlotKey(next).location_id;
+                  if (nextLoc === toLocationId) {
+                    setToLocationId(locations.find((loc) => loc.id !== nextLoc)?.id ?? "");
                   }
                   setQty(1);
                 }}
@@ -192,7 +203,7 @@ export function LocationTransferPanel() {
             </Form.Item>
             <Form.Item label="目标库位">
               <Selector
-                options={locationOptions.filter((option) => option.value !== fromLocationId)}
+                options={locationOptions.filter((option) => option.value !== fromParsed.location_id)}
                 value={toLocationId ? [toLocationId] : []}
                 onChange={(arr) => setToLocationId(arr[0] ?? "")}
               />

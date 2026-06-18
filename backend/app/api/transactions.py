@@ -13,6 +13,7 @@ from app.models import (
     PurchaseInboundCreate,
     RequestReject,
     Role,
+    RequestApprove,
     StockRequestCreate,
     StockRequestResult,
     StockRequestStatus,
@@ -154,10 +155,11 @@ async def list_requests(
 @router.post("/requests/{request_id}/approve")
 async def approve_request(
     request_id: str,
+    payload: RequestApprove | None = None,
     user: User = Depends(require_roles(Role.ADMIN)),
     service: InventoryService = Depends(get_service),
 ):
-    item = await service.approve_request(request_id, user)
+    item = await service.approve_request(request_id, payload or RequestApprove(), user)
     return success(item.model_dump(mode="json"))
 
 

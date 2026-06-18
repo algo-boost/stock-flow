@@ -101,7 +101,7 @@ export interface StockRequest {
   status: StockRequestStatus;
   material_id: string;
   material_name?: string | null;
-  location_id: string;
+  location_id?: string | null;
   location_name?: string | null;
   quantity: number;
   requester_open_id: string;
@@ -110,6 +110,10 @@ export interface StockRequest {
   approver_name?: string | null;
   remark?: string | null;
   reject_reason?: string | null;
+  return_required?: boolean | null;
+  return_due_at?: string | null;
+  row?: number | null;
+  column?: number | null;
   transaction_id?: string | null;
   created_at: string;
   reviewed_at?: string | null;

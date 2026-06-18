@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from app.models import (
     Category,
@@ -29,6 +29,52 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+InventoryKey = tuple[str, str, Optional[int], Optional[int]]
+
+
+def inv_key(
+    material_id: str,
+    location_id: str,
+    row: Optional[int] = None,
+    column: Optional[int] = None,
+) -> InventoryKey:
+    """同一库位下不同货柜格位为独立库存记录。"""
+    return (material_id, location_id, row, column)
+
+
+def _resolve_outbound_slot(
+    inventory: dict[InventoryKey, InventoryItem],
+    material_id: str,
+    location_id: str,
+    qty: int,
+    row: Optional[int] = None,
+    column: Optional[int] = None,
+) -> tuple[Optional[int], Optional[int]]:
+    """审批出库时确定格位：优先用申请/审批指定，否则从该库位可用库存中自动选取。"""
+    if row is not None and column is not None:
+        return row, column
+
+    candidates: list[tuple[Optional[int], Optional[int], int]] = []
+    for (mid, lid, r, c), inv in inventory.items():
+        if mid == material_id and lid == location_id and inv.quantity > 0:
+            candidates.append((r, c, inv.quantity))
+    if not candidates:
+        return row, column
+
+    for r, c, available in candidates:
+        if r is None and c is None and available >= qty:
+            return None, None
+
+    slotted = sorted(
+        [(r, c, available) for r, c, available in candidates if r is not None and c is not None],
+        key=lambda item: (-item[2], item[0], item[1]),
+    )
+    for r, c, available in slotted:
+        if available >= qty:
+            return r, c
+    return row, column
+
+
 class MockStore:
     """内存数据存储，BITABLE_MODE=mock 时使用。"""
 
@@ -36,7 +82,7 @@ class MockStore:
         self.categories: dict[str, Category] = {}
         self.locations: dict[str, Location] = {}
         self.materials: dict[str, Material] = {}
-        self.inventory: dict[tuple[str, str], InventoryItem] = {}
+        self.inventory: dict[InventoryKey, InventoryItem] = {}
         self.transactions: dict[str, Transaction] = {}
         self.requests: dict[str, StockRequest] = {}
         self._seed()
@@ -310,12 +356,12 @@ class MockStore:
                 ]
         if location:
             mat_ids = {
-                mid for (mid, lid), inv in self.inventory.items() if lid == location and inv.quantity > 0
+                mid for (mid, lid, _, _), inv in self.inventory.items() if lid == location and inv.quantity > 0
             }
             items = [m for m in items if m.id in mat_ids]
         if stock_only:
             mat_ids = {
-                mid for (mid, _), inv in self.inventory.items() if inv.quantity > 0
+                mid for (mid, _, _, _), inv in self.inventory.items() if inv.quantity > 0
             }
             items = [m for m in items if m.id in mat_ids]
         total = len(items)
@@ -509,11 +555,14 @@ class MockStore:
         return catalog
 
     def get_inventory_for_material(self, material_id: str) -> list[InventoryItem]:
-        return [
-            inv
-            for (mid, _), inv in self.inventory.items()
-            if mid == material_id and inv.quantity > 0
-        ]
+        return sorted(
+            (
+                inv
+                for (mid, _, _, _), inv in self.inventory.items()
+                if mid == material_id and inv.quantity > 0
+            ),
+            key=lambda item: (item.location_id, item.row or 0, item.column or 0),
+        )
 
     def list_inventory(
         self, material_id: str | None = None, location_id: str | None = None
@@ -567,10 +616,13 @@ class MockStore:
     ) -> StockRequest:
         if payload.material_id not in self.materials:
             raise ValueError("material_not_found")
-        if payload.location_id not in self.locations:
-            raise ValueError("location_not_found")
         material = self.materials[payload.material_id]
-        location = self.locations[payload.location_id]
+        location = self.locations.get(payload.location_id) if payload.location_id else None
+        if payload.type == StockRequestType.OUTBOUND:
+            if not location:
+                raise ValueError("location_not_found")
+        elif payload.location_id and not location:
+            raise ValueError("location_not_found")
         request_id = f"req_{len(self.requests) + 1:04d}"
         req = StockRequest(
             id=request_id,
@@ -579,11 +631,15 @@ class MockStore:
             material_id=payload.material_id,
             material_name=material.name,
             location_id=payload.location_id,
-            location_name=location.name,
+            location_name=location.name if location else None,
             quantity=payload.qty,
             requester_open_id=requester_open_id,
             requester_name=requester_name,
             remark=payload.note,
+            return_required=payload.return_required,
+            return_due_at=payload.return_due_at,
+            row=payload.row,
+            column=payload.column,
             created_at=_utcnow(),
         )
         self.requests[request_id] = req
@@ -620,6 +676,10 @@ class MockStore:
         request_id: str,
         approver_open_id: str,
         approver_name: str,
+        *,
+        location_id: str | None = None,
+        row: int | None = None,
+        column: int | None = None,
     ) -> StockRequest:
         req = self.requests.get(request_id)
         if not req:
@@ -629,26 +689,50 @@ class MockStore:
 
         approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
         if req.type == StockRequestType.INBOUND:
+            target_location_id = location_id or req.location_id
+            if not target_location_id or target_location_id not in self.locations:
+                raise ValueError("location_required_for_inbound_approval")
+            target_location = self.locations[target_location_id]
             tx = self.apply_inbound(
                 req.material_id,
-                req.location_id,
+                target_location_id,
                 req.quantity,
                 req.requester_name,
                 approval_note,
+                row=row,
+                column=column,
             )
         else:
+            if not req.location_id or req.location_id not in self.locations:
+                raise ValueError("location_not_found")
+            out_row = row if row is not None else req.row
+            out_column = column if column is not None else req.column
+            out_row, out_column = _resolve_outbound_slot(
+                self.inventory,
+                req.material_id,
+                req.location_id,
+                req.quantity,
+                out_row,
+                out_column,
+            )
             tx = self.apply_outbound(
                 req.material_id,
                 req.location_id,
                 req.quantity,
                 req.requester_name,
                 approval_note,
+                row=out_row,
+                column=out_column,
             )
+            target_location_id = req.location_id
+            target_location = self.locations[target_location_id]
 
         reviewed_at = _utcnow()
         updated = req.model_copy(
             update={
                 "status": StockRequestStatus.APPROVED,
+                "location_id": target_location_id,
+                "location_name": target_location.name,
                 "approver_open_id": approver_open_id,
                 "approver_name": approver_name,
                 "transaction_id": tx.id,
@@ -698,16 +782,13 @@ class MockStore:
             raise ValueError("location_not_found")
         if (row is None) ^ (column is None):
             raise ValueError("slot_incomplete")
-        key = (material_id, location_id)
+        key = inv_key(material_id, location_id, row, column)
         loc = self.locations[location_id]
         now = _utcnow()
-        slot_updates: dict[str, int] = {}
-        if row is not None and column is not None:
-            slot_updates = {"row": row, "column": column}
         if key in self.inventory:
             item = self.inventory[key]
             self.inventory[key] = item.model_copy(
-                update={"quantity": item.quantity + qty, "last_updated": now, **slot_updates}
+                update={"quantity": item.quantity + qty, "last_updated": now}
             )
         else:
             self.inventory[key] = InventoryItem(
@@ -747,16 +828,20 @@ class MockStore:
         qty: int,
         operator: str,
         remark: str | None,
+        row: int | None = None,
+        column: int | None = None,
     ) -> Transaction:
         if material_id not in self.materials:
             raise ValueError("material_not_found")
-        key = (material_id, location_id)
+        key = inv_key(material_id, location_id, row, column)
         if key not in self.inventory or self.inventory[key].quantity < qty:
             available = self.inventory[key].quantity if key in self.inventory else 0
             raise ValueError(f"insufficient_stock:{available}")
         item = self.inventory[key]
         item.quantity -= qty
         item.last_updated = _utcnow()
+        if item.quantity <= 0:
+            del self.inventory[key]
         loc = self.locations.get(location_id)
         tx_id = f"tx_{len(self.transactions) + 1:04d}"
         material = self.materials[material_id]
@@ -781,18 +866,34 @@ class MockStore:
         location_id: str,
         row: int,
         column: int,
+        from_row: int | None = None,
+        from_column: int | None = None,
     ) -> InventoryItem:
         if material_id not in self.materials:
             raise ValueError("material_not_found")
         if location_id not in self.locations:
             raise ValueError("location_not_found")
-        key = (material_id, location_id)
-        if key not in self.inventory or self.inventory[key].quantity <= 0:
+        old_key = inv_key(material_id, location_id, from_row, from_column)
+        if old_key not in self.inventory or self.inventory[old_key].quantity <= 0:
             raise ValueError("inventory_not_found")
-        item = self.inventory[key]
-        updated = item.model_copy(update={"row": row, "column": column, "last_updated": _utcnow()})
-        self.inventory[key] = updated
-        return updated
+        item = self.inventory.pop(old_key)
+        new_key = inv_key(material_id, location_id, row, column)
+        now = _utcnow()
+        if new_key in self.inventory:
+            existing = self.inventory[new_key]
+            self.inventory[new_key] = existing.model_copy(
+                update={
+                    "quantity": existing.quantity + item.quantity,
+                    "row": row,
+                    "column": column,
+                    "last_updated": now,
+                }
+            )
+        else:
+            self.inventory[new_key] = item.model_copy(
+                update={"row": row, "column": column, "last_updated": now}
+            )
+        return self.inventory[new_key]
 
     def apply_transfer(
         self,
@@ -804,16 +905,19 @@ class MockStore:
         remark: str | None,
         to_row: int | None = None,
         to_column: int | None = None,
+        from_row: int | None = None,
+        from_column: int | None = None,
     ) -> list[Transaction]:
         if material_id not in self.materials:
             raise ValueError("material_not_found")
-        if from_location_id == to_location_id:
+        if from_location_id == to_location_id and inv_key(material_id, from_location_id, from_row, from_column) == inv_key(
+            material_id, to_location_id, to_row, to_column
+        ):
             raise ValueError("same_location")
         if from_location_id not in self.locations or to_location_id not in self.locations:
             raise ValueError("location_not_found")
 
-        source_key = (material_id, from_location_id)
-        target_key = (material_id, to_location_id)
+        source_key = inv_key(material_id, from_location_id, from_row, from_column)
         if source_key not in self.inventory or self.inventory[source_key].quantity < qty:
             available = self.inventory[source_key].quantity if source_key in self.inventory else 0
             raise ValueError(f"insufficient_stock:{available}")
@@ -823,18 +927,18 @@ class MockStore:
 
         now = _utcnow()
         source_item = self.inventory[source_key]
-        self.inventory[source_key].quantity -= qty
-        self.inventory[source_key].last_updated = now
+        source_item.quantity -= qty
+        source_item.last_updated = now
+        if source_item.quantity <= 0:
+            del self.inventory[source_key]
         target_loc = self.locations[to_location_id]
         slot_row = to_row if to_row is not None else source_item.row
         slot_col = to_column if to_column is not None else source_item.column
+        target_key = inv_key(material_id, to_location_id, slot_row, slot_col)
         if target_key in self.inventory:
             target_item = self.inventory[target_key]
-            slot_updates: dict[str, int | None] = {}
-            if slot_row is not None and slot_col is not None:
-                slot_updates = {"row": slot_row, "column": slot_col}
             self.inventory[target_key] = target_item.model_copy(
-                update={"quantity": target_item.quantity + qty, "last_updated": now, **slot_updates}
+                update={"quantity": target_item.quantity + qty, "last_updated": now}
             )
         else:
             self.inventory[target_key] = InventoryItem(
@@ -931,21 +1035,21 @@ def seed_test_materials(store: MockStore) -> None:
         ),
     }
     store.inventory = {
-        ("mat_001", "loc_01"): InventoryItem(
+        inv_key("mat_001", "loc_01"): InventoryItem(
             material_id="mat_001",
             location_id="loc_01",
             location_name="电器类A柜-01",
             quantity=3,
             last_updated=now,
         ),
-        ("mat_realsense", "loc_01"): InventoryItem(
+        inv_key("mat_realsense", "loc_01"): InventoryItem(
             material_id="mat_realsense",
             location_id="loc_01",
             location_name="电器类A柜-01",
             quantity=2,
             last_updated=now,
         ),
-        ("mat_orbbec", "loc_01"): InventoryItem(
+        inv_key("mat_orbbec", "loc_01"): InventoryItem(
             material_id="mat_orbbec",
             location_id="loc_01",
             location_name="电器类A柜-01",

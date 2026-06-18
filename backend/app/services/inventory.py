@@ -19,6 +19,7 @@ from app.models import (
     OutboundCreate,
     PaginatedMaterials,
     PurchaseInboundCreate,
+    RequestApprove,
     RequestReject,
     StockRequest,
     StockRequestCreate,
@@ -111,7 +112,8 @@ class InventoryService:
                     key: item.quantity for key, item in self.store.inventory.items()
                 }
             stock_by_material: dict[str, int] = {}
-            for (material_id, _location_id), quantity in inventory_map.items():
+            for key, quantity in inventory_map.items():
+                material_id = key[0]
                 stock_by_material[material_id] = stock_by_material.get(material_id, 0) + quantity
             return attach_category_stats(categories, materials, stock_by_material)
         except RuntimeError as exc:
@@ -374,6 +376,8 @@ class InventoryService:
                 location_id,
                 payload.row,
                 payload.column,
+                from_row=payload.from_row,
+                from_column=payload.from_column,
             )
         except ValueError as exc:
             msg = str(exc)
@@ -448,6 +452,8 @@ class InventoryService:
                 payload.qty,
                 user.name,
                 payload.note,
+                row=payload.row,
+                column=payload.column,
             )
         except ValueError as exc:
             msg = str(exc)
@@ -471,6 +477,12 @@ class InventoryService:
                 raise AppError(4004, "物料未找到", 404) from exc
             if msg == "location_not_found":
                 raise AppError(1001, "库位未找到", 400) from exc
+            if msg == "outbound_requires_location":
+                raise AppError(1001, "出库申请必须选择库位", 400) from exc
+            if msg == "return_policy_required":
+                raise AppError(1001, "请选择是否需要归还", 400) from exc
+            if msg == "return_due_required":
+                raise AppError(1001, "请选择预计归还时间", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
@@ -504,19 +516,37 @@ class InventoryService:
         except ValueError as exc:
             raise AppError(5003, f"Bitable 申请表数据格式错误: {exc}", 500) from exc
 
-    async def approve_request(self, request_id: str, user: User) -> StockRequest:
+    async def approve_request(self, request_id: str, payload: RequestApprove, user: User) -> StockRequest:
         try:
             if self.repo:
-                return await self.repo.approve_request(request_id, user.open_id, user.name)
-            return self.store.approve_request(request_id, user.open_id, user.name)
+                return await self.repo.approve_request(
+                    request_id,
+                    user.open_id,
+                    user.name,
+                    location_id=payload.location_id,
+                    row=payload.row,
+                    column=payload.column,
+                )
+            return self.store.approve_request(
+                request_id,
+                user.open_id,
+                user.name,
+                location_id=payload.location_id,
+                row=payload.row,
+                column=payload.column,
+            )
         except ValueError as exc:
             msg = str(exc)
             if msg == "request_not_found":
                 raise AppError(4004, "申请未找到", 404) from exc
             if msg == "request_already_reviewed":
                 raise AppError(1001, "申请已审批，不能重复处理", 400) from exc
+            if msg == "location_required_for_inbound_approval":
+                raise AppError(1001, "入库申请审批时必须指定目标库位", 400) from exc
             if msg == "material_not_found":
                 raise AppError(4004, "物料未找到", 404) from exc
+            if msg == "location_not_found":
+                raise AppError(1001, "库位未找到", 400) from exc
             if msg.startswith("insufficient_stock:"):
                 available = msg.split(":", 1)[1]
                 raise AppError(4002, f"库存不足: 当前可用 {available}", 400) from exc
@@ -560,6 +590,8 @@ class InventoryService:
                 payload.note,
                 to_row=payload.to_row,
                 to_column=payload.to_column,
+                from_row=payload.from_row,
+                from_column=payload.from_column,
             )
         except ValueError as exc:
             msg = str(exc)

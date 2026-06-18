@@ -1139,6 +1139,13 @@ body {
   margin-top: 10px;
 }
 
+.reject-dialog-hint {
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--sf-text-secondary);
+  line-height: 1.5;
+}
+
 .history-filters {
   margin-top: 10px;
 }

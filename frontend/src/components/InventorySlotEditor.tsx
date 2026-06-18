@@ -30,7 +30,12 @@ export function InventorySlotEditor({
   const onSave = async () => {
     setSaving(true);
     try {
-      const updated = await updateInventorySlot(materialId, item.location_id, { row, column });
+      const updated = await updateInventorySlot(materialId, item.location_id, {
+        row,
+        column,
+        from_row: item.row ?? undefined,
+        from_column: item.column ?? undefined,
+      });
       Toast.show({ icon: "success", content: "格位已更新" });
       onUpdated(updated);
       setEditing(false);

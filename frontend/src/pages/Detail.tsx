@@ -7,6 +7,7 @@ import { useAuth } from "../components/AuthGate";
 import { InventorySlotEditor } from "../components/InventorySlotEditor";
 import { Layout } from "../components/Layout";
 import { EmptyState, InfoRow, SectionCard, StatCard, TxBadge } from "../components/ui";
+import { inventorySlotKey } from "../utils/inventoryDisplay";
 
 export default function DetailPage() {
   const { id = "" } = useParams();
@@ -34,7 +35,7 @@ export default function DetailPage() {
       return {
         ...current,
         inventory: current.inventory.map((item) =>
-          item.location_id === updated.location_id ? updated : item,
+          inventorySlotKey(item) === inventorySlotKey(updated) ? updated : item,
         ),
       };
     });
@@ -86,7 +87,7 @@ export default function DetailPage() {
         ) : (
           inventory.map((inv) => (
             <InventorySlotEditor
-              key={inv.location_id}
+              key={inventorySlotKey(inv)}
               materialId={material.id}
               item={inv}
               canEdit={canInbound}

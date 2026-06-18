@@ -116,7 +116,13 @@ export function StockInboundPanel() {
     return selected.inventory.find((i) => i.location_id === locationId)?.quantity ?? 0;
   }, [selected, locationId]);
 
-  const canSubmit = Boolean(selected && locationId && qty > 0 && !loading && (isDirectInbound || note.trim()));
+  const canSubmit = Boolean(
+    selected &&
+      qty > 0 &&
+      !loading &&
+      note.trim() &&
+      (isDirectInbound ? locationId : true),
+  );
   const hasMore = items.length < total;
   const majorCategoryOptions = useMemo(() => {
     const values = Array.from(
@@ -143,7 +149,7 @@ export function StockInboundPanel() {
     () => locations.find((loc) => loc.id === locationId),
     [locationId, locations],
   );
-  const showCabinetSlot = selectedLocation?.type === "货柜";
+  const showCabinetSlot = isDirectInbound && selectedLocation?.type === "货柜";
 
   const selectMaterial = async (item: MaterialSearchItem) => {
     setLoading(true);
@@ -240,7 +246,7 @@ export function StockInboundPanel() {
 
   const onSubmit = async () => {
     if (!selected || !canSubmit) {
-      Toast.show({ content: "请填写物料、库位和数量" });
+      Toast.show({ content: isDirectInbound ? "请填写物料、库位和数量" : "请填写物料、数量和归还说明" });
       return;
     }
     setSubmitting(true);
@@ -261,7 +267,6 @@ export function StockInboundPanel() {
         const result = await createStockRequest({
           type: "入库",
           material_id: selected.material.id,
-          location_id: locationId,
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim(),
@@ -297,25 +302,31 @@ export function StockInboundPanel() {
             <span className="stock-badge">总库存 {selected.total_quantity}</span>
           </div>
           <Form layout="vertical" className="form-card">
-            <Form.Item label="目标库位">
-              <Selector
-                options={locationOptions}
-                value={locationId ? [locationId] : []}
-                onChange={(arr) => setLocationId(arr[0] ?? "")}
-              />
-            </Form.Item>
-            {locationId && selectedStock !== null && (
-              <div className="stock-hint">该库位当前库存：{selectedStock}</div>
-            )}
-            {showCabinetSlot && (
+            {isDirectInbound ? (
               <>
-                <Form.Item label="货柜行号">
-                  <Stepper min={1} max={20} value={slotRow} onChange={setSlotRow} />
+                <Form.Item label="目标库位">
+                  <Selector
+                    options={locationOptions}
+                    value={locationId ? [locationId] : []}
+                    onChange={(arr) => setLocationId(arr[0] ?? "")}
+                  />
                 </Form.Item>
-                <Form.Item label="货柜列号">
-                  <Stepper min={1} max={20} value={slotColumn} onChange={setSlotColumn} />
-                </Form.Item>
+                {locationId && selectedStock !== null && (
+                  <div className="stock-hint">该库位当前库存：{selectedStock}</div>
+                )}
+                {showCabinetSlot && (
+                  <>
+                    <Form.Item label="货柜行号">
+                      <Stepper min={1} max={20} value={slotRow} onChange={setSlotRow} />
+                    </Form.Item>
+                    <Form.Item label="货柜列号">
+                      <Stepper min={1} max={20} value={slotColumn} onChange={setSlotColumn} />
+                    </Form.Item>
+                  </>
+                )}
               </>
+            ) : (
+              <div className="stock-hint">归还目标库位与货柜格位由库管审批时指定，您只需填写数量与说明。</div>
             )}
             <Form.Item label="入库数量">
               <Stepper min={1} value={qty} onChange={setQty} />
