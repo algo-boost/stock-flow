@@ -118,11 +118,15 @@ export function isSubCategory(categories: Category[], categoryId: string | null)
   return Boolean(category?.parent_id);
 }
 
-/** 子类下是否有物料 SKU（material_count 含下级汇总） */
+/** 子类下是否有物料 SKU（material_count 含下级汇总），且无下级分类 */
 export function canBrowseCategoryMaterials(categories: Category[], categoryId: string | null): boolean {
   if (!isSubCategory(categories, categoryId)) return false;
   const category = categories.find((item) => item.id === categoryId);
-  return (category?.material_count ?? 0) > 0;
+  if (!category) return false;
+  // 如果该分类下还有子分类（如中类下有小类），不在此显示物料，应展开子分类
+  const hasChildren = categories.some((c) => c.parent_id === categoryId);
+  if (hasChildren) return false;
+  return (category.material_count ?? 0) > 0;
 }
 
 export function countCategoryMaterials(categories: Category[], categoryId: string, materialCategoryIds: string[]): number {
