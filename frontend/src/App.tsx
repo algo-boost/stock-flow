@@ -4,6 +4,7 @@ import AdminCenterPage from "./pages/AdminCenter";
 import DetailPage from "./pages/Detail";
 import HistoryPage from "./pages/History";
 import PendingReturnsPage from "./pages/PendingReturns";
+import LocationFormPage from "./pages/LocationForm";
 import LocationsPage from "./pages/Locations";
 import PurchasePage from "./pages/Purchase";
 import SearchPage from "./pages/Search";
@@ -43,6 +44,8 @@ export default function App() {
           <Route path="/inbound" element={<StockRedirect tab="inbound" />} />
           <Route path="/purchase" element={<PurchasePage />} />
           <Route path="/transfer" element={<TransferRedirect />} />
+          <Route path="/locations/new" element={<LocationFormPage />} />
+          <Route path="/locations/:id/edit" element={<LocationFormPage />} />
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/approvals" element={<ApprovalsRedirect />} />
           <Route path="/history" element={<HistoryPage />} />
