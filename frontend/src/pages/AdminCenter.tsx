@@ -106,6 +106,98 @@ function AdminCenterContent() {
         </div>
       </SectionCard>
 
+      {/* ── 可视化数据看板 ── */}
+      {overview && (
+        <SectionCard title="数据看板" subtitle="库存分布、出入库趋势与物料结构">
+          {/* 出入库对比条 */}
+          <div className="dash-section">
+            <div className="dash-label">出入库对比</div>
+            <div className="dash-bar-group">
+              <div className="dash-bar-row">
+                <span className="dash-bar-tag">入库</span>
+                <div className="dash-bar-track">
+                  <div
+                    className="dash-bar-fill dash-bar-in"
+                    style={{
+                      width: `${Math.min(100, ((overview.totals.inbound_quantity || 0) / Math.max(1, (overview.totals.inbound_quantity || 0) + (overview.totals.outbound_quantity || 0))) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <span className="dash-bar-val">{overview.totals.inbound_quantity ?? 0}件</span>
+              </div>
+              <div className="dash-bar-row">
+                <span className="dash-bar-tag">出库</span>
+                <div className="dash-bar-track">
+                  <div
+                    className="dash-bar-fill dash-bar-out"
+                    style={{
+                      width: `${Math.min(100, ((overview.totals.outbound_quantity || 0) / Math.max(1, (overview.totals.inbound_quantity || 0) + (overview.totals.outbound_quantity || 0))) * 100)}%`,
+                    }}
+                  />
+                </div>
+                <span className="dash-bar-val">{overview.totals.outbound_quantity ?? 0}件</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 审批状态分布 */}
+          <div className="dash-section">
+            <div className="dash-label">审批状态</div>
+            <div className="dash-bar-row">
+              <span className="dash-bar-tag">待审批</span>
+              <div className="dash-bar-track">
+                <div
+                  className="dash-bar-fill dash-bar-warn"
+                  style={{ width: `${Math.min(100, ((overview.totals.pending_requests || 0) / Math.max(1, overview.totals.pending_requests + overview.totals.approved_requests + overview.totals.rejected_requests)) * 100)}%` }}
+                />
+              </div>
+              <span className="dash-bar-val">{overview.totals.pending_requests ?? 0}</span>
+            </div>
+            <div className="dash-bar-row">
+              <span className="dash-bar-tag">已通过</span>
+              <div className="dash-bar-track">
+                <div
+                  className="dash-bar-fill dash-bar-ok"
+                  style={{ width: `${Math.min(100, ((overview.totals.approved_requests || 0) / Math.max(1, overview.totals.pending_requests + overview.totals.approved_requests + overview.totals.rejected_requests)) * 100)}%` }}
+                />
+              </div>
+              <span className="dash-bar-val">{overview.totals.approved_requests ?? 0}</span>
+            </div>
+            <div className="dash-bar-row">
+              <span className="dash-bar-tag">已拒绝</span>
+              <div className="dash-bar-track">
+                <div
+                  className="dash-bar-fill dash-bar-err"
+                  style={{ width: `${Math.min(100, ((overview.totals.rejected_requests || 0) / Math.max(1, overview.totals.pending_requests + overview.totals.approved_requests + overview.totals.rejected_requests)) * 100)}%` }}
+                />
+              </div>
+              <span className="dash-bar-val">{overview.totals.rejected_requests ?? 0}</span>
+            </div>
+          </div>
+
+          {/* 最近流水概览 */}
+          {overview.recent_transactions?.length > 0 && (
+            <div className="dash-section">
+              <div className="dash-label">最近操作</div>
+              <div className="tx-list">
+                {overview.recent_transactions.slice(0, 5).map((tx) => (
+                  <div className="tx-item" key={tx.id}>
+                    <TxBadge type={tx.type} />
+                    <div className="tx-main">
+                      <div className="tx-title">{tx.material_name ?? tx.material_id}</div>
+                      <div className="tx-meta">{tx.operator} · {tx.location_name ?? "-"}</div>
+                    </div>
+                    <div className={`tx-qty ${tx.quantity > 0 ? "tx-qty-in" : "tx-qty-out"}`}>
+                      {tx.quantity > 0 ? `+${tx.quantity}` : tx.quantity}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </SectionCard>
+      )}
+
       <SectionCard title="缺货预警" subtitle="总库存低于安全库存的物料，默认安全库存为 5">
         {overview?.low_stock_items?.length ? (
           <div className="tx-list">

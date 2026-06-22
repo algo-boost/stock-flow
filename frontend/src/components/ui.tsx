@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
+import { ActionSheet } from "antd-mobile";
+import type { Action } from "antd-mobile/es/components/action-sheet";
 import type { Role } from "../api/types";
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -123,41 +126,74 @@ export function StatCard({
 
 export function MaterialCard({
   name,
-  code,
   category,
-  unit,
-  spec,
   stockSummary,
   warning,
   onClick,
+  onAction,
+  actions = [],
+  quantity,
 }: {
   name: string;
-  code: string;
+  code?: string;
   category?: string;
   unit?: string;
   spec?: string;
   stockSummary?: string;
   warning?: string;
+  quantity?: number;
   onClick?: () => void;
+  actions?: Action[];
+  onAction?: (action: Action) => void;
 }) {
+  const [menuVisible, setMenuVisible] = useState(false);
+
   return (
-    <button type="button" className="material-card" onClick={onClick}>
-      <div className="material-card-main">
-        <div className="material-card-header">
-          <span className="chip chip-code">{code}</span>
-          {warning ? <span className="status-dot status-warning">LOW</span> : <span className="status-dot status-ok">OK</span>}
+    <>
+      <button type="button" className="material-card" onClick={onClick}>
+        <div className="material-card-main">
+          <div className="material-card-name">{name}</div>
+          <div className="material-card-meta">
+            {category && <span className="chip">{category}</span>}
+            {stockSummary && <span className="material-card-loc">{stockSummary}</span>}
+          </div>
         </div>
-        <div className="material-card-name">{name}</div>
-        <div className="material-card-meta">
-          {category && <span className="chip chip-muted">{category}</span>}
-          {spec && <span className="chip chip-muted">型号 {spec}</span>}
-          {unit && <span className="chip chip-muted">{unit}</span>}
+        <div className="material-card-right">
+          {quantity != null && (
+            <span className={`stock-badge${warning ? " stock-badge-warning" : ""}`}>
+              {quantity}
+            </span>
+          )}
+          {actions.length > 0 && (
+            <span
+              className="material-card-menu-btn"
+              aria-label="更多操作"
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuVisible(true);
+              }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuVisible(true); } }}
+            >
+              ⋯
+            </span>
+          )}
         </div>
-        {warning && <div className="material-card-warning">{warning}</div>}
-        {stockSummary && <div className="material-card-summary">{stockSummary}</div>}
-      </div>
-      <span className="material-card-arrow">›</span>
-    </button>
+      </button>
+      {actions.length > 0 && (
+        <ActionSheet
+          visible={menuVisible}
+          actions={actions}
+          onClose={() => setMenuVisible(false)}
+          onAction={(action) => {
+            setMenuVisible(false);
+            onAction?.(action);
+          }}
+          cancelText="取消"
+        />
+      )}
+    </>
   );
 }
 

@@ -172,6 +172,7 @@ export function updateMaterial(
     name?: string;
     category_id?: string;
     major_category?: string;
+    mid_category?: string;
     sub_category?: string;
     code?: string;
     unit?: string;
@@ -198,6 +199,7 @@ export function createMaterial(payload: {
   name: string;
   category_id: string;
   major_category?: string;
+  mid_category?: string;
   sub_category?: string;
   code?: string;
   unit: string;
@@ -238,7 +240,7 @@ export function listLocations() {
   return request<Location[]>("/locations");
 }
 
-export function createLocation(payload: { code: string; name: string; type: string }) {
+export function createLocation(payload: { code: string; name: string; type: string; parent_id?: string }) {
   return request<Location>("/locations", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -247,7 +249,7 @@ export function createLocation(payload: { code: string; name: string; type: stri
 
 export function updateLocation(
   id: string,
-  payload: { code?: string; name?: string; type?: string },
+  payload: { code?: string; name?: string; type?: string; parent_id?: string | null },
 ) {
   return request<Location>(`/locations/${id}`, {
     method: "PATCH",
@@ -261,6 +263,24 @@ export function deleteLocation(id: string) {
   });
 }
 
+// ── 库位类型管理 ──
+
+export function listLocationTypes() {
+  return request<string[]>("/admin/location-types");
+}
+
+export function addLocationType(name: string) {
+  return request<string[]>(`/admin/location-types?name=${encodeURIComponent(name)}`, { method: "POST" });
+}
+
+export function removeLocationType(name: string) {
+  return request<string[]>(`/admin/location-types?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export function updateLocationType(oldName: string, newName: string) {
+  return request<string[]>(`/admin/location-types?old_name=${encodeURIComponent(oldName)}&new_name=${encodeURIComponent(newName)}`, { method: "PATCH" });
+}
+
 export function refreshBitableCache() {
   return request<{
     message: string;
@@ -270,6 +290,21 @@ export function refreshBitableCache() {
   }>("/admin/cache/refresh", {
     method: "POST",
   });
+}
+
+// ── SQLite 本地缓存同步 ──
+
+export function syncSqliteCache() {
+  return request<{ synced: boolean; tables: Record<string, number | string>; snapshot: Record<string, number> }>(
+    "/admin/sqlite-sync",
+    { method: "POST" },
+  );
+}
+
+export function getSqliteCacheStatus() {
+  return request<{ enabled: boolean; snapshot?: Record<string, number>; sync_interval?: number }>(
+    "/admin/sqlite-status",
+  );
 }
 
 export function getAdminOverview(opts?: { startAt?: string; endAt?: string }) {

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Form, Input, Toast } from "antd-mobile";
+import { ActionSheet, Button, Dialog, Form, Input, Toast } from "antd-mobile";
 import type { Category } from "../api/types";
 import {
   formatCategoryPath,
@@ -20,6 +20,8 @@ interface CategoryTreeProps {
   onDelete?: (categoryId: string) => Promise<void>;
   onUpdate?: (categoryId: string, payload: { name?: string; parent_id?: string | null }) => Promise<void>;
   onRefresh?: () => Promise<void>;
+  /** 右键菜单"添加物料"回调 */
+  onAddMaterial?: (categoryId: string) => void;
 }
 
 function collectAncestorIds(categories: Category[], categoryId: string | null): Set<string> {
@@ -41,11 +43,16 @@ export function CategoryTree({
   onDelete,
   onUpdate,
   onRefresh,
+  onAddMaterial,
 }: CategoryTreeProps) {
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
+  const [ctxMenuVisible, setCtxMenuVisible] = useState(false);
+  const [ctxCategoryId, setCtxCategoryId] = useState<string | null>(null);
+  const [addChildVisible, setAddChildVisible] = useState(false);
+  const [addChildName, setAddChildName] = useState("");
   const roots = useMemo(() => getRootCategories(categories), [categories]);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -98,6 +105,13 @@ export function CategoryTree({
             browseDisabled ? "category-tree-row-muted" : ""
           }`}
           style={{ paddingLeft: `${12 + depth * 16}px` }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (canManage) {
+              setCtxCategoryId(category.id);
+              setCtxMenuVisible(true);
+            }
+          }}
         >
           {hasChildren ? (
             <button
@@ -137,6 +151,21 @@ export function CategoryTree({
               <span className="category-tree-count">{category.stock_quantity}</span>
             )}
           </button>
+          {canManage && (
+            <button
+              type="button"
+              className="category-tree-menu-btn"
+              aria-label="更多操作"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(category.id);
+                setCtxCategoryId(category.id);
+                setCtxMenuVisible(true);
+              }}
+            >
+              ⋯
+            </button>
+          )}
         </div>
         {selected && renderMaterialsPanel ? (
           <div className="category-tree-materials" style={{ paddingLeft: `${12 + depth * 16 + 28}px` }}>
@@ -278,13 +307,14 @@ export function CategoryTree({
             text: busy ? "保存中…" : "保存",
             bold: true,
             onClick: () => {
-              if (!selectedId || !onUpdate) return;
+              const targetId = ctxCategoryId || selectedId;
+              if (!targetId || !onUpdate) return;
               if (!editName.trim()) {
                 Toast.show({ content: "请输入分类名称" });
                 return;
               }
               setBusy(true);
-              void onUpdate(selectedId, { name: editName.trim() }).then(() => {
+              void onUpdate(targetId, { name: editName.trim() }).then(() => {
                 setEditing(false);
                 Toast.show({ icon: "success", content: "分类已更新" });
                 void onRefresh?.();
@@ -295,6 +325,86 @@ export function CategoryTree({
           },
         ]}
         onClose={() => setEditing(false)}
+      />
+
+      <ActionSheet
+        visible={ctxMenuVisible}
+        actions={[
+          { text: "添加子分类", key: "add-child" },
+          { text: "添加物料", key: "add-material" },
+          { text: "重命名", key: "rename" },
+          { text: "删除", key: "delete", danger: true },
+        ]}
+        onClose={() => setCtxMenuVisible(false)}
+        onAction={(action) => {
+          setCtxMenuVisible(false);
+          if (!ctxCategoryId) return;
+          switch (action.key) {
+            case "add-child":
+              setAddChildName("");
+              setAddChildVisible(true);
+              break;
+            case "add-material":
+              onAddMaterial?.(ctxCategoryId);
+              break;
+            case "rename": {
+              const cat = categories.find((c) => c.id === ctxCategoryId);
+              setEditName(cat?.name ?? "");
+              setEditing(true);
+              break;
+            }
+            case "delete":
+              if (onDelete && window.confirm(`确定删除分类「${categories.find((c) => c.id === ctxCategoryId)?.name ?? ctxCategoryId}」？`)) {
+                setBusy(true);
+                void onDelete(ctxCategoryId).then(() => {
+                  Toast.show({ icon: "success", content: "分类已删除" });
+                  void onRefresh?.();
+                }).catch((e: unknown) => {
+                  Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
+                }).finally(() => setBusy(false));
+              }
+              break;
+          }
+        }}
+        cancelText="取消"
+      />
+
+      <Dialog
+        visible={addChildVisible}
+        title="添加子分类"
+        content={
+          <Form layout="vertical" className="form-card">
+            <Form.Item label="父分类">
+              <span style={{ color: "var(--sf-text-secondary)" }}>
+                {categories.find((c) => c.id === ctxCategoryId)?.name ?? ""}
+              </span>
+            </Form.Item>
+            <Form.Item label="子分类名称">
+              <Input value={addChildName} onChange={setAddChildName} placeholder="请输入名称" />
+            </Form.Item>
+          </Form>
+        }
+        actions={[
+          { key: "cancel", text: "取消", onClick: () => setAddChildVisible(false) },
+          {
+            key: "save",
+            text: busy ? "添加中…" : "添加",
+            bold: true,
+            onClick: () => {
+              if (!addChildName.trim() || !onCreate) return;
+              setBusy(true);
+              void onCreate({ name: addChildName.trim(), parent_id: ctxCategoryId }).then(() => {
+                setAddChildVisible(false);
+                setAddChildName("");
+                Toast.show({ icon: "success", content: "子分类已添加" });
+                void onRefresh?.();
+              }).catch((e: unknown) => {
+                Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "添加失败" });
+              }).finally(() => setBusy(false));
+            },
+          },
+        ]}
+        onClose={() => setAddChildVisible(false)}
       />
     </div>
   );

@@ -213,11 +213,56 @@ export default function SearchPage() {
                   .filter(Boolean)
                   .join(" / ") || m.category_name
               }
-            spec={m.spec ?? undefined}
-            unit={`总库存 ${m.total_quantity} ${m.unit}`}
-            warning={isLowStock ? `缺货预警：低于安全库存 ${m.min_stock ?? 5}` : undefined}
-            stockSummary={m.locations_summary ?? "暂无库位库存"}
+            quantity={m.total_quantity}
+            warning={isLowStock ? "low" : undefined}
+            stockSummary={m.locations_summary ?? undefined}
             onClick={() => navigate(`/materials/${m.id}`)}
+            actions={[
+              { text: "查看详情", key: "detail" },
+              ...(user?.role === "ADMIN" || user?.role === "KEEPER"
+                ? [
+                    { text: "出库", key: "outbound" },
+                    { text: "入库", key: "inbound" },
+                    { text: "移动", key: "transfer" },
+                  ]
+                : [
+                    { text: "申请出库", key: "req-outbound" },
+                    { text: "申请入库", key: "req-inbound" },
+                  ]),
+              ...(isAdmin ? [
+                    { text: "修改物料", key: "edit" },
+                    { text: "进货", key: "purchase" },
+                  ] : []),
+            ]}
+            onAction={(action) => {
+              const id = m.id;
+              switch (action.key) {
+                case "detail":
+                  navigate(`/materials/${id}`);
+                  break;
+                case "outbound":
+                  navigate(`/stock?material_id=${id}`);
+                  break;
+                case "inbound":
+                  navigate(`/stock?tab=inbound&material_id=${id}`);
+                  break;
+                case "transfer":
+                  navigate(`/locations?tab=transfer&material_id=${id}`);
+                  break;
+                case "req-outbound":
+                  navigate(`/stock?material_id=${id}`);
+                  break;
+                case "req-inbound":
+                  navigate(`/stock?tab=inbound&material_id=${id}`);
+                  break;
+                case "edit":
+                  navigate(`/materials/${id}`);
+                  break;
+                case "purchase":
+                  navigate(`/purchase?material_id=${id}`);
+                  break;
+              }
+            }}
           />
         );
       })}
@@ -308,6 +353,9 @@ export default function SearchPage() {
               await updateCategory(categoryId, payload);
             }}
             onRefresh={loadCategories}
+            onAddMaterial={(categoryId) => {
+              navigate(`/stock?tab=inbound&category_id=${categoryId}`);
+            }}
           />
         )}
       </SectionCard>
