@@ -111,6 +111,20 @@ export function formatCategoryPath(categories: Category[], categoryId: string | 
     .join(" / ");
 }
 
+/** 是否为子类（有 parent_id 的非顶层分类，如「电机模组」；顶层大类如「电气类」为 false） */
+export function isSubCategory(categories: Category[], categoryId: string | null): boolean {
+  if (!categoryId) return false;
+  const category = categories.find((item) => item.id === categoryId);
+  return Boolean(category?.parent_id);
+}
+
+/** 子类下是否有物料 SKU（material_count 含下级汇总） */
+export function canBrowseCategoryMaterials(categories: Category[], categoryId: string | null): boolean {
+  if (!isSubCategory(categories, categoryId)) return false;
+  const category = categories.find((item) => item.id === categoryId);
+  return (category?.material_count ?? 0) > 0;
+}
+
 export function countCategoryMaterials(categories: Category[], categoryId: string, materialCategoryIds: string[]): number {
   const allowed = getDescendantIds(categories, categoryId);
   return materialCategoryIds.filter((id) => allowed.has(id)).length;

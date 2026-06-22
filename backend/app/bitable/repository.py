@@ -235,6 +235,13 @@ class BitableRepository:
             else:
                 next_records.append(item)
         if not replaced:
+            if not record.get("created_time"):
+                now_ms = int(time.time() * 1000)
+                record = {
+                    **record,
+                    "created_time": now_ms,
+                    "last_modified_time": record.get("last_modified_time") or now_ms,
+                }
             next_records.append(record)
         _TABLE_CACHE[cache_key] = (cached_at, next_records)
 
@@ -252,7 +259,13 @@ class BitableRepository:
         )
 
     def _cached_record(self, record_id: str, fields: dict[str, Any]) -> dict[str, Any]:
-        return {"record_id": record_id, "fields": fields}
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        return {
+            "record_id": record_id,
+            "fields": fields,
+            "created_time": now_ms,
+            "last_modified_time": now_ms,
+        }
 
     async def warmup_core_tables(self) -> dict[str, str | None]:
         """预热五表缓存，降低服务重启后的首次页面等待时间。"""

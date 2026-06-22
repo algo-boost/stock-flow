@@ -64,7 +64,10 @@ export function Layout({ title, children }: { title: string; children: React.Rea
       {!location.pathname.startsWith("/materials/") && (
         <nav className="page-tabbar" aria-label="主导航">
           {tabs.map((t) => {
-            const active = location.pathname === t.key;
+            const active =
+              t.key === "/locations"
+                ? location.pathname === "/locations" || location.pathname.startsWith("/locations/")
+                : location.pathname === t.key;
             return (
               <button
                 key={t.key}

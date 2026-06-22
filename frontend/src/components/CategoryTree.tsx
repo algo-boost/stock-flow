@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Input, Toast } from "antd-mobile";
 import type { Category } from "../api/types";
 import {
@@ -12,6 +13,8 @@ interface CategoryTreeProps {
   categories: Category[];
   selectedId: string | null;
   onSelect: (categoryId: string | null) => void;
+  /** 选中分类时，在对应节点下方展示物料列表 */
+  renderMaterialsPanel?: ReactNode;
   canManage?: boolean;
   onCreate?: (payload: { name: string; parent_id: string | null }) => Promise<void>;
   onDelete?: (categoryId: string) => Promise<void>;
@@ -31,6 +34,7 @@ export function CategoryTree({
   categories,
   selectedId,
   onSelect,
+  renderMaterialsPanel,
   canManage = false,
   onCreate,
   onDelete,
@@ -41,18 +45,26 @@ export function CategoryTree({
   const roots = useMemo(() => getRootCategories(categories), [categories]);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const prevSelectedId = useRef<string | null>(null);
 
+  // 仅在选中变化时自动展开路径；手动折叠后不再被覆盖
   useEffect(() => {
-    const next = new Set<string>();
-    if (selectedId) {
-      for (const id of collectAncestorIds(categories, selectedId)) {
-        next.add(id);
-      }
-    } else if (roots[0]) {
-      next.add(roots[0].id);
+    if (selectedId === null) {
+      prevSelectedId.current = null;
+      return;
     }
-    setExpandedIds(next);
-  }, [categories, selectedId, roots]);
+
+    if (prevSelectedId.current !== selectedId) {
+      setExpandedIds((current) => {
+        const next = new Set(current);
+        for (const id of collectAncestorIds(categories, selectedId)) {
+          next.add(id);
+        }
+        return next;
+      });
+      prevSelectedId.current = selectedId;
+    }
+  }, [categories, selectedId]);
 
   const toggleExpand = (categoryId: string) => {
     setExpandedIds((current) => {
@@ -70,12 +82,17 @@ export function CategoryTree({
     const children = getCategoryChildren(categories, category.id);
     const hasChildren = children.length > 0;
     const expanded = expandedIds.has(category.id);
+    const isSub = Boolean(category.parent_id);
+    const hasMaterials = (category.material_count ?? 0) > 0;
+    const browseDisabled = isSub && !hasMaterials && !canManage;
     const selected = selectedId === category.id;
 
     return (
       <div className="category-tree-branch" key={category.id}>
         <div
-          className={`category-tree-row ${selected ? "category-tree-row-active" : ""}`}
+          className={`category-tree-row ${selected ? "category-tree-row-active" : ""} ${
+            browseDisabled ? "category-tree-row-muted" : ""
+          }`}
           style={{ paddingLeft: `${12 + depth * 16}px` }}
         >
           {hasChildren ? (
@@ -83,20 +100,45 @@ export function CategoryTree({
               type="button"
               className="category-tree-toggle"
               aria-label={expanded ? "收起" : "展开"}
-              onClick={() => toggleExpand(category.id)}
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleExpand(category.id);
+              }}
             >
               {expanded ? "▾" : "▸"}
             </button>
           ) : (
             <span className="category-tree-toggle-spacer" aria-hidden />
           )}
-          <button type="button" className="category-tree-label" onClick={() => onSelect(category.id)}>
+          <button
+            type="button"
+            className="category-tree-label"
+            disabled={browseDisabled}
+            onClick={() => {
+              if (hasChildren) {
+                toggleExpand(category.id);
+                if (canManage) onSelect(category.id);
+                return;
+              }
+              if (browseDisabled) return;
+              if (selectedId === category.id) {
+                onSelect(null);
+                return;
+              }
+              onSelect(category.id);
+            }}
+          >
             <span>{category.name}</span>
             {(category.stock_quantity ?? 0) > 0 && (
               <span className="category-tree-count">{category.stock_quantity}</span>
             )}
           </button>
         </div>
+        {selected && renderMaterialsPanel ? (
+          <div className="category-tree-materials" style={{ paddingLeft: `${12 + depth * 16 + 28}px` }}>
+            {renderMaterialsPanel}
+          </div>
+        ) : null}
         {hasChildren && expanded && (
           <div className="category-tree-children">
             {children.map((child) => renderNode(child, depth + 1))}
@@ -157,7 +199,10 @@ export function CategoryTree({
       <button
         type="button"
         className={`category-tree-all ${selectedId === null ? "category-tree-row-active" : ""}`}
-        onClick={() => onSelect(null)}
+        onClick={() => {
+          setExpandedIds(new Set());
+          onSelect(null);
+        }}
       >
         全部分类
       </button>

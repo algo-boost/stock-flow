@@ -6,8 +6,8 @@ import type { Category, MaterialSearchItem } from "../api/types";
 import { CategoryTree } from "../components/CategoryTree";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, MaterialCard, PageHero, SectionCard } from "../components/ui";
-import { formatCategoryPath } from "../utils/categoryTree";
+import { EmptyState, MaterialCard, PageHero, RolePermissions, SectionCard } from "../components/ui";
+import { formatCategoryPath, canBrowseCategoryMaterials, isSubCategory } from "../utils/categoryTree";
 
 interface SearchSuggestion {
   label: string;
@@ -30,6 +30,7 @@ export default function SearchPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
 
   const loadCategories = useCallback(async () => {
     const data = await listCategories();
@@ -58,13 +59,37 @@ export default function SearchPage() {
     [],
   );
 
+  const shouldLoadMaterials = useCallback(
+    (categoryId: string | null, q: string) =>
+      Boolean(q.trim()) || canBrowseCategoryMaterials(categories, categoryId),
+    [categories],
+  );
+
   useEffect(() => {
     if (location.pathname !== "/") return;
     void loadCategories().catch((e) => {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载分类失败" });
     });
-    void loadMaterials(keyword, 1, false, selectedCategoryId);
-  }, [location.pathname, location.key, loadCategories, loadMaterials, keyword, selectedCategoryId]);
+  }, [location.pathname, location.key, loadCategories]);
+
+  useEffect(() => {
+    if (location.pathname !== "/") return;
+    if (shouldLoadMaterials(selectedCategoryId, keyword)) {
+      void loadMaterials(keyword, 1, false, selectedCategoryId);
+    } else {
+      setItems([]);
+      setTotal(0);
+      setPage(1);
+      setLoading(false);
+    }
+  }, [
+    location.pathname,
+    location.key,
+    keyword,
+    selectedCategoryId,
+    loadMaterials,
+    shouldLoadMaterials,
+  ]);
 
   const categorySuggestionPool = useMemo(
     () =>
@@ -134,9 +159,15 @@ export default function SearchPage() {
   const chooseSuggestion = (suggestion: SearchSuggestion) => {
     setSuggestions([]);
     if (suggestion.kind === "category" && suggestion.categoryId) {
+      if (
+        isSubCategory(categories, suggestion.categoryId) &&
+        !canBrowseCategoryMaterials(categories, suggestion.categoryId) &&
+        !isAdmin
+      ) {
+        return;
+      }
       setKeyword("");
       setSelectedCategoryId(suggestion.categoryId);
-      void loadMaterials("", 1, false, suggestion.categoryId);
       return;
     }
     setKeyword(suggestion.value);
@@ -145,10 +176,17 @@ export default function SearchPage() {
   };
 
   const onCategorySelect = (categoryId: string | null) => {
+    if (
+      categoryId &&
+      isSubCategory(categories, categoryId) &&
+      !canBrowseCategoryMaterials(categories, categoryId) &&
+      !isAdmin
+    ) {
+      return;
+    }
     setSelectedCategoryId(categoryId);
     setKeyword("");
     setSuggestions([]);
-    void loadMaterials("", 1, false, categoryId);
   };
 
   const loadMore = () => {
@@ -156,15 +194,57 @@ export default function SearchPage() {
   };
 
   const hasMore = items.length < total;
+  const showMaterialsInTree =
+    canBrowseCategoryMaterials(categories, selectedCategoryId) && !keyword.trim();
+  const showMaterialsAtBottom = Boolean(keyword.trim());
+
+  const materialList = (empty: { text: string; hint: string }) => (
+    <>
+      {!loading && items.length === 0 && <EmptyState icon="📭" text={empty.text} hint={empty.hint} />}
+      {items.map((m) => {
+        const isLowStock = m.total_quantity < (m.min_stock ?? 5);
+        return (
+          <MaterialCard
+            key={m.id}
+            name={m.name}
+            code={m.code}
+            category={
+                [m.major_category, m.mid_category, m.sub_category]
+                  .filter(Boolean)
+                  .join(" / ") || m.category_name
+              }
+            spec={m.spec ?? undefined}
+            unit={`总库存 ${m.total_quantity} ${m.unit}`}
+            warning={isLowStock ? `缺货预警：低于安全库存 ${m.min_stock ?? 5}` : undefined}
+            stockSummary={m.locations_summary ?? "暂无库位库存"}
+            onClick={() => navigate(`/materials/${m.id}`)}
+          />
+        );
+      })}
+      {hasMore && (
+        <div className="load-more">
+          <Button loading={loading} fill="outline" block onClick={loadMore}>
+            加载更多
+          </Button>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <Layout title="物料管理系统">
       <PageHero
         title={`你好，${user?.name ?? "用户"}`}
-        subtitle="搜索物料、查看库存、追溯流水"
+        subtitle="搜索物料、查看库存；其他功能请用底部导航"
       />
 
-      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词">
+      {user && (
+        <SectionCard title="我的权限">
+          <RolePermissions role={user.role} />
+        </SectionCard>
+      )}
+
+      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词，自动组合搜索">
         <div className="search-card">
           <SearchBar
             placeholder="搜索名称、编码、型号、分类…"
@@ -198,7 +278,7 @@ export default function SearchPage() {
 
       <SectionCard
         title="分类浏览"
-        subtitle="展开大类后选中类筛选；数字为该类及下级物料库存合计"
+        subtitle="展开大类后，仅有物料的子类可点击查看；数字为库存合计"
       >
         {categories.length === 0 ? (
           <EmptyState icon="🏷️" text="暂无分类数据" hint="管理员可添加顶层分类，或先在 Bitable 维护 categories 表" />
@@ -207,7 +287,17 @@ export default function SearchPage() {
             categories={categories}
             selectedId={selectedCategoryId}
             onSelect={onCategorySelect}
-            canManage={user?.role === "ADMIN"}
+            renderMaterialsPanel={
+              showMaterialsInTree ? (
+                <>
+                  <div className="category-tree-materials-head">
+                    {loading && items.length === 0 ? "加载中…" : `共 ${total} 种物料`}
+                  </div>
+                  {materialList({ text: "该分类下暂无物料", hint: "可尝试选择上级分类或搜索关键词" })}
+                </>
+              ) : undefined
+            }
+            canManage={isAdmin}
             onCreate={async (payload) => {
               await createCategory(payload);
             }}
@@ -219,41 +309,14 @@ export default function SearchPage() {
         )}
       </SectionCard>
 
-      <SectionCard
-        title={loading && items.length === 0 ? "加载中…" : keyword || selectedCategoryId ? `找到 ${total} 条` : `全部物料 ${total} 条`}
-        subtitle="红色库存表示低于安全库存"
-      >
-        {!loading && items.length === 0 && (
-          <EmptyState icon="📭" text="没有匹配的物料" hint="换个关键词试试" />
-        )}
-        {items.map((m) => {
-          const isLowStock = m.total_quantity < (m.min_stock ?? 5);
-          return (
-            <MaterialCard
-              key={m.id}
-              name={m.name}
-              code={m.code}
-              category={
-                [m.major_category, m.mid_category, m.sub_category]
-                  .filter(Boolean)
-                  .join(" / ") || m.category_name
-              }
-              spec={m.spec ?? undefined}
-              unit={`总库存 ${m.total_quantity} ${m.unit}`}
-              warning={isLowStock ? `缺货预警：低于安全库存 ${m.min_stock ?? 5}` : undefined}
-              stockSummary={m.locations_summary ?? "暂无库位库存"}
-              onClick={() => navigate(`/materials/${m.id}`)}
-            />
-          );
-        })}
-        {hasMore && (
-          <div className="load-more">
-            <Button loading={loading} fill="outline" block onClick={loadMore}>
-              加载更多
-            </Button>
-          </div>
-        )}
-      </SectionCard>
+      {showMaterialsAtBottom && (
+        <SectionCard
+          title={loading && items.length === 0 ? "加载中…" : `找到 ${total} 条`}
+          subtitle="红色库存表示低于安全库存"
+        >
+          {materialList({ text: "没有匹配的物料", hint: "换个关键词或分类试试" })}
+        </SectionCard>
+      )}
     </Layout>
   );
 }

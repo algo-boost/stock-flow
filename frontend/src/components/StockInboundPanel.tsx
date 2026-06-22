@@ -275,14 +275,17 @@ export function StockInboundPanel() {
     try {
       if (isDirectInbound) {
         const trimmedNote = note.trim();
-        const isReturnInbound =
-          trimmedNote.includes("归还") || presetReturnNote.trim().includes("归还");
+        const returnPreset = presetReturnNote.trim();
+        const isReturnFlow = returnPreset.includes("归还");
+        const effectiveNote =
+          trimmedNote || (isReturnFlow ? "归还" : "");
+        const isReturnInbound = effectiveNote.includes("归还");
         await postInbound({
           material_id: selected.material.id,
           location_id: locationId,
           qty,
           idempotency_key: newIdempotencyKey(),
-          note: trimmedNote || undefined,
+          note: effectiveNote || undefined,
           spec: inboundSpec.trim() || undefined,
           row: showCabinetSlot ? slotRow : undefined,
           column: showCabinetSlot ? slotColumn : undefined,
