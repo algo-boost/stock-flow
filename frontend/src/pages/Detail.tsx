@@ -80,6 +80,7 @@ export default function DetailPage() {
       <SectionCard title="基本信息">
         <InfoRow label="物料编码" value={material.code} />
         <InfoRow label="大类" value={material.major_category ?? "-"} />
+        <InfoRow label="中类" value={material.mid_category || "-"} />
         <InfoRow label="子类" value={material.sub_category ?? material.category_name ?? "-"} />
         <InfoRow label="规格型号" value={material.spec ?? "-"} />
         <InfoRow label="单位" value={material.unit} />

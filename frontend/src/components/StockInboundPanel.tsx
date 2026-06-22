@@ -48,6 +48,7 @@ export function StockInboundPanel() {
   const [newMaterialName, setNewMaterialName] = useState("");
   const [newMaterialCode, setNewMaterialCode] = useState("");
   const [newMaterialMajorCategory, setNewMaterialMajorCategory] = useState("");
+  const [newMaterialMidCategory, setNewMaterialMidCategory] = useState("");
   const [newMaterialCategoryId, setNewMaterialCategoryId] = useState("");
   const [newMaterialUnit, setNewMaterialUnit] = useState("个");
   const [newMaterialSpec, setNewMaterialSpec] = useState("");
@@ -136,15 +137,27 @@ export function StockInboundPanel() {
     );
     return values.map((value) => ({ label: value, value }));
   }, [categories]);
+  const midCategoryOptions = useMemo(
+    () =>
+      categories
+        .filter((cat) => cat.major_name === newMaterialMajorCategory && cat.mid_name && !cat.sub_name)
+        .map((cat) => ({ label: cat.mid_name || cat.name, value: cat.mid_name || cat.name })),
+    [categories, newMaterialMajorCategory],
+  );
   const subCategoryOptions = useMemo(
     () =>
       categories
-        .filter((category) => (category.major_name || category.name) === newMaterialMajorCategory)
-        .map((category) => ({
-          label: category.sub_name || category.name,
-          value: category.id,
+        .filter(
+          (cat) =>
+            cat.major_name === newMaterialMajorCategory &&
+            cat.mid_name === newMaterialMidCategory &&
+            cat.sub_name,
+        )
+        .map((cat) => ({
+          label: cat.sub_name || cat.name,
+          value: cat.id,
         })),
-    [categories, newMaterialMajorCategory],
+    [categories, newMaterialMajorCategory, newMaterialMidCategory],
   );
   const selectedCategory = useMemo(
     () => categories.find((category) => category.id === newMaterialCategoryId),
@@ -216,6 +229,7 @@ export function StockInboundPanel() {
         name: newMaterialName.trim(),
         category_id: newMaterialCategoryId,
         major_category: newMaterialMajorCategory,
+        mid_category: newMaterialMidCategory || undefined,
         sub_category: selectedCategory?.sub_name || selectedCategory?.name,
         code: newMaterialCode.trim() || undefined,
         unit: newMaterialUnit.trim() || "个",
@@ -475,13 +489,24 @@ export function StockInboundPanel() {
                   onChange={(arr) => {
                     const nextMajor = arr[0] ?? "";
                     setNewMaterialMajorCategory(nextMajor);
-                    const firstSub = categories.find(
-                      (category) => (category.major_name || category.name) === nextMajor,
-                    );
-                    setNewMaterialCategoryId(firstSub?.id ?? "");
+                    setNewMaterialMidCategory("");
+                    setNewMaterialCategoryId("");
                   }}
                 />
               </Form.Item>
+              {midCategoryOptions.length > 0 && (
+                <Form.Item label="中类">
+                  <Selector
+                    options={midCategoryOptions}
+                    value={newMaterialMidCategory ? [newMaterialMidCategory] : []}
+                    onChange={(arr) => {
+                      const nextMid = arr[0] ?? "";
+                      setNewMaterialMidCategory(nextMid);
+                      setNewMaterialCategoryId("");
+                    }}
+                  />
+                </Form.Item>
+              )}
               <Form.Item label="子类">
                 <Selector
                   options={subCategoryOptions}

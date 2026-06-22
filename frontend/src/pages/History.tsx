@@ -231,10 +231,9 @@ export default function HistoryPage() {
             next.push({
               label: item.name,
               value: item.name,
-              hint:
-                item.major_category && item.sub_category
-                  ? `${item.major_category} / ${item.sub_category}`
-                  : item.category_name ?? item.code,
+              hint: [item.major_category, item.mid_category, item.sub_category]
+                .filter(Boolean)
+                .join(" / ") || (item.category_name ?? item.code),
             });
             if (next.length >= 5) break;
           }

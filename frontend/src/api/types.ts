@@ -12,6 +12,10 @@ export interface Location {
   code: string;
   name: string;
   type: string;
+  parent_id?: string | null;
+  major_name?: string | null;
+  mid_name?: string | null;
+  sub_name?: string | null;
 }
 
 export interface Category {
@@ -19,6 +23,7 @@ export interface Category {
   name: string;
   parent_id?: string | null;
   major_name?: string | null;
+  mid_name?: string | null;
   sub_name?: string | null;
   default_location_type?: string | null;
   examples?: string | null;
@@ -45,6 +50,7 @@ export interface Material {
   category_id: string;
   category_name?: string;
   major_category?: string | null;
+  mid_category?: string | null;
   sub_category?: string | null;
   unit: string;
   spec?: string;

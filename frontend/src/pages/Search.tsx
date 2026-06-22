@@ -6,7 +6,7 @@ import type { Category, MaterialSearchItem } from "../api/types";
 import { CategoryTree } from "../components/CategoryTree";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, MaterialCard, PageHero, RolePermissions, SectionCard } from "../components/ui";
+import { EmptyState, MaterialCard, PageHero, SectionCard } from "../components/ui";
 import { formatCategoryPath } from "../utils/categoryTree";
 
 interface SearchSuggestion {
@@ -29,7 +29,7 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, canInbound, canApprove } = useAuth();
+  const { user } = useAuth();
 
   const loadCategories = useCallback(async () => {
     const data = await listCategories();
@@ -103,9 +103,9 @@ export default function SearchPage() {
             seen.add(item.id);
             const meta = [item.code, item.spec].filter(Boolean).join(" · ");
             const category =
-              item.major_category && item.sub_category
-                ? `${item.major_category} / ${item.sub_category}`
-                : item.category_name;
+              [item.major_category, item.mid_category, item.sub_category]
+                .filter(Boolean)
+                .join(" / ") || item.category_name;
             materialMatches.push({
               label: item.name,
               value: item.name,
@@ -161,62 +161,10 @@ export default function SearchPage() {
     <Layout title="物料管理系统">
       <PageHero
         title={`你好，${user?.name ?? "用户"}`}
-        subtitle="搜索物料、查看库存、快速出入库"
+        subtitle="搜索物料、查看库存、追溯流水"
       />
 
-      {user && (
-        <SectionCard title="我的权限">
-          <RolePermissions role={user.role} />
-        </SectionCard>
-      )}
-
-      <div className="quick-actions">
-        <button type="button" className="quick-action outbound" onClick={() => navigate("/stock")}>
-          <span className="quick-action-icon">↕</span>
-          <span className="quick-action-title">出入库</span>
-          <span className="quick-action-desc">
-            {canInbound ? "出库领用 / 入库上架" : "提交出入库申请"}
-          </span>
-        </button>
-        {canInbound ? (
-          <>
-            <button type="button" className="quick-action" onClick={() => navigate("/locations")}>
-              <span className="quick-action-icon">📍</span>
-              <span className="quick-action-title">库位管理</span>
-              <span className="quick-action-desc">维护库位 / 库内移动</span>
-            </button>
-            {canApprove && (
-              <button type="button" className="quick-action" onClick={() => navigate("/admin-center")}>
-                <span className="quick-action-icon">⚙</span>
-                <span className="quick-action-title">运营中心</span>
-                <span className="quick-action-desc">审批 / 缺货预警 / 配置审计</span>
-              </button>
-            )}
-            {canApprove && (
-              <button type="button" className="quick-action" onClick={() => navigate("/purchase")}>
-                <span className="quick-action-icon">🛒</span>
-                <span className="quick-action-title">进货补货</span>
-                <span className="quick-action-desc">供货商 / 入库 / 预警</span>
-              </button>
-            )}
-          </>
-        ) : (
-          <>
-            <button type="button" className="quick-action" onClick={() => navigate("/history")}>
-              <span className="quick-action-icon">📒</span>
-              <span className="quick-action-title">我的历史</span>
-              <span className="quick-action-desc">申请与流水记录</span>
-            </button>
-            <button type="button" className="quick-action" onClick={() => onSearch("")}>
-              <span className="quick-action-icon">📋</span>
-              <span className="quick-action-title">浏览全部</span>
-              <span className="quick-action-desc">查看可用物料</span>
-            </button>
-          </>
-        )}
-      </div>
-
-      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词，自动组合搜索">
+      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词">
         <div className="search-card">
           <SearchBar
             placeholder="搜索名称、编码、型号、分类…"
@@ -286,9 +234,9 @@ export default function SearchPage() {
               name={m.name}
               code={m.code}
               category={
-                m.major_category && m.sub_category
-                  ? `${m.major_category} / ${m.sub_category}`
-                  : m.category_name
+                [m.major_category, m.mid_category, m.sub_category]
+                  .filter(Boolean)
+                  .join(" / ") || m.category_name
               }
               spec={m.spec ?? undefined}
               unit={`总库存 ${m.total_quantity} ${m.unit}`}

@@ -19,6 +19,7 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
   const [name, setName] = useState(material.name);
   const [code, setCode] = useState(material.code);
   const [majorCategory, setMajorCategory] = useState(material.major_category ?? "");
+  const [midCategory, setMidCategory] = useState(material.mid_category ?? "");
   const [categoryId, setCategoryId] = useState(material.category_id);
   const [unit, setUnit] = useState(material.unit);
   const [spec, setSpec] = useState(material.spec ?? "");
@@ -35,6 +36,7 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
     setName(material.name);
     setCode(material.code);
     setMajorCategory(material.major_category ?? "");
+    setMidCategory(material.mid_category ?? "");
     setCategoryId(material.category_id);
     setUnit(material.unit);
     setSpec(material.spec ?? "");
@@ -51,12 +53,25 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
     return [...names].map((value) => ({ label: value, value }));
   }, [categories]);
 
+  const midOptions = useMemo(
+    () =>
+      categories
+        .filter((cat) => cat.major_name === majorCategory && cat.mid_name && !cat.sub_name)
+        .map((cat) => ({ label: cat.mid_name || cat.name, value: cat.mid_name || cat.name })),
+    [categories, majorCategory],
+  );
+
   const subOptions = useMemo(
     () =>
       categories
-        .filter((cat) => (cat.major_name || cat.name) === majorCategory)
+        .filter(
+          (cat) =>
+            cat.major_name === majorCategory &&
+            cat.mid_name === midCategory &&
+            cat.sub_name,
+        )
         .map((cat) => ({ label: cat.sub_name || cat.name, value: cat.id })),
-    [categories, majorCategory],
+    [categories, majorCategory, midCategory],
   );
 
   const canDelete = total_quantity === 0 && !hasTransactions;
@@ -73,6 +88,7 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
         code: code.trim() || undefined,
         category_id: categoryId,
         major_category: majorCategory || undefined,
+        mid_category: midCategory || undefined,
         sub_category: categories.find((c) => c.id === categoryId)?.sub_name || undefined,
         unit: unit.trim() || "个",
         spec: spec.trim() || undefined,
@@ -152,11 +168,24 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
                 onChange={(arr) => {
                   const next = arr[0] ?? "";
                   setMajorCategory(next);
-                  const first = categories.find((c) => (c.major_name || c.name) === next);
-                  setCategoryId(first?.id ?? categoryId);
+                  setMidCategory("");
+                  setCategoryId("");
                 }}
               />
             </Form.Item>
+            {midOptions.length > 0 && (
+              <Form.Item label="中类">
+                <Selector
+                  options={midOptions}
+                  value={midCategory ? [midCategory] : []}
+                  onChange={(arr) => {
+                    const next = arr[0] ?? "";
+                    setMidCategory(next);
+                    setCategoryId("");
+                  }}
+                />
+              </Form.Item>
+            )}
             <Form.Item label="子类">
               <Selector
                 options={subOptions}
