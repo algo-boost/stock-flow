@@ -6,7 +6,9 @@ from typing import Any, Optional
 from app.models import (
     Category,
     CategoryCreate,
+    CategoryUpdate,
     InventoryItem,
+    InventoryRecordUpdate,
     Location,
     LocationCreate,
     LocationUpdate,
@@ -19,15 +21,17 @@ from app.models import (
     StockRequestCreate,
     StockRequestStatus,
     StockRequestType,
+    StockRequestUpdate,
     Transaction,
     TransactionType,
+    TransactionUpdate,
 )
 from app.data.category_taxonomy import (
     LAB_CATEGORY_TAXONOMY,
     LEAF_CATEGORY_IDS,
     ROOT_CATEGORY_IDS,
 )
-from app.utils.categories import category_descendant_ids, derive_major_sub_names
+from app.utils.categories import category_descendant_ids, derive_category_levels, derive_location_levels
 from app.utils.inventory_display import format_inventory_summary
 
 
@@ -113,6 +117,7 @@ class MockStore:
     def __init__(self) -> None:
         self.categories: dict[str, Category] = {}
         self.locations: dict[str, Location] = {}
+        self.location_types: list[str] = []
         self.materials: dict[str, Material] = {}
         self.inventory: dict[InventoryKey, InventoryItem] = {}
         self.transactions: dict[str, Transaction] = {}
@@ -122,17 +127,20 @@ class MockStore:
     def _seed(self) -> None:
         self.categories = _build_lab_categories()
         self.locations = {
-            "loc_01": Location(id="loc_01", code="A-柜-01", name="电气类A柜-01", type="货柜"),
-            "loc_02": Location(id="loc_02", code="B-架-01", name="机械类B架-01", type="货架"),
-            "loc_bolt": Location(id="loc_bolt", code="BOLT-01", name="螺栓专用架-01", type="专用螺栓架"),
+            "loc_01": Location(id="loc_01", code="A-柜-01", name="A柜", type="货柜", major_name="A柜"),
+            "loc_01_l2": Location(id="loc_01_l2", code="A-柜-01-2", name="第二层", type="货柜层", parent_id="loc_01", major_name="A柜", mid_name="第二层"),
+            "loc_01_l3": Location(id="loc_01_l3", code="A-柜-01-2-3", name="第三格", type="货柜格", parent_id="loc_01_l2", major_name="A柜", mid_name="第二层", sub_name="第三格"),
+            "loc_02": Location(id="loc_02", code="B-架-01", name="B架", type="货架", major_name="B架"),
+            "loc_bolt": Location(id="loc_bolt", code="BOLT-01", name="螺栓专用架", type="专用螺栓架", major_name="螺栓专用架"),
             "loc_staging": Location(
-                id="loc_staging", code="STAGE-01", name="快递暂存区", type="快递暂存"
+                id="loc_staging", code="STAGE-01", name="快递暂存区", type="快递暂存", major_name="快递暂存区"
             ),
         }
         self.materials = {}
         self.inventory = {}
         self.transactions = {}
         self.requests = {}
+        self.location_types = ["货柜", "货架", "专用螺栓架", "工具架", "快递暂存", "货柜层", "货柜格"]
 
     def search_materials(
         self,
@@ -158,6 +166,7 @@ class MockStore:
                     return (
                         (material.category_name is not None and keyword in material.category_name.lower())
                         or (material.major_category is not None and keyword in material.major_category.lower())
+                        or (material.mid_category is not None and keyword in material.mid_category.lower())
                         or (material.sub_category is not None and keyword in material.sub_category.lower())
                     )
                 return (
@@ -168,6 +177,7 @@ class MockStore:
                     or (material.barcode is not None and keyword in material.barcode.lower())
                     or (material.category_name is not None and keyword in material.category_name.lower())
                     or (material.major_category is not None and keyword in material.major_category.lower())
+                    or (material.mid_category is not None and keyword in material.mid_category.lower())
                     or (material.sub_category is not None and keyword in material.sub_category.lower())
                 )
 
@@ -183,6 +193,7 @@ class MockStore:
                     if m.category_id == category
                     or m.category_name == category
                     or m.major_category == category
+                    or m.mid_category == category
                     or m.sub_category == category
                 ]
         if location:
@@ -223,12 +234,13 @@ class MockStore:
         if any(c.name == name and c.parent_id == parent_id for c in self.categories.values()):
             raise ValueError("category_name_exists")
         category_id = f"cat_{len(self.categories) + 1:03d}"
-        major_name, sub_name = derive_major_sub_names(self.categories, parent_id, name)
+        major_name, mid_name, sub_name = derive_category_levels(self.categories, parent_id, name)
         category = Category(
             id=category_id,
             name=name,
             parent_id=parent_id,
             major_name=major_name,
+            mid_name=mid_name,
             sub_name=sub_name,
             default_location_type=payload.default_location_type or "货柜",
             examples=payload.examples,
@@ -245,6 +257,7 @@ class MockStore:
                 "category_id": category.id,
                 "category_name": category.name,
                 "major_category": category.major_name,
+                "mid_category": category.mid_name,
                 "sub_category": category.sub_name,
             }
         )
@@ -272,16 +285,73 @@ class MockStore:
 
         del self.categories[category_id]
 
+    def update_category(self, category_id: str, payload: CategoryUpdate) -> Category:
+        if category_id not in self.categories:
+            raise ValueError("category_not_found")
+        current = self.categories[category_id]
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return current
+
+        name = updates.get("name", current.name)
+        if isinstance(name, str):
+            name = name.strip()
+
+        parent_id = updates.get("parent_id", current.parent_id)
+        # 不能把自己设为父分类，避免循环引用
+        if parent_id and parent_id == category_id:
+            raise ValueError("category_self_parent")
+        if parent_id and parent_id not in self.categories:
+            raise ValueError("parent_not_found")
+        # 检查同级名称重复
+        if "name" in updates:
+            if any(
+                c.id != category_id and c.name == name and c.parent_id == parent_id
+                for c in self.categories.values()
+            ):
+                raise ValueError("category_name_exists")
+
+        major_name, mid_name, sub_name = derive_category_levels(
+            self.categories, parent_id, name
+        )
+        updated = Category(
+            id=category_id,
+            name=name,
+            parent_id=parent_id,
+            major_name=major_name or name,
+            mid_name=mid_name,
+            sub_name=sub_name,
+            default_location_type=updates.get(
+                "default_location_type", current.default_location_type
+            ),
+            examples=updates.get("examples", current.examples),
+        )
+        self.categories[category_id] = updated
+
+        # 如果分类名称或层级发生变更，同步更新关联物料的分类信息
+        for material_id, material in list(self.materials.items()):
+            if material.category_id == category_id:
+                self._reassign_material_category(material_id, updated)
+        return updated
+
     def create_location(self, payload: LocationCreate) -> Location:
         code = payload.code.strip()
         if any(loc.code == code for loc in self.locations.values()):
             raise ValueError("location_code_exists")
+        parent_id = payload.parent_id
+        if parent_id and parent_id not in self.locations:
+            raise ValueError("location_parent_not_found")
         location_id = f"loc_{len(self.locations) + 1:03d}"
+        major_name, mid_name, sub_name = derive_location_levels(self.locations, parent_id, payload.name.strip())
         location = Location(
             id=location_id,
             code=code,
             name=payload.name.strip(),
             type=payload.type.strip() or "货柜",
+            parent_id=parent_id,
+            major_name=major_name,
+            mid_name=mid_name,
+            sub_name=sub_name,
         )
         self.locations[location_id] = location
         return location
@@ -293,11 +363,22 @@ class MockStore:
         code = payload.code.strip() if payload.code is not None else current.code
         if any(loc.id != location_id and loc.code == code for loc in self.locations.values()):
             raise ValueError("location_code_exists")
+        name = payload.name.strip() if payload.name is not None else current.name
+        parent_id = payload.parent_id if "parent_id" in payload.model_dump(exclude_unset=True) else current.parent_id
+        if parent_id and parent_id == location_id:
+            raise ValueError("location_self_parent")
+        if parent_id and parent_id not in self.locations:
+            raise ValueError("location_parent_not_found")
+        major_name, mid_name, sub_name = derive_location_levels(self.locations, parent_id, name)
         updated = Location(
             id=location_id,
             code=code,
-            name=payload.name.strip() if payload.name is not None else current.name,
+            name=name,
             type=payload.type.strip() if payload.type is not None else current.type,
+            parent_id=parent_id,
+            major_name=major_name or name,
+            mid_name=mid_name,
+            sub_name=sub_name,
         )
         self.locations[location_id] = updated
         for item in self.inventory.values():
@@ -308,6 +389,9 @@ class MockStore:
     def delete_location(self, location_id: str) -> None:
         if location_id not in self.locations:
             raise ValueError("location_not_found")
+        # 递归删除子库位
+        for child in [l for l in self.locations.values() if l.parent_id == location_id]:
+            self.delete_location(child.id)
         occupied = sum(
             item.quantity
             for item in self.inventory.values()
@@ -335,6 +419,7 @@ class MockStore:
             category_id=payload.category_id,
             category_name=category.name,
             major_category=payload.major_category or category.major_name or category.name,
+            mid_category=payload.mid_category or category.mid_name or "",
             sub_category=payload.sub_category or category.sub_name or category.name,
             unit=payload.unit.strip() or "个",
             spec=payload.spec.strip() if payload.spec else None,
@@ -370,7 +455,7 @@ class MockStore:
 
         merged = material.model_copy(
             update={
-                **{k: v for k, v in updates.items() if k not in {"category_id", "major_category", "sub_category", "spec", "barcode", "supplier"}},
+                **{k: v for k, v in updates.items() if k not in {"category_id", "major_category", "mid_category", "sub_category", "spec", "barcode", "supplier"}},
                 "name": updates["name"].strip() if "name" in updates else material.name,
                 "unit": updates["unit"].strip() if "unit" in updates else material.unit,
                 "category_id": updates.get("category_id", material.category_id),
@@ -378,6 +463,10 @@ class MockStore:
                 "major_category": updates.get(
                     "major_category",
                     category.major_name if category and "category_id" in updates else material.major_category,
+                ),
+                "mid_category": updates.get(
+                    "mid_category",
+                    category.mid_name if category and "category_id" in updates else material.mid_category,
                 ),
                 "sub_category": updates.get(
                     "sub_category",
@@ -864,6 +953,46 @@ class MockStore:
         self.transactions[tx.id] = tx
         return [tx]
 
+    def list_location_types(self) -> list[str]:
+        return list(self.location_types)
+
+    def add_location_type(self, name: str) -> list[str]:
+        name = name.strip()
+        if not name:
+            raise ValueError("location_type_name_empty")
+        if name in self.location_types:
+            raise ValueError("location_type_exists")
+        self.location_types.append(name)
+        self.location_types.sort()
+        return list(self.location_types)
+
+    def remove_location_type(self, name: str) -> list[str]:
+        name = name.strip()
+        if name not in self.location_types:
+            raise ValueError("location_type_not_found")
+        # 检查是否有库位正在使用此类型
+        used = any(loc.type == name for loc in self.locations.values())
+        if used:
+            raise ValueError("location_type_in_use")
+        self.location_types.remove(name)
+        return list(self.location_types)
+
+    def update_location_type(self, old_name: str, new_name: str) -> list[str]:
+        old_name = old_name.strip()
+        new_name = new_name.strip()
+        if old_name not in self.location_types:
+            raise ValueError("location_type_not_found")
+        if new_name in self.location_types:
+            raise ValueError("location_type_exists")
+        idx = self.location_types.index(old_name)
+        self.location_types[idx] = new_name
+        # 同步更新使用此类型的所有库位
+        for loc in self.locations.values():
+            if loc.type == old_name:
+                self.locations[loc.id] = loc.model_copy(update={"type": new_name})
+        self.location_types.sort()
+        return list(self.location_types)
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "categories": len(self.categories),
@@ -873,6 +1002,48 @@ class MockStore:
             "transactions": len(self.transactions),
             "requests": len(self.requests),
         }
+
+    # ── 管理员纠错方法 ──
+
+    def update_transaction(self, transaction_id: str, payload: "TransactionUpdate") -> Transaction:
+        tx = self.transactions.get(transaction_id)
+        if not tx:
+            raise ValueError("transaction_not_found")
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return tx
+        merged = tx.model_copy(update=updates)
+        self.transactions[transaction_id] = merged
+        return merged
+
+    def update_request(self, request_id: str, payload: "StockRequestUpdate") -> StockRequest:
+        req = self.requests.get(request_id)
+        if not req:
+            raise ValueError("request_not_found")
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return req
+        merged = req.model_copy(update=updates)
+        self.requests[request_id] = merged
+        return merged
+
+    def update_inventory_record(
+        self, material_id: str, location_id: str, payload: "InventoryRecordUpdate",
+        row: int | None = None, column: int | None = None,
+    ) -> InventoryItem:
+        key = inv_key(material_id, location_id, row, column)
+        if key not in self.inventory:
+            raise ValueError("inventory_not_found")
+        item = self.inventory[key]
+        now = _utcnow()
+        updated = item.model_copy(
+            update={
+                "quantity": payload.quantity,
+                "last_updated": now,
+            }
+        )
+        self.inventory[key] = updated
+        return updated
 
 
 _store: MockStore | None = None

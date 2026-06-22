@@ -32,6 +32,7 @@ class Category(BaseModel):
     name: str
     parent_id: str | None = None
     major_name: str | None = None
+    mid_name: str | None = None
     sub_name: str | None = None
     default_location_type: str | None = None
     examples: str | None = None
@@ -46,23 +47,36 @@ class CategoryCreate(BaseModel):
     examples: str | None = Field(default=None, max_length=200)
 
 
+class CategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    parent_id: str | None = Field(default=None, max_length=128)
+    default_location_type: str | None = Field(default=None, max_length=50)
+    examples: str | None = Field(default=None, max_length=200)
+
+
 class Location(BaseModel):
     id: str
     code: str
     name: str
     type: str = "货柜"
+    parent_id: str | None = None
+    major_name: str | None = None
+    mid_name: str | None = None
+    sub_name: str | None = None
 
 
 class LocationCreate(BaseModel):
     code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=100)
     type: str = Field(default="货柜", min_length=1, max_length=50)
+    parent_id: str | None = Field(default=None, max_length=128)
 
 
 class LocationUpdate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=64)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     type: str | None = Field(default=None, min_length=1, max_length=50)
+    parent_id: str | None = Field(default=None, max_length=128)
 
 
 class Material(BaseModel):
@@ -72,6 +86,7 @@ class Material(BaseModel):
     category_id: str
     category_name: str | None = None
     major_category: str | None = None
+    mid_category: str | None = None
     sub_category: str | None = None
     unit: str = "个"
     spec: str | None = None
@@ -85,6 +100,7 @@ class MaterialCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     category_id: str = Field(min_length=1, max_length=128)
     major_category: str | None = Field(default=None, max_length=100)
+    mid_category: str | None = Field(default=None, max_length=100)
     sub_category: str | None = Field(default=None, max_length=100)
     code: str | None = Field(default=None, max_length=64)
     unit: str = Field(default="个", min_length=1, max_length=20)
@@ -99,6 +115,7 @@ class MaterialUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     category_id: str | None = Field(default=None, min_length=1, max_length=128)
     major_category: str | None = Field(default=None, max_length=100)
+    mid_category: str | None = Field(default=None, max_length=100)
     sub_category: str | None = Field(default=None, max_length=100)
     code: str | None = Field(default=None, max_length=64)
     unit: str | None = Field(default=None, min_length=1, max_length=20)
@@ -225,6 +242,30 @@ class InventorySlotUpdate(BaseModel):
     column: int = Field(ge=1, le=99)
     from_row: int | None = Field(default=None, ge=1, le=99)
     from_column: int | None = Field(default=None, ge=1, le=99)
+
+
+# ── 管理员纠错模型 ──
+
+class TransactionUpdate(BaseModel):
+    """管理员修改流水记录（仅限纠错场景）"""
+    quantity: int | None = Field(default=None, gt=-100000, lt=100000)
+    material_id: str | None = Field(default=None, max_length=128)
+    location_id: str | None = Field(default=None, max_length=128)
+    remark: str | None = Field(default=None, max_length=500)
+
+
+class StockRequestUpdate(BaseModel):
+    """管理员修改出入库申请（仅限纠错场景）"""
+    quantity: int | None = Field(default=None, gt=0, le=10000)
+    material_id: str | None = Field(default=None, max_length=128)
+    location_id: str | None = Field(default=None, max_length=128)
+    remark: str | None = Field(default=None, max_length=500)
+
+
+class InventoryRecordUpdate(BaseModel):
+    """管理员直接修改库存数量（盘点纠错）"""
+    quantity: int = Field(ge=0, le=100000)
+    remark: str | None = Field(default=None, max_length=500)
 
 
 class PurchaseInboundCreate(InboundCreate):

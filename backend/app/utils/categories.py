@@ -42,21 +42,31 @@ def category_path_labels(categories: dict[str, Category], category_id: str) -> l
     return labels
 
 
-def derive_major_sub_names(
+def derive_category_levels(
     categories: dict[str, Category], parent_id: str | None, name: str
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
+    """根据父级关系派生大类/中类/小类名称。
+
+    返回 (major_name, mid_name, sub_name)：
+    - 根节点（无父级）→ (name, None, None)
+    - 第二级（父为根）→ (parent.name, None, name)   ← 兼容旧二级体系
+    - 第三级（父为第二级）→ (祖父.name, parent.name, name)
+    """
     if not parent_id:
-        return name, None
+        return name, None, None
     parent = categories.get(parent_id)
     if not parent:
-        return name, None
+        return name, None, None
     if not parent.parent_id:
-        return parent.name, name
-    root_id: str | None = parent_id
-    while root_id and categories[root_id].parent_id:
-        root_id = categories[root_id].parent_id
-    root_name = categories[root_id].name if root_id else parent.major_name
-    return root_name, name
+        # 父是根 → 当前为子类（兼容原有二级分类数据）
+        return parent.name, None, name
+    # 父也有父 → 当前为小类，父为中类
+    grandparent = categories.get(parent.parent_id)
+    return (
+        grandparent.name if grandparent else parent.major_name or parent.name,
+        parent.name,
+        name,
+    )
 
 
 def category_subtree_stats(
@@ -101,3 +111,30 @@ def attach_category_stats(
             )
         )
     return _sort_categories(enriched, None)
+
+
+# ── 库位层级派生 ──
+
+def derive_location_levels(
+    locations: dict[str, "Location"], parent_id: str | None, name: str
+) -> tuple[str | None, str | None, str | None]:
+    """根据父级关系派生库位大类/中类/小类名称。
+
+    返回 (major_name, mid_name, sub_name)：
+    - 根节点（无父级）→ (name, None, None)
+    - 第二级（父为根）→ (parent.name, name, None)
+    - 第三级（父为第二级）→ (祖父.name, parent.name, name)
+    """
+    if not parent_id:
+        return name, None, None
+    parent = locations.get(parent_id)
+    if not parent:
+        return name, None, None
+    if not parent.parent_id:
+        return parent.name, name, None
+    grandparent = locations.get(parent.parent_id)
+    return (
+        grandparent.name if grandparent else parent.major_name or parent.name,
+        parent.name,
+        name,
+    )

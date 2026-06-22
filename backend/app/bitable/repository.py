@@ -23,7 +23,9 @@ from app.config import Settings
 from app.models import (
     Category,
     CategoryCreate,
+    CategoryUpdate,
     InventoryItem,
+    InventoryRecordUpdate,
     Location,
     LocationCreate,
     LocationUpdate,
@@ -36,10 +38,12 @@ from app.models import (
     StockRequestCreate,
     StockRequestStatus,
     StockRequestType,
+    StockRequestUpdate,
     Transaction,
     TransactionType,
+    TransactionUpdate,
 )
-from app.utils.categories import category_descendant_ids, derive_major_sub_names
+from app.utils.categories import category_descendant_ids, derive_category_levels, derive_location_levels
 from app.utils.inventory_display import format_inventory_slot, format_inventory_summary
 from app.utils.inventory_keys import (
     InventoryKey,
@@ -330,6 +334,7 @@ class BitableRepository:
             cat_id = field_link_id(fields.get(s.bitable_f_material_category)) or ""
             category = categories.get(cat_id)
             major_category = field_text(fields.get(s.bitable_f_material_major_category))
+            mid_category = field_text(fields.get(s.bitable_f_material_mid_category))
             sub_category = field_text(fields.get(s.bitable_f_material_sub_category))
             loc_id = field_link_id(fields.get(s.bitable_f_material_default_location)) or ""
             min_stock_value = field_number(fields.get(s.bitable_f_material_min_stock))
@@ -340,6 +345,7 @@ class BitableRepository:
                 category_id=cat_id,
                 category_name=category.name if category else None,
                 major_category=major_category or (category.major_name if category else None),
+                mid_category=mid_category or (category.mid_name if category else None),
                 sub_category=sub_category or (category.sub_name if category else None),
                 unit=field_text(fields.get(s.bitable_f_material_unit)) or "个",
                 spec=field_text(fields.get(s.bitable_f_material_spec)),
@@ -364,25 +370,30 @@ class BitableRepository:
             rid = rec["record_id"]
             parent_id = field_link_id(fields.get(s.bitable_f_category_parent))
             major = field_text(fields.get(s.bitable_f_category_major))
+            mid = field_text(fields.get(s.bitable_f_category_mid))
             sub = field_text(fields.get(s.bitable_f_category_sub))
             legacy_name = field_text(fields.get(s.bitable_f_category_name))
-            name = sub or legacy_name or major or rid
+            name = sub or mid or legacy_name or major or rid
             result[rid] = Category(
                 id=rid,
                 name=name,
                 parent_id=parent_id,
                 major_name=major,
+                mid_name=mid,
                 sub_name=sub,
                 default_location_type=field_text(fields.get(s.bitable_f_category_default_location_type)),
                 examples=field_text(fields.get(s.bitable_f_category_examples)),
             )
         for category_id, category in list(result.items()):
-            if category.major_name and category.sub_name is not None:
+            if category.major_name and category.mid_name is not None and category.sub_name is not None:
                 continue
-            major_name, sub_name = derive_major_sub_names(result, category.parent_id, category.name)
+            if category.major_name and category.mid_name is not None:
+                continue
+            major_name, mid_name, sub_name = derive_category_levels(result, category.parent_id, category.name)
             result[category_id] = category.model_copy(
                 update={
                     "major_name": category.major_name or major_name or category.name,
+                    "mid_name": category.mid_name if category.mid_name is not None else mid_name,
                     "sub_name": category.sub_name if category.sub_name is not None else sub_name,
                 }
             )
@@ -401,7 +412,7 @@ class BitableRepository:
         if any(category.name == name and category.parent_id == parent_id for category in categories.values()):
             raise ValueError("category_name_exists")
 
-        major_name, sub_name = derive_major_sub_names(categories, parent_id, name)
+        major_name, mid_name, sub_name = derive_category_levels(categories, parent_id, name)
         s = self.settings
         fields: dict[str, Any] = {
             s.bitable_f_category_name: name,
@@ -410,6 +421,8 @@ class BitableRepository:
         }
         if parent_id:
             fields[s.bitable_f_category_parent] = write_link(parent_id)
+        if mid_name:
+            fields[s.bitable_f_category_mid] = mid_name
         if sub_name:
             fields[s.bitable_f_category_sub] = sub_name
         if payload.examples:
@@ -422,6 +435,7 @@ class BitableRepository:
             name=name,
             parent_id=parent_id,
             major_name=major_name or name,
+            mid_name=mid_name,
             sub_name=sub_name,
             default_location_type=payload.default_location_type or "货柜",
             examples=payload.examples.strip() if payload.examples else None,
@@ -451,13 +465,16 @@ class BitableRepository:
         s = self.settings
         if parent:
             parent_major = parent.major_name or parent.name
+            parent_mid = parent.mid_name or ""
             parent_sub = parent.sub_name or parent.name
             for material in linked_materials:
-                fields = {
+                fields: dict[str, Any] = {
                     s.bitable_f_material_category: write_link(parent.id),
                     s.bitable_f_material_major_category: parent_major,
                     s.bitable_f_material_sub_category: parent_sub,
                 }
+                if parent_mid:
+                    fields[s.bitable_f_material_mid_category] = parent_mid
                 rec = await self.client.update_record(s.bitable_table_materials, material.id, fields)
                 self._upsert_cached_record(
                     s.bitable_table_materials,
@@ -477,6 +494,111 @@ class BitableRepository:
             self._remove_cached_record(s.bitable_table_categories, item_id)
         self._materials_cache = None
 
+    async def update_category(self, category_id: str, payload: CategoryUpdate) -> Category:
+        categories = await self._load_categories()
+        current = categories.get(category_id)
+        if not current:
+            raise ValueError("category_not_found")
+
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return current
+
+        s = self.settings
+        name = updates.get("name", current.name)
+        if isinstance(name, str):
+            name = name.strip()
+
+        parent_id = updates.get("parent_id", current.parent_id)
+        if parent_id and parent_id == category_id:
+            raise ValueError("category_self_parent")
+        if parent_id and parent_id not in categories:
+            raise ValueError("parent_not_found")
+
+        if "name" in updates:
+            if any(
+                cat.id != category_id and cat.name == name and cat.parent_id == parent_id
+                for cat in categories.values()
+            ):
+                raise ValueError("category_name_exists")
+
+        major_name, mid_name, sub_name = derive_category_levels(categories, parent_id, name)
+        fields: dict[str, Any] = {}
+        if "name" in updates:
+            fields[s.bitable_f_category_name] = name
+            fields[s.bitable_f_category_major] = major_name or name
+            if mid_name:
+                fields[s.bitable_f_category_mid] = mid_name
+            if sub_name:
+                fields[s.bitable_f_category_sub] = sub_name
+        if "parent_id" in updates:
+            if parent_id:
+                fields[s.bitable_f_category_parent] = write_link(parent_id)
+            else:
+                fields[s.bitable_f_category_parent] = ""  # 清空父分类
+            fields[s.bitable_f_category_major] = major_name or name
+            fields[s.bitable_f_category_mid] = mid_name or ""
+            if sub_name:
+                fields[s.bitable_f_category_sub] = sub_name
+        if "default_location_type" in updates:
+            fields[s.bitable_f_category_default_location_type] = (
+                updates["default_location_type"] or ""
+            )
+        if "examples" in updates:
+            fields[s.bitable_f_category_examples] = (
+                updates["examples"].strip() if updates["examples"] else ""
+            )
+
+        if fields:
+            rec = await self.client.update_record(s.bitable_table_categories, category_id, fields)
+            self._upsert_cached_record(
+                s.bitable_table_categories,
+                rec if rec.get("fields") else self._cached_record(category_id, fields),
+            )
+
+        updated = Category(
+            id=category_id,
+            name=name,
+            parent_id=parent_id,
+            major_name=major_name or name,
+            mid_name=mid_name,
+            sub_name=sub_name,
+            default_location_type=updates.get(
+                "default_location_type", current.default_location_type
+            ),
+            examples=updates.get("examples", current.examples),
+        )
+
+        # 如果分类名称或层级发生变更，同步更新关联物料的分类信息
+        if any(k in updates for k in ("name", "parent_id")):
+            materials = await self._load_materials()
+            linked = [
+                m for m in materials.values() if m.category_id == category_id
+            ]
+            for material in linked:
+                mat_fields: dict[str, Any] = {
+                    s.bitable_f_material_category: write_link(category_id),
+                    s.bitable_f_material_major_category: updated.major_name or updated.name,
+                    s.bitable_f_material_sub_category: updated.sub_name or updated.name,
+                }
+                if updated.mid_name:
+                    mat_fields[s.bitable_f_material_mid_category] = updated.mid_name
+                try:
+                    rec = await self.client.update_record(
+                        s.bitable_table_materials, material.id, mat_fields
+                    )
+                    self._upsert_cached_record(
+                        s.bitable_table_materials,
+                        rec if rec.get("fields") else self._cached_record(material.id, mat_fields),
+                    )
+                except Exception:
+                    pass  # 物料更新失败不影响分类本身更新
+            self._materials_cache = None
+
+        # 使分类缓存失效
+        self._invalidate_table_cache(s.bitable_table_categories)
+        return updated
+
     async def _load_locations(self) -> dict[str, Location]:
         if self._locations_cache is not None:
             return self._locations_cache
@@ -486,11 +608,33 @@ class BitableRepository:
         for rec in records:
             fields = rec.get("fields", {})
             rid = rec["record_id"]
+            parent_id = field_link_id(fields.get(s.bitable_f_location_parent))
+            major = field_text(fields.get(s.bitable_f_location_major))
+            mid = field_text(fields.get(s.bitable_f_location_mid))
+            sub = field_text(fields.get(s.bitable_f_location_sub))
             result[rid] = Location(
                 id=rid,
                 code=field_text(fields.get(s.bitable_f_location_code)) or rid,
                 name=field_text(fields.get(s.bitable_f_location_name)) or rid,
                 type=field_text(fields.get(s.bitable_f_location_type)) or "货柜",
+                parent_id=parent_id,
+                major_name=major,
+                mid_name=mid,
+                sub_name=sub,
+            )
+        # 自动派生缺失的层级字段
+        for loc_id, loc in list(result.items()):
+            if loc.major_name and loc.mid_name is not None and loc.sub_name is not None:
+                continue
+            if loc.major_name and loc.mid_name is not None:
+                continue
+            major_name, mid_name, sub_name = derive_location_levels(result, loc.parent_id, loc.name)
+            result[loc_id] = loc.model_copy(
+                update={
+                    "major_name": loc.major_name or major_name or loc.name,
+                    "mid_name": loc.mid_name if loc.mid_name is not None else mid_name,
+                    "sub_name": loc.sub_name if loc.sub_name is not None else sub_name,
+                }
             )
         self._locations_cache = result
         return result
@@ -526,6 +670,7 @@ class BitableRepository:
                     return (
                         (material.category_name is not None and keyword in material.category_name.lower())
                         or (material.major_category is not None and keyword in material.major_category.lower())
+                        or (material.mid_category is not None and keyword in material.mid_category.lower())
                         or (material.sub_category is not None and keyword in material.sub_category.lower())
                     )
                 return (
@@ -536,6 +681,7 @@ class BitableRepository:
                     or (material.barcode is not None and keyword in material.barcode.lower())
                     or (material.category_name is not None and keyword in material.category_name.lower())
                     or (material.major_category is not None and keyword in material.major_category.lower())
+                    or (material.mid_category is not None and keyword in material.mid_category.lower())
                     or (material.sub_category is not None and keyword in material.sub_category.lower())
                 )
 
@@ -552,6 +698,7 @@ class BitableRepository:
                     if m.category_id == category
                     or m.category_name == category
                     or m.major_category == category
+                    or m.mid_category == category
                     or m.sub_category == category
                 ]
         if location:
@@ -614,6 +761,9 @@ class BitableRepository:
             s.bitable_f_material_category: write_link(payload.category_id),
             s.bitable_f_material_major_category: (
                 payload.major_category or category.major_name or category.name
+            ),
+            s.bitable_f_material_mid_category: (
+                payload.mid_category or category.mid_name or ""
             ),
             s.bitable_f_material_sub_category: (
                 payload.sub_category or category.sub_name or category.name
@@ -697,11 +847,16 @@ class BitableRepository:
             fields[s.bitable_f_material_major_category] = (
                 updates.get("major_category") or (category.major_name if category else material.major_category)
             )
+            fields[s.bitable_f_material_mid_category] = (
+                updates.get("mid_category") or (category.mid_name if category else material.mid_category) or ""
+            )
             fields[s.bitable_f_material_sub_category] = (
                 updates.get("sub_category") or (category.sub_name if category else material.sub_category)
             )
         elif "major_category" in updates:
             fields[s.bitable_f_material_major_category] = updates["major_category"]
+        elif "mid_category" in updates:
+            fields[s.bitable_f_material_mid_category] = updates["mid_category"] or ""
         elif "sub_category" in updates:
             fields[s.bitable_f_material_sub_category] = updates["sub_category"]
         if "unit" in updates:
@@ -811,15 +966,26 @@ class BitableRepository:
         code = payload.code.strip()
         name = payload.name.strip()
         loc_type = payload.type.strip() or "货柜"
+        parent_id = payload.parent_id
         if any(loc.code == code for loc in locations.values()):
             raise ValueError("location_code_exists")
+        if parent_id and parent_id not in locations:
+            raise ValueError("location_parent_not_found")
 
+        major_name, mid_name, sub_name = derive_location_levels(locations, parent_id, name)
         s = self.settings
         fields = {
             s.bitable_f_location_code: code,
             s.bitable_f_location_name: name,
             s.bitable_f_location_type: loc_type,
+            s.bitable_f_location_major: major_name or name,
         }
+        if parent_id:
+            fields[s.bitable_f_location_parent] = write_link(parent_id)
+        if mid_name:
+            fields[s.bitable_f_location_mid] = mid_name
+        if sub_name:
+            fields[s.bitable_f_location_sub] = sub_name
         rec = await self.client.create_record(s.bitable_table_locations, fields)
         rid = rec.get("record_id", "")
         self._locations_cache = None
@@ -827,7 +993,7 @@ class BitableRepository:
             s.bitable_table_locations,
             rec if rec.get("fields") else self._cached_record(rid, fields),
         )
-        return Location(id=rid, code=code, name=name, type=loc_type)
+        return Location(id=rid, code=code, name=name, type=loc_type, parent_id=parent_id, major_name=major_name or name, mid_name=mid_name, sub_name=sub_name)
 
     async def update_location(self, location_id: str, payload: LocationUpdate) -> Location:
         locations = await self._load_locations()
@@ -838,27 +1004,46 @@ class BitableRepository:
         code = payload.code.strip() if payload.code is not None else current.code
         name = payload.name.strip() if payload.name is not None else current.name
         loc_type = payload.type.strip() if payload.type is not None else current.type
+        parent_id = payload.parent_id if "parent_id" in payload.model_dump(exclude_unset=True) else current.parent_id
         if any(loc.id != location_id and loc.code == code for loc in locations.values()):
             raise ValueError("location_code_exists")
+        if parent_id and parent_id == location_id:
+            raise ValueError("location_self_parent")
+        if parent_id and parent_id not in locations:
+            raise ValueError("location_parent_not_found")
 
+        major_name, mid_name, sub_name = derive_location_levels(locations, parent_id, name)
         s = self.settings
         fields = {
             s.bitable_f_location_code: code,
             s.bitable_f_location_name: name,
             s.bitable_f_location_type: loc_type or "货柜",
+            s.bitable_f_location_major: major_name or name,
         }
+        if parent_id:
+            fields[s.bitable_f_location_parent] = write_link(parent_id)
+        else:
+            fields[s.bitable_f_location_parent] = ""
+        fields[s.bitable_f_location_mid] = mid_name or ""
+        if sub_name:
+            fields[s.bitable_f_location_sub] = sub_name
         rec = await self.client.update_record(s.bitable_table_locations, location_id, fields)
         self._locations_cache = None
         self._upsert_cached_record(
             s.bitable_table_locations,
             rec if rec.get("fields") else self._cached_record(location_id, fields),
         )
-        return Location(id=location_id, code=code, name=name, type=loc_type or "货柜")
+        return Location(id=location_id, code=code, name=name, type=loc_type or "货柜", parent_id=parent_id, major_name=major_name or name, mid_name=mid_name, sub_name=sub_name)
 
     async def delete_location(self, location_id: str) -> None:
         locations = await self._load_locations()
         if location_id not in locations:
             raise ValueError("location_not_found")
+
+        # 递归删除子库位
+        children = [l for l in locations.values() if l.parent_id == location_id]
+        for child in children:
+            await self.delete_location(child.id)
 
         inventory = await self._load_inventory_map()
         occupied = sum(
@@ -1823,6 +2008,87 @@ class BitableRepository:
             ),
         ]
 
+    # ── 管理员纠错方法 ──
+
+    async def update_transaction(self, transaction_id: str, payload: TransactionUpdate) -> Transaction:
+        s = self.settings
+        fields: dict[str, Any] = {}
+        if payload.quantity is not None:
+            fields[s.bitable_f_tx_quantity] = payload.quantity
+        if payload.material_id is not None:
+            fields[s.bitable_f_tx_material] = write_link(payload.material_id)
+        if payload.location_id is not None:
+            fields[s.bitable_f_tx_location] = write_link(payload.location_id)
+        if payload.remark is not None:
+            fields[s.bitable_f_tx_remark] = payload.remark
+        if fields:
+            rec = await self.client.update_record(s.bitable_table_transactions, transaction_id, fields)
+            self._invalidate_table_cache(s.bitable_table_transactions)
+        # 返回更新后的对象（简化：返回 payload 合并到原始查询）
+        return Transaction(
+            id=transaction_id,
+            type=TransactionType.INBOUND,
+            material_id=payload.material_id or "",
+            location_id=payload.location_id or "",
+            quantity=payload.quantity or 0,
+            operator="",
+            remark=payload.remark,
+            created_at=datetime.now(timezone.utc),
+        )
+
+    async def update_request(self, request_id: str, payload: StockRequestUpdate) -> StockRequest:
+        s = self.settings
+        fields: dict[str, Any] = {}
+        if payload.quantity is not None:
+            fields[s.bitable_f_request_quantity] = payload.quantity
+        if payload.material_id is not None:
+            fields[s.bitable_f_request_material] = write_link(payload.material_id)
+        if payload.location_id is not None:
+            fields[s.bitable_f_request_location] = write_link(payload.location_id)
+        if payload.remark is not None:
+            fields[s.bitable_f_request_remark] = payload.remark
+        if fields:
+            rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
+            self._invalidate_table_cache(s.bitable_table_requests)
+        return StockRequest(
+            id=request_id,
+            type=StockRequestType.INBOUND,
+            status=StockRequestStatus.PENDING,
+            material_id=payload.material_id or "",
+            location_id=payload.location_id,
+            quantity=payload.quantity or 0,
+            requester_open_id="",
+            requester_name="",
+            remark=payload.remark,
+            created_at=datetime.now(timezone.utc),
+        )
+
+    async def update_inventory_record(
+        self, material_id: str, location_id: str, payload: InventoryRecordUpdate,
+        row: int | None = None, column: int | None = None,
+    ) -> InventoryItem:
+        s = self.settings
+        inv_records = await self._load_inventory_records()
+        key = self._inv_key(material_id, location_id, row, column)
+        rec = inv_records.get(key)
+        if not rec:
+            raise ValueError("inventory_not_found")
+        record_id = rec.get("record_id", "")
+        fields = {s.bitable_f_inventory_quantity: payload.quantity}
+        if payload.remark:
+            fields[s.bitable_f_tx_remark] = payload.remark
+        await self.client.update_record(s.bitable_table_inventory, record_id, fields)
+        self._invalidate_table_cache(s.bitable_table_inventory)
+        return InventoryItem(
+            material_id=material_id,
+            location_id=location_id,
+            location_name="",
+            quantity=payload.quantity,
+            row=row,
+            column=column,
+            last_updated=datetime.now(timezone.utc),
+        )
+
     def _invalidate_cache(self, *table_ids: str) -> None:
         s = self.settings
         if not table_ids or s.bitable_table_materials in table_ids:
@@ -1837,3 +2103,72 @@ class BitableRepository:
             "locations": len(await self._load_locations()),
             "inventory": len(await self._load_inventory_map()),
         }
+
+    # ── 库位类型管理（real 模式：从 locations 表派生 + 内存预设） ──
+
+    _location_type_presets: list[str] | None = None
+
+    def _default_location_types(self) -> list[str]:
+        return ["货柜", "货架", "专用螺栓架", "工具架", "快递暂存"]
+
+    async def list_location_types(self) -> list[str]:
+        """获取所有库位类型（locations 表已有类型 + 管理员预设）"""
+        locations = await self._load_locations()
+        used_types = {loc.type for loc in locations.values() if loc.type}
+        presets = self._location_type_presets if self._location_type_presets is not None else self._default_location_types()
+        merged = sorted(set(presets) | used_types)
+        return merged
+
+    def _save_presets(self, types: list[str]) -> None:
+        self._location_type_presets = types
+
+    async def add_location_type(self, name: str) -> list[str]:
+        name = name.strip()
+        if not name:
+            raise ValueError("location_type_name_empty")
+        current = await self.list_location_types()
+        if name in current:
+            raise ValueError("location_type_exists")
+        presets = self._location_type_presets if self._location_type_presets is not None else self._default_location_types()
+        presets.append(name)
+        self._save_presets(presets)
+        return await self.list_location_types()
+
+    async def remove_location_type(self, name: str) -> list[str]:
+        name = name.strip()
+        locations = await self._load_locations()
+        if any(loc.type == name for loc in locations.values()):
+            raise ValueError("location_type_in_use")
+        presets = self._location_type_presets if self._location_type_presets is not None else self._default_location_types()
+        if name not in presets:
+            raise ValueError("location_type_not_found")
+        presets.remove(name)
+        self._save_presets(presets)
+        return await self.list_location_types()
+
+    async def update_location_type(self, old_name: str, new_name: str) -> list[str]:
+        old_name = old_name.strip()
+        new_name = new_name.strip()
+        presets = self._location_type_presets if self._location_type_presets is not None else self._default_location_types()
+        if old_name not in presets:
+            raise ValueError("location_type_not_found")
+        if new_name in presets:
+            raise ValueError("location_type_exists")
+        idx = presets.index(old_name)
+        presets[idx] = new_name
+        # 同步更新 locations 表中使用此类型的记录
+        locations = await self._load_locations()
+        s = self.settings
+        for loc in locations.values():
+            if loc.type == old_name:
+                try:
+                    await self.client.update_record(
+                        s.bitable_table_locations, loc.id,
+                        {s.bitable_f_location_type: new_name},
+                    )
+                except Exception:
+                    pass
+        self._locations_cache = None
+        self._invalidate_table_cache(s.bitable_table_locations)
+        self._save_presets(presets)
+        return await self.list_location_types()

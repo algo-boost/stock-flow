@@ -6,8 +6,10 @@ from app.config import Settings
 from app.models import (
     Category,
     CategoryCreate,
+    CategoryUpdate,
     InboundCreate,
     InventoryItem,
+    InventoryRecordUpdate,
     InventorySlotUpdate,
     Location,
     LocationCreate,
@@ -25,7 +27,9 @@ from app.models import (
     StockRequest,
     StockRequestCreate,
     StockRequestStatus,
+    StockRequestUpdate,
     Transaction,
+    TransactionUpdate,
     TransferCreate,
     User,
 )
@@ -183,6 +187,27 @@ class InventoryService:
         except Exception as exc:
             raise _wrap_data_error("Bitable 分类表", exc) from exc
 
+    async def update_category(self, category_id: str, payload: CategoryUpdate) -> Category:
+        try:
+            if self.repo:
+                return await self.repo.update_category(category_id, payload)
+            return self.store.update_category(category_id, payload)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "category_not_found":
+                raise AppError(1001, "分类不存在", 404) from exc
+            if msg == "parent_not_found":
+                raise AppError(1001, "上级分类不存在", 400) from exc
+            if msg == "category_name_exists":
+                raise AppError(1001, "同级分类名称已存在", 400) from exc
+            if msg == "category_self_parent":
+                raise AppError(1001, "不能将自己设为父分类", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+        except Exception as exc:
+            raise _wrap_data_error("Bitable 分类表", exc) from exc
+
     async def create_material(self, payload: MaterialCreate) -> Material:
         try:
             if self.repo:
@@ -248,6 +273,8 @@ class InventoryService:
                 if not material:
                     raise AppError(4004, "物料未找到", 404)
                 inventory = self.store.get_inventory_for_material(material_id)
+        except AppError:
+            raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
         except Exception as exc:
@@ -369,6 +396,8 @@ class InventoryService:
             msg = str(exc)
             if msg == "location_code_exists":
                 raise AppError(1001, "库位编号已存在", 400) from exc
+            if msg == "location_parent_not_found":
+                raise AppError(1001, "父库位不存在", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
@@ -384,6 +413,10 @@ class InventoryService:
                 raise AppError(4004, "库位未找到", 404) from exc
             if msg == "location_code_exists":
                 raise AppError(1001, "库位编号已存在", 400) from exc
+            if msg == "location_parent_not_found":
+                raise AppError(1001, "父库位不存在", 400) from exc
+            if msg == "location_self_parent":
+                raise AppError(1001, "不能将自己设为父库位", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
@@ -807,3 +840,102 @@ class InventoryService:
             return self.store.list_requests(limit=limit)
         except RuntimeError:
             return []
+
+    # ── 管理员纠错方法 ──
+
+    async def update_transaction(self, transaction_id: str, payload: TransactionUpdate) -> Transaction:
+        try:
+            if self.repo:
+                return await self.repo.update_transaction(transaction_id, payload)
+            return self.store.update_transaction(transaction_id, payload)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "transaction_not_found":
+                raise AppError(4004, "流水记录未找到", 404) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def update_request(self, request_id: str, payload: StockRequestUpdate) -> StockRequest:
+        try:
+            if self.repo:
+                return await self.repo.update_request(request_id, payload)
+            return self.store.update_request(request_id, payload)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "request_not_found":
+                raise AppError(4004, "申请记录未找到", 404) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def update_inventory_record(
+        self, material_id: str, location_id: str, payload: InventoryRecordUpdate,
+        row: int | None = None, column: int | None = None,
+    ) -> InventoryItem:
+        try:
+            if self.repo:
+                return await self.repo.update_inventory_record(material_id, location_id, payload, row, column)
+            return self.store.update_inventory_record(material_id, location_id, payload, row, column)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "inventory_not_found":
+                raise AppError(4004, "库存记录未找到", 404) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    # ── 库位类型管理 ──
+
+    async def list_location_types(self) -> list[str]:
+        try:
+            if self.repo:
+                return await self.repo.list_location_types()
+            return self.store.list_location_types()
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def add_location_type(self, name: str) -> list[str]:
+        try:
+            if self.repo:
+                return await self.repo.add_location_type(name)
+            return self.store.add_location_type(name)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "location_type_name_empty":
+                raise AppError(1001, "类型名称不能为空", 400) from exc
+            if msg == "location_type_exists":
+                raise AppError(1001, "该库位类型已存在", 400) from exc
+            raise
+
+    async def remove_location_type(self, name: str) -> list[str]:
+        try:
+            if self.repo:
+                return await self.repo.remove_location_type(name)
+            return self.store.remove_location_type(name)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "location_type_not_found":
+                raise AppError(4004, "库位类型未找到", 404) from exc
+            if msg == "location_type_in_use":
+                raise AppError(4003, "该类型仍有库位在使用，不能删除", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def update_location_type(self, old_name: str, new_name: str) -> list[str]:
+        try:
+            if self.repo:
+                return await self.repo.update_location_type(old_name, new_name)
+            return self.store.update_location_type(old_name, new_name)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "location_type_not_found":
+                raise AppError(4004, "库位类型未找到", 404) from exc
+            if msg == "location_type_exists":
+                raise AppError(1001, "目标类型名称已存在", 400) from exc
+            if msg == "location_type_name_empty":
+                raise AppError(1001, "类型名称不能为空", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc

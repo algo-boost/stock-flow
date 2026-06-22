@@ -6,7 +6,15 @@ from fastapi import APIRouter, Depends, Query
 
 from app.config import Settings, get_settings
 from app.middleware.auth import require_roles
-from app.models import BulkSyncRequest, Role, User
+from app.auth.deps import get_current_user
+from app.models import (
+    BulkSyncRequest,
+    InventoryRecordUpdate,
+    Role,
+    StockRequestUpdate,
+    TransactionUpdate,
+    User,
+)
 from app.services.feishu_client import get_role_check_status
 from app.services.inventory import InventoryService
 from app.utils.response import success
@@ -96,3 +104,83 @@ async def admin_system(
             "server_time": datetime.now(timezone.utc).isoformat(),
         }
     )
+
+
+# ── 管理员纠错端点 ──
+
+@router.patch("/transactions/{transaction_id}")
+async def update_transaction(
+    transaction_id: str,
+    payload: TransactionUpdate,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    tx = await service.update_transaction(transaction_id, payload)
+    return success(tx.model_dump(mode="json"))
+
+
+@router.patch("/requests/{request_id}")
+async def update_request(
+    request_id: str,
+    payload: StockRequestUpdate,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    req = await service.update_request(request_id, payload)
+    return success(req.model_dump(mode="json"))
+
+
+@router.patch("/inventory/{material_id}/{location_id}")
+async def update_inventory_record(
+    material_id: str,
+    location_id: str,
+    payload: InventoryRecordUpdate,
+    row: int | None = Query(default=None, ge=1, le=99),
+    column: int | None = Query(default=None, ge=1, le=99),
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    item = await service.update_inventory_record(material_id, location_id, payload, row, column)
+    return success(item.model_dump(mode="json"))
+
+
+# ── 库位类型管理 ──
+
+@router.get("/location-types")
+async def list_location_types(
+    _user: User = Depends(get_current_user),
+    service: InventoryService = Depends(get_service),
+):
+    types = await service.list_location_types()
+    return success(types)
+
+
+@router.post("/location-types")
+async def add_location_type(
+    name: str = Query(min_length=1, max_length=50),
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    types = await service.add_location_type(name)
+    return success(types)
+
+
+@router.delete("/location-types")
+async def remove_location_type(
+    name: str = Query(min_length=1, max_length=50),
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    types = await service.remove_location_type(name)
+    return success(types)
+
+
+@router.patch("/location-types")
+async def update_location_type(
+    old_name: str = Query(min_length=1, max_length=50),
+    new_name: str = Query(min_length=1, max_length=50),
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    types = await service.update_location_type(old_name, new_name)
+    return success(types)

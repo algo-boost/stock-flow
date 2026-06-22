@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from app.auth.deps import get_current_user
 from app.config import Settings, get_settings
 from app.middleware.auth import require_roles
-from app.models import CategoryCreate, InventorySlotUpdate, MaterialCreate, MaterialUpdate, Role, User
+from app.models import CategoryCreate, CategoryUpdate, InventorySlotUpdate, MaterialCreate, MaterialUpdate, Role, User
 from app.services.inventory import InventoryService
 from app.utils.response import success
 
@@ -71,6 +71,17 @@ async def delete_category(
 ):
     await service.delete_category(category_id)
     return success({"deleted": True})
+
+
+@router.patch("/categories/{category_id}")
+async def update_category(
+    category_id: str,
+    payload: CategoryUpdate,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    category = await service.update_category(category_id, payload)
+    return success(category.model_dump())
 
 
 @router.post("")
