@@ -22,18 +22,49 @@ async def lifespan(_app: FastAPI):
     if (
         settings.bitable_mode == "real"
         and settings.bitable_configured
-        and settings.bitable_cache_ttl_seconds > 0
         and settings.bitable_warmup_on_startup
     ):
         try:
-            results = await BitableRepository(settings).warmup_core_tables()
-            failures = {tid: msg for tid, msg in results.items() if msg}
-            if failures:
-                logger.warning("Bitable 缓存部分预热失败，失败表将按需读取: %s", failures)
+            repo = BitableRepository(settings)
+            # 优先从 SQLite 本地缓存预热（毫秒级）
+            if settings.sqlite_cache_enabled:
+                from app.bitable.sqlite_cache import get_sqlite_cache
+                sqlite = get_sqlite_cache()
+                snap = sqlite.snapshot()
+                if snap:
+                    logger.info("SQLite 缓存命中 %d 表 (%d 条记录)，启动即用", len(snap), sum(snap.values()))
+                else:
+                    # SQLite 为空 → 自动从 Bitable 全量恢复
+                    logger.info("SQLite 缓存为空，正在从 Bitable 自动恢复…")
+                    core_ids = [
+                        settings.bitable_table_categories,
+                        settings.bitable_table_locations,
+                        settings.bitable_table_materials,
+                        settings.bitable_table_inventory,
+                        settings.bitable_table_transactions,
+                        settings.bitable_table_requests,
+                    ]
+                    recovered = 0
+                    for table_id in core_ids:
+                        if not table_id:
+                            continue
+                        try:
+                            records = await repo.client.list_records(table_id)
+                            if records:
+                                sqlite.upsert_records(table_id, records)
+                                recovered += len(records)
+                        except Exception as exc:
+                            logger.warning("恢复 %s 失败: %s", table_id, exc)
+                    logger.info("Bitable 自动恢复完成: %d 条记录写入 SQLite", recovered)
             else:
-                logger.info("Bitable 五表缓存预热完成")
+                results = await repo.warmup_core_tables()
+                failures = {tid: msg for tid, msg in results.items() if msg}
+                if failures:
+                    logger.warning("Bitable 缓存部分预热失败: %s", failures)
+                else:
+                    logger.info("Bitable 五表缓存预热完成")
         except Exception as exc:
-            logger.warning("Bitable 缓存预热失败，将在首次请求时按需拉取: %s", exc)
+            logger.warning("缓存预热失败，将在首次请求时按需拉取: %s", exc)
     yield
 
 

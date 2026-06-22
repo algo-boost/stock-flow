@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     bitable_cache_ttl_seconds: int = 300
     bitable_warmup_on_startup: bool = True
 
+    # SQLite 本地镜像缓存（real 模式下启用，毫秒级读取）
+    sqlite_cache_enabled: bool = True
+    # SQLite 缓存后台自动全量同步间隔（秒），0=关闭自动同步
+    sqlite_cache_sync_interval: int = 3600
+
     # Bitable 字段名（与多维表格列名一致，可按模板调整）
     bitable_f_category_name: str = "分类名称"
     bitable_f_category_parent: str = "父分类ID"

@@ -178,6 +178,8 @@ class BitableRepository:
         if not table_id:
             return []
         ttl = max(self.settings.bitable_cache_ttl_seconds, 0)
+
+        # 1. 内存缓存（最快）
         cache_key = (self.settings.bitable_app_token, table_id)
         now = time.monotonic()
         if ttl > 0 and cache_key in _TABLE_CACHE:
@@ -185,6 +187,19 @@ class BitableRepository:
             if now - cached_at <= ttl:
                 return records
 
+        # 2. SQLite 本地缓存（毫秒级，跨重启持久化）
+        if self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            sqlite = get_sqlite_cache()
+            sqlite_age = sqlite.get_cache_age(table_id)
+            sqlite_stale = sqlite_age is None or (ttl > 0 and now - sqlite_age > ttl)
+            if sqlite_age is not None and (ttl == 0 or not sqlite_stale):
+                records = sqlite.get_records(table_id)
+                if records:
+                    _TABLE_CACHE[cache_key] = (now, records)
+                    return records
+
+        # 3. Bitable API（慢，仅在缓存过期时）
         inflight = _TABLE_INFLIGHT.get(cache_key)
         if inflight:
             records = await inflight
@@ -195,8 +210,18 @@ class BitableRepository:
                 records = await task
             finally:
                 _TABLE_INFLIGHT.pop(cache_key, None)
-        if ttl > 0:
+
+        if ttl > 0 and records:
             _TABLE_CACHE[cache_key] = (time.monotonic(), records)
+
+        # 同步写入 SQLite 缓存
+        if self.settings.sqlite_cache_enabled and records and self.settings.bitable_mode == "real":
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            try:
+                get_sqlite_cache().upsert_records(table_id, records)
+            except Exception:
+                pass
+
         return records
 
     def _invalidate_table_cache(self, *table_ids: str) -> None:
@@ -207,9 +232,12 @@ class BitableRepository:
                 _TABLE_INFLIGHT.pop((app_token, table_id), None)
 
     def _upsert_cached_record(self, table_id: str, record: dict[str, Any]) -> None:
-        """写操作成功后同步更新表级缓存，避免下一次读取整表。"""
+        """写操作成功后同步更新表级缓存 + SQLite。"""
         if not table_id or not record.get("record_id"):
             return
+        # 同步到 SQLite
+        self._sync_sqlite_upsert(table_id, record)
+        # 更新内存缓存
         cache_key = (self.settings.bitable_app_token, table_id)
         cached = _TABLE_CACHE.get(cache_key)
         if not cached:
@@ -248,6 +276,8 @@ class BitableRepository:
     def _remove_cached_record(self, table_id: str, record_id: str) -> None:
         if not table_id or not record_id:
             return
+        # 同步删除 SQLite
+        self._sync_sqlite_delete(table_id, record_id)
         cache_key = (self.settings.bitable_app_token, table_id)
         cached = _TABLE_CACHE.get(cache_key)
         if not cached:
@@ -2109,6 +2139,52 @@ class BitableRepository:
         if not table_ids or s.bitable_table_locations in table_ids:
             self._locations_cache = None
         self._invalidate_table_cache(*(table_ids or tuple(self._core_table_ids())))
+
+    # ── SQLite 本地缓存同步 ──
+
+    def _sqlite_enabled(self) -> bool:
+        return (
+            self.settings.sqlite_cache_enabled
+            and self.settings.bitable_mode == "real"
+            and bool(self.settings.bitable_app_token)  # 测试用假 token 跳过
+            and self.settings.bitable_configured
+        )
+
+    def _sync_sqlite_upsert(self, table_id: str, record: dict[str, Any]) -> None:
+        """单条写入 SQLite（写操作后同步调用）。"""
+        if not table_id or not record.get("record_id"):
+            return
+        if not self._sqlite_enabled():
+            return
+        try:
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            get_sqlite_cache().upsert_one(table_id, record)
+        except Exception:
+            pass
+
+    def _sync_sqlite_upsert_all(self, table_id: str, records: list[dict[str, Any]]) -> None:
+        """批量写入 SQLite。"""
+        if not table_id or not records:
+            return
+        if not self._sqlite_enabled():
+            return
+        try:
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            get_sqlite_cache().upsert_records(table_id, records)
+        except Exception:
+            pass
+
+    def _sync_sqlite_delete(self, table_id: str, record_id: str) -> None:
+        """从 SQLite 删除一条记录。"""
+        if not table_id or not record_id:
+            return
+        if not self._sqlite_enabled():
+            return
+        try:
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            get_sqlite_cache().delete_one(table_id, record_id)
+        except Exception:
+            pass
 
     async def snapshot(self) -> dict[str, int]:
         return {

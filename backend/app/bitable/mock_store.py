@@ -141,6 +141,67 @@ class MockStore:
         self.transactions = {}
         self.requests = {}
         self.location_types = ["货柜", "货架", "专用螺栓架", "工具架", "快递暂存", "货柜层", "货柜格"]
+        self._seed_test_data()
+
+    def _seed_test_data(self) -> None:
+        """预填测试物料、库存和流水，方便前端调试。"""
+        now = _utcnow()
+        # ── 物料 ──
+        test_materials = {
+            "mat_001": Material(id="mat_001", code="M001", name="大喵电机", category_id="cat_motor_module", category_name="电机模组", major_category="电气类", sub_category="电机模组", unit="个", spec="DM-Motor V2", supplier="达妙科技", min_stock=5),
+            "mat_002": Material(id="mat_002", code="M002", name="Realsense相机", category_id="cat_sensing", category_name="感知设备", major_category="电气类", sub_category="感知设备", unit="个", spec="D435i", supplier="Intel", min_stock=3),
+            "mat_003": Material(id="mat_003", code="M003", name="奥比中光相机", category_id="cat_sensing", category_name="感知设备", major_category="电气类", sub_category="感知设备", unit="个", spec="Gemini-335", supplier="奥比中光", min_stock=2),
+            "mat_004": Material(id="mat_004", code="M004", name="M3螺栓", category_id="cat_fastener", category_name="螺丝螺栓", major_category="耗材类", sub_category="螺丝螺栓", unit="个", spec="M3x10", supplier="标准件", min_stock=50),
+            "mat_005": Material(id="mat_005", code="M005", name="杜邦线", category_id="cat_cable", category_name="线缆网线", major_category="电气类", sub_category="线缆网线", unit="根", spec="母对母 20cm", supplier="电子市场", min_stock=20),
+            "mat_006": Material(id="mat_006", code="M006", name="Jetson Orin", category_id="cat_compute", category_name="算力设备", major_category="电气类", sub_category="算力设备", unit="个", spec="Orin NX 16GB", supplier="NVIDIA", min_stock=1),
+            "mat_007": Material(id="mat_007", code="M007", name="锂电池包", category_id="cat_battery", category_name="电池电源", major_category="电气类", sub_category="电池电源", unit="个", spec="24V 10Ah", supplier="达妙科技", min_stock=2),
+            "mat_008": Material(id="mat_008", code="M008", name="铝合金型材", category_id="cat_metal", category_name="金属件", major_category="机械类", sub_category="金属件", unit="根", spec="2020 1m", supplier="铝材市场", min_stock=10),
+        }
+        for mid, m in test_materials.items():
+            self.materials[mid] = m
+
+        # ── 库存 ──
+        self.inventory = {
+            inv_key("mat_001", "loc_01"): InventoryItem(material_id="mat_001", location_id="loc_01", location_name="A柜", quantity=8, last_updated=now),
+            inv_key("mat_001", "loc_01_l3"): InventoryItem(material_id="mat_001", location_id="loc_01_l3", location_name="第三格", quantity=3, last_updated=now, row=3, column=3),
+            inv_key("mat_002", "loc_01"): InventoryItem(material_id="mat_002", location_id="loc_01", location_name="A柜", quantity=2, last_updated=now),
+            inv_key("mat_003", "loc_01"): InventoryItem(material_id="mat_003", location_id="loc_01", location_name="A柜", quantity=1, last_updated=now),
+            inv_key("mat_004", "loc_bolt"): InventoryItem(material_id="mat_004", location_id="loc_bolt", location_name="螺栓专用架", quantity=45, last_updated=now),
+            inv_key("mat_005", "loc_01"): InventoryItem(material_id="mat_005", location_id="loc_01", location_name="A柜", quantity=15, last_updated=now),
+            inv_key("mat_006", "loc_01"): InventoryItem(material_id="mat_006", location_id="loc_01", location_name="A柜", quantity=1, last_updated=now),
+            inv_key("mat_007", "loc_02"): InventoryItem(material_id="mat_007", location_id="loc_02", location_name="B架", quantity=2, last_updated=now),
+            inv_key("mat_008", "loc_02"): InventoryItem(material_id="mat_008", location_id="loc_02", location_name="B架", quantity=8, last_updated=now),
+        }
+
+        # ── 流水 ──
+        self.transactions = {
+            "tx_001": Transaction(id="tx_001", type=TransactionType.INBOUND, material_id="mat_001", material_name="大喵电机", location_id="loc_01", location_name="A柜", quantity=10, operator="管理员", remark="初始入库", created_at=now),
+            "tx_002": Transaction(id="tx_002", type=TransactionType.OUTBOUND, material_id="mat_001", material_name="大喵电机", location_id="loc_01", location_name="A柜", quantity=-2, operator="张工", remark="研发领用：机械臂关节测试", created_at=now),
+            "tx_003": Transaction(id="tx_003", type=TransactionType.OUTBOUND, material_id="mat_004", material_name="M3螺栓", location_id="loc_bolt", location_name="螺栓专用架", quantity=-5, operator="李工", remark="组装用", created_at=now),
+        }
+
+        # ── 待审批申请（模拟 USER 提交的出入库申请） ──
+        self.requests = {
+            "req_001": StockRequest(
+                id="req_001", type=StockRequestType.OUTBOUND, status=StockRequestStatus.PENDING,
+                material_id="mat_001", material_name="大喵电机", location_id="loc_01", location_name="A柜",
+                quantity=2, requester_open_id="user_zhang", requester_name="张工",
+                remark="需要2个大喵电机做关节测试", return_required=True,
+                created_at=now,
+            ),
+            "req_002": StockRequest(
+                id="req_002", type=StockRequestType.INBOUND, status=StockRequestStatus.PENDING,
+                material_id="mat_006", material_name="Jetson Orin",
+                quantity=1, requester_open_id="user_li", requester_name="李工",
+                remark="采购到货，需入库", created_at=now,
+            ),
+            "req_003": StockRequest(
+                id="req_003", type=StockRequestType.OUTBOUND, status=StockRequestStatus.PENDING,
+                material_id="mat_002", material_name="Realsense相机", location_id="loc_01", location_name="A柜",
+                quantity=1, requester_open_id="user_wang", requester_name="王工",
+                remark="视觉项目测试需要", created_at=now,
+            ),
+        }
 
     def search_materials(
         self,

@@ -184,3 +184,93 @@ async def update_location_type(
 ):
     types = await service.update_location_type(old_name, new_name)
     return success(types)
+
+
+# ── SQLite 缓存管理 ──
+
+@router.post("/sqlite-sync")
+async def sync_sqlite_cache(
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    """强制将 Bitable 数据全量同步到本地 SQLite 缓存。"""
+    if not settings.sqlite_cache_enabled or settings.bitable_mode != "real":
+        return success({"synced": False, "message": "SQLite 缓存未启用或非 real 模式"})
+    from app.bitable.sqlite_cache import get_sqlite_cache
+    from app.bitable.repository import BitableRepository
+    repo = BitableRepository(settings)
+    sqlite = get_sqlite_cache()
+    table_ids = [
+        settings.bitable_table_categories,
+        settings.bitable_table_locations,
+        settings.bitable_table_materials,
+        settings.bitable_table_inventory,
+        settings.bitable_table_transactions,
+        settings.bitable_table_requests,
+    ]
+    results = {}
+    for table_id in table_ids:
+        if not table_id:
+            continue
+        try:
+            records = await repo.client.list_records(table_id)
+            sqlite.upsert_records(table_id, records)
+            results[table_id] = len(records)
+        except Exception as exc:
+            results[table_id] = f"失败: {exc}"
+    return success({"synced": True, "tables": results, "snapshot": sqlite.snapshot()})
+
+
+@router.get("/sqlite-status")
+async def sqlite_cache_status(
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    """查看本地 SQLite 缓存状态。"""
+    if not settings.sqlite_cache_enabled:
+        return success({"enabled": False})
+    from app.bitable.sqlite_cache import get_sqlite_cache
+    sqlite = get_sqlite_cache()
+    return success({
+        "enabled": True,
+        "snapshot": sqlite.snapshot(),
+        "sync_interval": settings.sqlite_cache_sync_interval,
+    })
+
+
+@router.post("/sqlite-backup")
+async def backup_sqlite_cache(
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    """备份 SQLite 数据库文件到同目录 .bak 文件。"""
+    from app.bitable.sqlite_cache import DB_PATH
+    import shutil
+    backup_path = DB_PATH.with_suffix(".db.bak")
+    try:
+        shutil.copy2(str(DB_PATH), str(backup_path))
+        size_mb = backup_path.stat().st_size / 1024 / 1024
+        return success({"backed_up": True, "path": str(backup_path), "size_mb": round(size_mb, 2)})
+    except FileNotFoundError:
+        return success({"backed_up": False, "message": "SQLite 数据库文件不存在"})
+
+
+@router.post("/sqlite-reset")
+async def reset_sqlite_cache(
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    """清空 SQLite 缓存（下次启动或访问时自动从 Bitable 恢复）。"""
+    if not settings.sqlite_cache_enabled:
+        return success({"reset": False, "message": "SQLite 缓存未启用"})
+    from app.bitable.sqlite_cache import get_sqlite_cache
+    sqlite = get_sqlite_cache()
+    core_ids = [
+        settings.bitable_table_categories, settings.bitable_table_locations,
+        settings.bitable_table_materials, settings.bitable_table_inventory,
+        settings.bitable_table_transactions, settings.bitable_table_requests,
+    ]
+    for table_id in core_ids:
+        if table_id:
+            sqlite.clear_table(table_id)
+    return success({"reset": True, "message": "SQLite 缓存已清空，下次请求将自动从 Bitable 恢复"})
