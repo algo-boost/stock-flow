@@ -156,6 +156,16 @@ export function deleteCategory(categoryId: string) {
   });
 }
 
+export function updateCategory(
+  categoryId: string,
+  payload: { name?: string; parent_id?: string | null },
+) {
+  return request<Category>(`/materials/categories/${categoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function updateMaterial(
   materialId: string,
   payload: {

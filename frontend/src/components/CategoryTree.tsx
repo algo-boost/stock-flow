@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Input, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, Toast } from "antd-mobile";
 import type { Category } from "../api/types";
 import {
   formatCategoryPath,
@@ -18,6 +18,7 @@ interface CategoryTreeProps {
   canManage?: boolean;
   onCreate?: (payload: { name: string; parent_id: string | null }) => Promise<void>;
   onDelete?: (categoryId: string) => Promise<void>;
+  onUpdate?: (categoryId: string, payload: { name?: string; parent_id?: string | null }) => Promise<void>;
   onRefresh?: () => Promise<void>;
 }
 
@@ -38,10 +39,13 @@ export function CategoryTree({
   canManage = false,
   onCreate,
   onDelete,
+  onUpdate,
   onRefresh,
 }: CategoryTreeProps) {
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState("");
   const roots = useMemo(() => getRootCategories(categories), [categories]);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -240,9 +244,58 @@ export function CategoryTree({
             >
               删除选中
             </Button>
+            <Button
+              size="small"
+              fill="outline"
+              disabled={!selectedId}
+              loading={busy}
+              onClick={() => {
+                const cat = categories.find((c) => c.id === selectedId);
+                setEditName(cat?.name ?? "");
+                setEditing(true);
+              }}
+            >
+              编辑选中
+            </Button>
           </div>
         </div>
       )}
+
+      <Dialog
+        visible={editing}
+        title="修改分类"
+        content={
+          <Form layout="vertical" className="form-card">
+            <Form.Item label="分类名称">
+              <Input value={editName} onChange={setEditName} />
+            </Form.Item>
+          </Form>
+        }
+        actions={[
+          { key: "cancel", text: "取消", onClick: () => setEditing(false) },
+          {
+            key: "save",
+            text: busy ? "保存中…" : "保存",
+            bold: true,
+            onClick: () => {
+              if (!selectedId || !onUpdate) return;
+              if (!editName.trim()) {
+                Toast.show({ content: "请输入分类名称" });
+                return;
+              }
+              setBusy(true);
+              void onUpdate(selectedId, { name: editName.trim() }).then(() => {
+                setEditing(false);
+                Toast.show({ icon: "success", content: "分类已更新" });
+                void onRefresh?.();
+              }).catch((e: unknown) => {
+                Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "修改失败" });
+              }).finally(() => setBusy(false));
+            },
+          },
+        ]}
+        onClose={() => setEditing(false)}
+      />
     </div>
   );
 }

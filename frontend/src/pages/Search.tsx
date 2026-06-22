@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, SearchBar, Toast } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
-import { createCategory, deleteCategory, listCategories, searchMaterials } from "../api";
+import { createCategory, deleteCategory, listCategories, searchMaterials, updateCategory } from "../api";
 import type { Category, MaterialSearchItem } from "../api/types";
 import { CategoryTree } from "../components/CategoryTree";
 import { useAuth } from "../components/AuthGate";
@@ -303,6 +303,9 @@ export default function SearchPage() {
             }}
             onDelete={async (categoryId) => {
               await deleteCategory(categoryId);
+            }}
+            onUpdate={async (categoryId, payload) => {
+              await updateCategory(categoryId, payload);
             }}
             onRefresh={loadCategories}
           />
