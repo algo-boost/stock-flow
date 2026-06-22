@@ -14,6 +14,7 @@ export function Layout({ title, children }: { title: string; children: React.Rea
       ? [{ key: "/locations", title: "库位", icon: "📍" }]
       : []),
     { key: "/history", title: "历史", icon: "📒" },
+    ...(user?.role === "USER" ? [{ key: "/returns", title: "待还", icon: "↩" }] : []),
     ...(canApprove ? [{ key: "/purchase", title: "进货", icon: "🛒" }] : []),
     ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "⚙" }] : []),
   ];
@@ -24,6 +25,7 @@ export function Layout({ title, children }: { title: string; children: React.Rea
       "/stock",
       "/locations",
       "/history",
+      "/returns",
       "/purchase",
       "/admin-center",
     ].includes(location.pathname);

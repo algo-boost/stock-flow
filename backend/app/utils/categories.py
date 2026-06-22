@@ -3,11 +3,27 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from app.models import Category, Material
+from app.data.category_taxonomy import CHILD_ORDER, ROOT_ORDER
+
+
+def _sort_categories(items: list[Category], parent: Category | None) -> list[Category]:
+    order = ROOT_ORDER if parent is None else CHILD_ORDER.get(parent.name, [])
+    if not order:
+        return sorted(items, key=lambda c: c.name)
+
+    def rank(category: Category) -> tuple[int, str]:
+        try:
+            return order.index(category.name), category.name
+        except ValueError:
+            return len(order) + 1, category.name
+
+    return sorted(items, key=rank)
 
 
 def category_children(categories: dict[str, Category], parent_id: str | None) -> list[Category]:
+    parent = categories.get(parent_id) if parent_id else None
     items = [c for c in categories.values() if c.parent_id == parent_id]
-    return sorted(items, key=lambda c: c.name)
+    return _sort_categories(items, parent)
 
 
 def category_descendant_ids(categories: dict[str, Category], category_id: str) -> set[str]:
@@ -84,4 +100,4 @@ def attach_category_stats(
                 }
             )
         )
-    return sorted(enriched, key=lambda item: item.name)
+    return _sort_categories(enriched, None)

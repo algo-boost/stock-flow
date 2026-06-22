@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Stepper, Toast } from "antd-mobile";
 import { updateInventorySlot } from "../api";
 import type { InventoryItem } from "../api/types";
-import { formatInventorySlot } from "../utils/inventoryDisplay";
+import { formatInventorySlot, inventorySlotKey } from "../utils/inventoryDisplay";
 
 export function InventorySlotEditor({
   materialId,
@@ -13,7 +13,7 @@ export function InventorySlotEditor({
   materialId: string;
   item: InventoryItem;
   canEdit: boolean;
-  onUpdated: (item: InventoryItem) => void;
+  onUpdated: (item: InventoryItem, fromKey: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [row, setRow] = useState(item.row ?? 1);
@@ -28,6 +28,7 @@ export function InventorySlotEditor({
   const hasSlot = item.row != null && item.column != null;
 
   const onSave = async () => {
+    const fromKey = inventorySlotKey(item);
     setSaving(true);
     try {
       const updated = await updateInventorySlot(materialId, item.location_id, {
@@ -37,7 +38,7 @@ export function InventorySlotEditor({
         from_column: item.column ?? undefined,
       });
       Toast.show({ icon: "success", content: "格位已更新" });
-      onUpdated(updated);
+      onUpdated(updated, fromKey);
       setEditing(false);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "更新格位失败" });

@@ -38,8 +38,16 @@ async def get_current_user(
 
     if settings.mock_auth_enabled:
         role = _role_from_header(x_mock_role)
+        open_id = settings.mock_open_id.strip()
+        if not open_id and x_mock_user:
+            from app.bitable.fields import is_feishu_user_id
+
+            if is_feishu_user_id(x_mock_user):
+                open_id = x_mock_user.strip()
+        if not open_id:
+            open_id = "mock-local-user"
         return User(
-            open_id=x_mock_user or "ou_mock_dev_user",
+            open_id=open_id,
             name={
                 "ADMIN": "管理员",
                 "KEEPER": "库管员",

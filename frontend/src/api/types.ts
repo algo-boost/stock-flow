@@ -92,6 +92,20 @@ export interface Transaction {
   created_at: string;
 }
 
+export interface PendingReturn {
+  source_tx_id: string;
+  material_id: string;
+  material_name?: string | null;
+  location_id: string;
+  location_name?: string | null;
+  quantity: number;
+  borrower: string;
+  borrowed_at: string;
+  return_due_at?: string | null;
+  note?: string | null;
+  overdue: boolean;
+}
+
 export type StockRequestType = "入库" | "出库";
 export type StockRequestStatus = "待审批" | "已通过" | "已拒绝";
 

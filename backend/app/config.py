@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     app_env: Literal["dev", "uat", "prod"] = "dev"
     bitable_mode: Literal["mock", "real"] = "mock"
     mock_auth_enabled: bool = True
+    # 本地 Mock 联调 real Bitable 时，可填真实飞书 open_id，用于写入人员字段
+    mock_open_id: str = ""
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -54,6 +56,7 @@ class Settings(BaseSettings):
     bitable_f_category_parent: str = "父分类ID"
     bitable_f_category_major: str = "大类"
     bitable_f_category_sub: str = "子类"
+    bitable_f_category_parent: str = "父分类ID"
     bitable_f_category_default_location_type: str = "默认库位类型"
     bitable_f_category_examples: str = "典型物料"
     bitable_f_location_code: str = "库位编码"
@@ -74,13 +77,16 @@ class Settings(BaseSettings):
     bitable_f_inventory_location: str = "库位ID"
     bitable_f_inventory_quantity: str = "库存数量"
     bitable_f_inventory_updated: str = "更新时间"
+    # 货柜格位（多维表格有对应数字列时填写列名；留空则 real 模式按库位汇总）
+    bitable_f_inventory_row: str = ""
+    bitable_f_inventory_column: str = ""
     bitable_f_tx_type: str = "交易类型"
     bitable_f_tx_material: str = "物料ID"
     bitable_f_tx_location: str = "库位ID"
     bitable_f_tx_quantity: str = "数量"
     bitable_f_tx_operator: str = "操作人"
     bitable_f_tx_remark: str = "备注"
-    bitable_f_tx_created: str = "交易时间"
+    bitable_f_tx_created: str = "创建时间"
     bitable_f_request_type: str = "申请类型"
     bitable_f_request_status: str = "审批状态"
     bitable_f_request_material: str = "物料ID"
@@ -124,9 +130,15 @@ class Settings(BaseSettings):
         return result
 
     @property
+    def inventory_slots_enabled(self) -> bool:
+        return bool(self.bitable_f_inventory_row and self.bitable_f_inventory_column)
+
+    @property
     def bitable_configured(self) -> bool:
         return bool(
             self.bitable_app_token
+            and self.bitable_table_categories
+            and self.bitable_table_locations
             and self.bitable_table_materials
             and self.bitable_table_inventory
             and self.bitable_table_transactions

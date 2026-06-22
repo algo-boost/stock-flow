@@ -141,8 +141,7 @@ export function StockOutboundPanel() {
   const maxQty = selectedInventory?.quantity ?? 0;
   const slotParsed = parseInventorySlotKey(slotKey);
   const returnPolicyOk =
-    isDirectOutbound ||
-    (returnPolicy === "not_required" || (returnPolicy === "required" && returnDueDate));
+    returnPolicy === "not_required" || (returnPolicy === "required" && returnDueDate);
   const canSubmit = Boolean(
     selected && slotKey && qty > 0 && qty <= maxQty && note.trim() && returnPolicyOk,
   );
@@ -155,19 +154,21 @@ export function StockOutboundPanel() {
     setSubmitting(true);
     try {
       if (isDirectOutbound) {
-        const result = await postOutbound({
+        await postOutbound({
           material_id: selected.material.id,
           location_id: slotParsed.location_id,
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim(),
+          return_required: returnPolicy === "required",
+          return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
           row: slotParsed.row,
           column: slotParsed.column,
         });
-        Toast.show({ icon: "success", content: `出库成功 ${result.transaction_id}` });
+        Toast.show({ icon: "success", content: "出库成功" });
         setItems((current) => applyLocalOutbound(current, selected.material.id, qty));
       } else {
-        const result = await createStockRequest({
+        await createStockRequest({
           type: "出库",
           material_id: selected.material.id,
           location_id: slotParsed.location_id,
@@ -179,7 +180,7 @@ export function StockOutboundPanel() {
           row: slotParsed.row,
           column: slotParsed.column,
         });
-        Toast.show({ icon: "success", content: `已提交出库申请 ${result.request_id}` });
+        Toast.show({ icon: "success", content: "已提交出库申请" });
       }
       backToList();
     } catch (e) {
@@ -196,7 +197,7 @@ export function StockOutboundPanel() {
         <SectionCard
           title="确认出库"
           subtitle={`${m.name} · 库存 ${selected.total_quantity} ${m.unit} · ${
-            isDirectOutbound ? "用途必填，便于追溯" : "提交后等待管理员审批"
+            isDirectOutbound ? "用途与归还计划必填，便于追溯" : "提交后等待管理员审批"
           }`}
         >
           <button type="button" className="back-link" onClick={backToList}>
@@ -237,33 +238,29 @@ export function StockOutboundPanel() {
                   rows={3}
                 />
               </Form.Item>
-              {!isDirectOutbound && (
-                <>
-                  <Form.Item label="归还计划">
-                    <Selector
-                      options={[
-                        { label: "需要归还", value: "required" },
-                        { label: "无须归还", value: "not_required" },
-                      ]}
-                      value={returnPolicy ? [returnPolicy] : []}
-                      onChange={(arr) => {
-                        const next = (arr[0] as "required" | "not_required" | undefined) ?? "";
-                        setReturnPolicy(next);
-                        if (next !== "required") setReturnDueDate("");
-                      }}
-                    />
-                  </Form.Item>
-                  {returnPolicy === "required" && (
-                    <Form.Item label="预计归还时间">
-                      <input
-                        type="date"
-                        className="native-date-input"
-                        value={returnDueDate}
-                        onChange={(e) => setReturnDueDate(e.target.value)}
-                      />
-                    </Form.Item>
-                  )}
-                </>
+              <Form.Item label="归还计划">
+                <Selector
+                  options={[
+                    { label: "需要归还", value: "required" },
+                    { label: "无须归还", value: "not_required" },
+                  ]}
+                  value={returnPolicy ? [returnPolicy] : []}
+                  onChange={(arr) => {
+                    const next = (arr[0] as "required" | "not_required" | undefined) ?? "";
+                    setReturnPolicy(next);
+                    if (next !== "required") setReturnDueDate("");
+                  }}
+                />
+              </Form.Item>
+              {returnPolicy === "required" && (
+                <Form.Item label="预计归还时间">
+                  <input
+                    type="date"
+                    className="native-date-input"
+                    value={returnDueDate}
+                    onChange={(e) => setReturnDueDate(e.target.value)}
+                  />
+                </Form.Item>
               )}
             </Form>
           )}

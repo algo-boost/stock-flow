@@ -29,6 +29,8 @@ export function LocationTransferPanel() {
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
   const [fromSlotKey, setFromSlotKey] = useState("");
   const [toLocationId, setToLocationId] = useState("");
+  const [toSlotRow, setToSlotRow] = useState(1);
+  const [toSlotColumn, setToSlotColumn] = useState(1);
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -69,6 +71,8 @@ export function LocationTransferPanel() {
         const first = detail.inventory[0];
         setFromSlotKey(first ? inventorySlotKey(first) : "");
         setToLocationId(locations.find((loc) => loc.id !== first?.location_id)?.id ?? "");
+        setToSlotRow(1);
+        setToSlotColumn(1);
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
@@ -95,6 +99,11 @@ export function LocationTransferPanel() {
 
   const fromParsed = parseInventorySlotKey(fromSlotKey);
   const selectedSource = selected ? findInventoryBySlotKey(selected.inventory, fromSlotKey) : undefined;
+  const selectedToLocation = useMemo(
+    () => locations.find((loc) => loc.id === toLocationId),
+    [locations, toLocationId],
+  );
+  const showTargetCabinetSlot = selectedToLocation?.type === "货柜";
   const maxQty = selectedSource?.quantity ?? 0;
   const canSubmit = Boolean(
     selected &&
@@ -113,6 +122,8 @@ export function LocationTransferPanel() {
       setSelected(detail);
       setFromSlotKey(first ? inventorySlotKey(first) : "");
       setToLocationId(locations.find((loc) => loc.id !== first?.location_id)?.id ?? "");
+      setToSlotRow(1);
+      setToSlotColumn(1);
       setQty(1);
       setNote("");
     } catch (e) {
@@ -137,6 +148,8 @@ export function LocationTransferPanel() {
     setSelected(null);
     setFromSlotKey("");
     setToLocationId("");
+    setToSlotRow(1);
+    setToSlotColumn(1);
     setQty(1);
     setNote("");
   };
@@ -148,7 +161,7 @@ export function LocationTransferPanel() {
     }
     setSubmitting(true);
     try {
-      const result = await postTransfer({
+      await postTransfer({
         material_id: selected.material.id,
         from_location_id: fromParsed.location_id,
         to_location_id: toLocationId,
@@ -157,8 +170,10 @@ export function LocationTransferPanel() {
         note: note.trim() || undefined,
         from_row: fromParsed.row,
         from_column: fromParsed.column,
+        to_row: showTargetCabinetSlot ? toSlotRow : undefined,
+        to_column: showTargetCabinetSlot ? toSlotColumn : undefined,
       });
-      Toast.show({ icon: "success", content: `移动成功 ${result.transaction_ids.length} 条流水` });
+      Toast.show({ icon: "success", content: "库内移动成功" });
       backToList();
       void loadMaterials(keyword, 1);
     } catch (e) {
@@ -205,9 +220,23 @@ export function LocationTransferPanel() {
               <Selector
                 options={locationOptions.filter((option) => option.value !== fromParsed.location_id)}
                 value={toLocationId ? [toLocationId] : []}
-                onChange={(arr) => setToLocationId(arr[0] ?? "")}
+                onChange={(arr) => {
+                  setToLocationId(arr[0] ?? "");
+                  setToSlotRow(1);
+                  setToSlotColumn(1);
+                }}
               />
             </Form.Item>
+            {showTargetCabinetSlot && (
+              <>
+                <Form.Item label="目标货柜行号">
+                  <Stepper min={1} max={20} value={toSlotRow} onChange={setToSlotRow} />
+                </Form.Item>
+                <Form.Item label="目标货柜列号">
+                  <Stepper min={1} max={20} value={toSlotColumn} onChange={setToSlotColumn} />
+                </Form.Item>
+              </>
+            )}
             <Form.Item label="移动数量">
               <Stepper min={1} max={maxQty || 1} value={qty} onChange={(v) => setQty(Math.min(v, maxQty || v))} />
             </Form.Item>

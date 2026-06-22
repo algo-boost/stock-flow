@@ -126,6 +126,7 @@ export function MaterialCard({
   code,
   category,
   unit,
+  spec,
   stockSummary,
   warning,
   onClick,
@@ -134,6 +135,7 @@ export function MaterialCard({
   code: string;
   category?: string;
   unit?: string;
+  spec?: string;
   stockSummary?: string;
   warning?: string;
   onClick?: () => void;
@@ -148,6 +150,7 @@ export function MaterialCard({
         <div className="material-card-name">{name}</div>
         <div className="material-card-meta">
           {category && <span className="chip chip-muted">{category}</span>}
+          {spec && <span className="chip chip-muted">型号 {spec}</span>}
           {unit && <span className="chip chip-muted">{unit}</span>}
         </div>
         {warning && <div className="material-card-warning">{warning}</div>}

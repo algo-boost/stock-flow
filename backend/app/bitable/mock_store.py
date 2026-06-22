@@ -14,12 +14,18 @@ from app.models import (
     MaterialCreate,
     MaterialDetail,
     MaterialSearchItem,
+    MaterialUpdate,
     StockRequest,
     StockRequestCreate,
     StockRequestStatus,
     StockRequestType,
     Transaction,
     TransactionType,
+)
+from app.data.category_taxonomy import (
+    LAB_CATEGORY_TAXONOMY,
+    LEAF_CATEGORY_IDS,
+    ROOT_CATEGORY_IDS,
 )
 from app.utils.categories import category_descendant_ids, derive_major_sub_names
 from app.utils.inventory_display import format_inventory_summary
@@ -75,6 +81,32 @@ def _resolve_outbound_slot(
     return row, column
 
 
+def _build_lab_categories() -> dict[str, Category]:
+    categories: dict[str, Category] = {}
+    for root in LAB_CATEGORY_TAXONOMY:
+        root_id = ROOT_CATEGORY_IDS[root.name]
+        categories[root_id] = Category(
+            id=root_id,
+            name=root.name,
+            parent_id=None,
+            major_name=root.name,
+            default_location_type=root.default_location_type,
+            examples=root.examples,
+        )
+        for leaf in root.children:
+            leaf_id = LEAF_CATEGORY_IDS[(root.name, leaf.name)]
+            categories[leaf_id] = Category(
+                id=leaf_id,
+                name=leaf.name,
+                parent_id=root_id,
+                major_name=root.name,
+                sub_name=leaf.name,
+                default_location_type=leaf.default_location_type,
+                examples=leaf.examples,
+            )
+    return categories
+
+
 class MockStore:
     """内存数据存储，BITABLE_MODE=mock 时使用。"""
 
@@ -88,210 +120,9 @@ class MockStore:
         self._seed()
 
     def _seed(self) -> None:
-        self.categories = {
-            "cat_electrical": Category(
-                id="cat_electrical",
-                name="电器类",
-                parent_id=None,
-                major_name="电器类",
-                default_location_type="货柜",
-                examples="电机、传感器、算力板、线缆等电子电气物料",
-            ),
-            "cat_motor_module": Category(
-                id="cat_motor_module",
-                name="电机模组",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="电机模组",
-                default_location_type="货柜",
-                examples="同川电机、达妙电机、本末电机、驱动器",
-            ),
-            "cat_sensing": Category(
-                id="cat_sensing",
-                name="感知设备",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="感知设备",
-                default_location_type="货柜",
-                examples="激光雷达、2D相机、3D相机、IMU",
-            ),
-            "cat_compute": Category(
-                id="cat_compute",
-                name="算力设备",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="算力设备",
-                default_location_type="货柜",
-                examples="机器人大脑、小脑、底盘大脑、电控板、PCB",
-            ),
-            "cat_electrical_equip": Category(
-                id="cat_electrical_equip",
-                name="电气设备",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="电气设备",
-                default_location_type="货柜",
-                examples="开关、分线盒、按钮、端子排、pBox",
-            ),
-            "cat_general": Category(
-                id="cat_general",
-                name="通用设备",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="通用设备",
-                default_location_type="货柜",
-                examples="插线板、路由器、交换机",
-            ),
-            "cat_cable": Category(
-                id="cat_cable",
-                name="线缆网线",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="线缆网线",
-                default_location_type="货柜",
-                examples="网线、电源线、信号线、USB/HDMI线",
-            ),
-            "cat_battery": Category(
-                id="cat_battery",
-                name="电池电源",
-                parent_id="cat_electrical",
-                major_name="电器类",
-                sub_name="电池电源",
-                default_location_type="货架",
-                examples="锂电池、电池包、充电器、电源模块",
-            ),
-            "cat_motor_dm": Category(
-                id="cat_motor_dm",
-                name="达妙电机",
-                parent_id="cat_motor_module",
-                major_name="电器类",
-                sub_name="达妙电机",
-                default_location_type="货柜",
-            ),
-            "cat_motor_tc": Category(
-                id="cat_motor_tc",
-                name="同川电机",
-                parent_id="cat_motor_module",
-                major_name="电器类",
-                sub_name="同川电机",
-                default_location_type="货柜",
-            ),
-            "cat_motor_bm": Category(
-                id="cat_motor_bm",
-                name="本末电机",
-                parent_id="cat_motor_module",
-                major_name="电器类",
-                sub_name="本末电机",
-                default_location_type="货柜",
-            ),
-            "cat_motor_driver": Category(
-                id="cat_motor_driver",
-                name="驱动器",
-                parent_id="cat_motor_module",
-                major_name="电器类",
-                sub_name="驱动器",
-                default_location_type="货柜",
-            ),
-            "cat_mechanical": Category(
-                id="cat_mechanical",
-                name="机械类",
-                parent_id=None,
-                major_name="机械类",
-                default_location_type="货架",
-                examples="全向轮、夹爪、减速器、结构件、螺栓等",
-            ),
-            "cat_end_effector": Category(
-                id="cat_end_effector",
-                name="末端执行",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="末端执行",
-                default_location_type="货架",
-                examples="开合夹爪、平行夹爪、灵巧手、吸盘、快换盘",
-            ),
-            "cat_transmission": Category(
-                id="cat_transmission",
-                name="传动部件",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="传动部件",
-                default_location_type="货架",
-                examples="行星减速器、谐波减速器、联轴器、同步带轮",
-            ),
-            "cat_mobility": Category(
-                id="cat_mobility",
-                name="移动部件",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="移动部件",
-                default_location_type="货架",
-                examples="全向轮、万向轮、脚轮、履带轮",
-            ),
-            "cat_metal": Category(
-                id="cat_metal",
-                name="金属件",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="金属件",
-                default_location_type="货架",
-                examples="机加工件、外观件、铝型材、钣金件、CNC件",
-            ),
-            "cat_structure": Category(
-                id="cat_structure",
-                name="结构件",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="结构件",
-                default_location_type="货架",
-                examples="框架、支架、连接件、标准结构模组、治具底板",
-            ),
-            "cat_fastener": Category(
-                id="cat_fastener",
-                name="螺丝螺栓",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="螺丝螺栓",
-                default_location_type="专用螺栓架",
-                examples="内六角、法兰螺栓、专用螺丝、螺母、垫圈",
-            ),
-            "cat_mech_other": Category(
-                id="cat_mech_other",
-                name="其他物品",
-                parent_id="cat_mechanical",
-                major_name="机械类",
-                sub_name="其他物品",
-                default_location_type="货架",
-                examples="操作台、3D打印机、大板件、标准件、3D打印件",
-            ),
-            "cat_maintenance": Category(
-                id="cat_maintenance",
-                name="维修类",
-                parent_id=None,
-                major_name="维修类",
-                default_location_type="工具架",
-                examples="维修工具、耗材、备件",
-            ),
-            "cat_tool": Category(
-                id="cat_tool",
-                name="工具",
-                parent_id="cat_maintenance",
-                major_name="维修类",
-                sub_name="工具",
-                default_location_type="工具架",
-                examples="常用工具、专用工具、测量工具",
-            ),
-            "cat_spare": Category(
-                id="cat_spare",
-                name="维修备件",
-                parent_id="cat_maintenance",
-                major_name="维修类",
-                sub_name="维修备件",
-                default_location_type="货柜",
-                examples="易损件、替换模组、维修耗材",
-            ),
-        }
+        self.categories = _build_lab_categories()
         self.locations = {
-            "loc_01": Location(id="loc_01", code="A-柜-01", name="电器类A柜-01", type="货柜"),
+            "loc_01": Location(id="loc_01", code="A-柜-01", name="电气类A柜-01", type="货柜"),
             "loc_02": Location(id="loc_02", code="B-架-01", name="机械类B架-01", type="货架"),
             "loc_bolt": Location(id="loc_bolt", code="BOLT-01", name="螺栓专用架-01", type="专用螺栓架"),
             "loc_staging": Location(
@@ -514,6 +345,69 @@ class MockStore:
         )
         self.materials[material_id] = material
         return material
+
+    def update_material(self, material_id: str, payload: MaterialUpdate) -> Material:
+        material = self.materials.get(material_id)
+        if not material:
+            raise ValueError("material_not_found")
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return material
+        if "category_id" in updates and updates["category_id"] not in self.categories:
+            raise ValueError("category_not_found")
+        if updates.get("default_location_id") and updates["default_location_id"] not in self.locations:
+            raise ValueError("location_not_found")
+        category = self.categories.get(updates.get("category_id", material.category_id))
+
+        def _optional_text(key: str) -> str | None:
+            if key not in updates:
+                return getattr(material, key)
+            value = updates[key]
+            if value is None:
+                return None
+            stripped = str(value).strip()
+            return stripped or None
+
+        merged = material.model_copy(
+            update={
+                **{k: v for k, v in updates.items() if k not in {"category_id", "major_category", "sub_category", "spec", "barcode", "supplier"}},
+                "name": updates["name"].strip() if "name" in updates else material.name,
+                "unit": updates["unit"].strip() if "unit" in updates else material.unit,
+                "category_id": updates.get("category_id", material.category_id),
+                "category_name": category.name if category else material.category_name,
+                "major_category": updates.get(
+                    "major_category",
+                    category.major_name if category and "category_id" in updates else material.major_category,
+                ),
+                "sub_category": updates.get(
+                    "sub_category",
+                    category.sub_name if category and "category_id" in updates else material.sub_category,
+                ),
+                "spec": _optional_text("spec"),
+                "barcode": _optional_text("barcode"),
+                "supplier": _optional_text("supplier"),
+            }
+        )
+        self.materials[material_id] = merged
+        return merged
+
+    def delete_material(self, material_id: str) -> None:
+        if material_id not in self.materials:
+            raise ValueError("material_not_found")
+        stock = sum(
+            inv.quantity
+            for (mid, _, _, _), inv in self.inventory.items()
+            if mid == material_id and inv.quantity > 0
+        )
+        if stock > 0:
+            raise ValueError(f"material_has_stock:{stock}")
+        if any(tx.material_id == material_id for tx in self.transactions.values()):
+            raise ValueError("material_has_transactions")
+        if any(req.material_id == material_id for req in self.requests.values()):
+            raise ValueError("material_has_requests")
+        del self.materials[material_id]
+        for key in [k for k in self.inventory if k[0] == material_id]:
+            del self.inventory[key]
 
     def update_material_supplier(self, material_id: str, supplier: str | None) -> Material:
         material = self.materials.get(material_id)
@@ -992,10 +886,10 @@ def seed_test_materials(store: MockStore) -> None:
             id="mat_001",
             code="M001",
             name="大喵电机",
-            category_id="cat_motor_dm",
-            category_name="达妙电机",
-            major_category="电器类",
-            sub_category="达妙电机",
+            category_id="cat_motor_module",
+            category_name="电机模组",
+            major_category="电气类",
+            sub_category="电机模组",
             unit="个",
             spec="标准版",
             barcode="6900001",
@@ -1009,7 +903,7 @@ def seed_test_materials(store: MockStore) -> None:
             name="Realsense相机",
             category_id="cat_sensing",
             category_name="感知设备",
-            major_category="电器类",
+            major_category="电气类",
             sub_category="感知设备",
             unit="个",
             spec="D435i",
@@ -1024,7 +918,7 @@ def seed_test_materials(store: MockStore) -> None:
             name="奥比中光相机",
             category_id="cat_sensing",
             category_name="感知设备",
-            major_category="电器类",
+            major_category="电气类",
             sub_category="感知设备",
             unit="个",
             spec="Gemini-335",
@@ -1038,21 +932,21 @@ def seed_test_materials(store: MockStore) -> None:
         inv_key("mat_001", "loc_01"): InventoryItem(
             material_id="mat_001",
             location_id="loc_01",
-            location_name="电器类A柜-01",
+            location_name="电气类A柜-01",
             quantity=3,
             last_updated=now,
         ),
         inv_key("mat_realsense", "loc_01"): InventoryItem(
             material_id="mat_realsense",
             location_id="loc_01",
-            location_name="电器类A柜-01",
+            location_name="电气类A柜-01",
             quantity=2,
             last_updated=now,
         ),
         inv_key("mat_orbbec", "loc_01"): InventoryItem(
             material_id="mat_orbbec",
             location_id="loc_01",
-            location_name="电器类A柜-01",
+            location_name="电气类A柜-01",
             quantity=1,
             last_updated=now,
         ),

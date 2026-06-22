@@ -5,6 +5,8 @@ import { getMaterial, getMaterialTransactions } from "../api";
 import type { InventoryItem, MaterialDetail, Transaction } from "../api/types";
 import { useAuth } from "../components/AuthGate";
 import { InventorySlotEditor } from "../components/InventorySlotEditor";
+import { CacheRefreshButton } from "../components/CacheRefreshButton";
+import { MaterialManagePanel } from "../components/MaterialManagePanel";
 import { Layout } from "../components/Layout";
 import { EmptyState, InfoRow, SectionCard, StatCard, TxBadge } from "../components/ui";
 import { inventorySlotKey } from "../utils/inventoryDisplay";
@@ -29,15 +31,20 @@ export default function DetailPage() {
     });
   }, [id]);
 
-  const onInventoryUpdated = (updated: InventoryItem) => {
+  const onInventoryUpdated = (updated: InventoryItem, fromKey: string) => {
     setDetail((current) => {
       if (!current) return current;
-      return {
-        ...current,
-        inventory: current.inventory.map((item) =>
-          inventorySlotKey(item) === inventorySlotKey(updated) ? updated : item,
-        ),
-      };
+      let replaced = false;
+      const inventory = current.inventory.map((item) => {
+        if (inventorySlotKey(item) !== fromKey) return item;
+        replaced = true;
+        return updated;
+      });
+      if (!replaced) {
+        void reloadDetail();
+        return current;
+      }
+      return { ...current, inventory };
     });
   };
 
@@ -81,7 +88,23 @@ export default function DetailPage() {
         {material.barcode && <InfoRow label="条码" value={material.barcode} />}
       </SectionCard>
 
-      <SectionCard title="各库位库存" subtitle="货柜类库位可设置第几行、第几列，便于现场找货">
+      {canInbound && (
+        <MaterialManagePanel
+          detail={detail}
+          hasTransactions={txs.length > 0}
+          onUpdated={(updated) =>
+            setDetail((current) => (current ? { ...current, material: updated } : current))
+          }
+          onDeleted={() => navigate(-1)}
+        />
+      )}
+
+      <SectionCard title="各库位库存" subtitle="货柜类库位可设置第几行、第几列；手机端数据旧时可点下方刷新缓存">
+        {canInbound && (
+          <div style={{ marginBottom: 12 }}>
+            <CacheRefreshButton onRefreshed={reloadDetail} />
+          </div>
+        )}
         {inventory.length === 0 ? (
           <EmptyState icon="🏷️" text="暂无库存记录" />
         ) : (

@@ -118,7 +118,7 @@ function PurchaseContent() {
     }
     setSubmitting(true);
     try {
-      const result = await postPurchaseInbound({
+      await postPurchaseInbound({
         material_id: selected.material.id,
         location_id: locationId,
         qty,
@@ -126,7 +126,7 @@ function PurchaseContent() {
         supplier: supplier.trim() || undefined,
         note: note.trim() || undefined,
       });
-      Toast.show({ icon: "success", content: `进货已入库 · ${result.transaction_id}` });
+      Toast.show({ icon: "success", content: "进货已入库" });
       navigate(`/materials/${selected.material.id}`);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "进货失败" });

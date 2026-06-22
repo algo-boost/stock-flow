@@ -1,9 +1,10 @@
 import type { Category } from "../api/types";
+import { sortCategoriesForDisplay } from "./categoryOrder";
 
 export function getCategoryChildren(categories: Category[], parentId: string | null): Category[] {
-  return categories
-    .filter((item) => (item.parent_id ?? null) === parentId)
-    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  const parent = parentId ? categories.find((item) => item.id === parentId) ?? null : null;
+  const children = categories.filter((item) => (item.parent_id ?? null) === parentId);
+  return sortCategoriesForDisplay(children, parent);
 }
 
 export function getCategoryPath(categories: Category[], categoryId: string | null): Category[] {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -95,6 +97,7 @@ async def health(settings: Settings = Depends(get_settings)):
         "bitable_mode": settings.bitable_mode,
         "feishu_configured": settings.feishu_configured,
         "bitable_configured": settings.bitable_configured,
+        "inventory_slots_enabled": settings.inventory_slots_enabled,
         "mock_auth_enabled": settings.mock_auth_enabled,
     }
     if settings.bitable_mode == "real" and settings.bitable_configured:
@@ -102,9 +105,8 @@ async def health(settings: Settings = Depends(get_settings)):
             from app.bitable.client import BYTableClient
 
             client = BYTableClient(settings)
-            materials = await client.list_records(settings.bitable_table_materials)
+            await client._tenant_token()
             result["bitable_live"] = True
-            result["bitable_counts"] = {"materials": len(materials)}
         except Exception as exc:
             result["bitable_live"] = False
             err = str(exc)
@@ -117,7 +119,9 @@ async def health(settings: Settings = Depends(get_settings)):
     if settings.feishu_configured:
         try:
             client = FeishuClient(settings)
-            result["feishu_im"] = await client.probe_im_permissions()
+            result["feishu_im"] = await asyncio.wait_for(client.probe_im_permissions(), timeout=5.0)
+        except asyncio.TimeoutError:
+            result["feishu_im"] = {"ok": False, "reason": "IM 权限探测超时（5s），不影响 Bitable 读写"}
         except Exception as exc:
             result["feishu_im"] = {"ok": False, "reason": str(exc)}
     return result

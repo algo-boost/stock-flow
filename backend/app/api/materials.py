@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from app.auth.deps import get_current_user
 from app.config import Settings, get_settings
 from app.middleware.auth import require_roles
-from app.models import CategoryCreate, InventorySlotUpdate, MaterialCreate, Role, User
+from app.models import CategoryCreate, InventorySlotUpdate, MaterialCreate, MaterialUpdate, Role, User
 from app.services.inventory import InventoryService
 from app.utils.response import success
 
@@ -81,6 +81,27 @@ async def create_material(
 ):
     material = await service.create_material(payload)
     return success(material.model_dump())
+
+
+@router.patch("/{material_id}")
+async def update_material(
+    material_id: str,
+    payload: MaterialUpdate,
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    material = await service.update_material(material_id, payload)
+    return success(material.model_dump())
+
+
+@router.delete("/{material_id}")
+async def delete_material(
+    material_id: str,
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    await service.delete_material(material_id)
+    return success({"deleted": True})
 
 
 @router.get("/{material_id}")

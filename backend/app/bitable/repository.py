@@ -14,6 +14,9 @@ from app.bitable.fields import (
     field_user_name,
     normalize_tx_type,
     write_link,
+    append_operator_label,
+    resolve_person_name,
+    is_feishu_user_id,
     write_user,
 )
 from app.config import Settings
@@ -28,6 +31,7 @@ from app.models import (
     MaterialCreate,
     MaterialDetail,
     MaterialSearchItem,
+    MaterialUpdate,
     StockRequest,
     StockRequestCreate,
     StockRequestStatus,
@@ -36,6 +40,17 @@ from app.models import (
     TransactionType,
 )
 from app.utils.categories import category_descendant_ids, derive_major_sub_names
+from app.utils.inventory_display import format_inventory_slot, format_inventory_summary
+from app.utils.inventory_keys import (
+    InventoryKey,
+    inv_key,
+    key_location_id,
+    key_material_id,
+    key_column,
+    key_row,
+    resolve_outbound_slot,
+)
+from app.utils.request_remark import format_request_remark, parse_request_remark
 
 _TABLE_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 _TABLE_INFLIGHT: dict[tuple[str, str], asyncio.Task[list[dict[str, Any]]]] = {}
@@ -49,6 +64,111 @@ class BitableRepository:
         self.client = BYTableClient(settings)
         self._materials_cache: dict[str, Material] | None = None
         self._locations_cache: dict[str, Location] | None = None
+
+    def _slots_enabled(self) -> bool:
+        return self.settings.inventory_slots_enabled
+
+    def _inv_key(
+        self,
+        material_id: str,
+        location_id: str,
+        row: int | None = None,
+        column: int | None = None,
+    ) -> InventoryKey:
+        return inv_key(
+            material_id,
+            location_id,
+            row,
+            column,
+            slots_enabled=self._slots_enabled(),
+        )
+
+    def _read_inventory_slot(self, fields: dict[str, Any]) -> tuple[int | None, int | None]:
+        s = self.settings
+        if not self._slots_enabled():
+            return None, None
+        row_val = field_number(fields.get(s.bitable_f_inventory_row))
+        col_val = field_number(fields.get(s.bitable_f_inventory_column))
+        row = row_val if row_val > 0 else None
+        col = col_val if col_val > 0 else None
+        if row is not None and col is not None:
+            return row, col
+        return None, None
+
+    def _slot_from_key_or_fields(
+        self, key: InventoryKey, fields: dict[str, Any]
+    ) -> tuple[int | None, int | None]:
+        row, column = self._read_inventory_slot(fields)
+        if row is not None and column is not None:
+            return row, column
+        return key_row(key), key_column(key)
+
+    def _resolve_inventory_record(
+        self,
+        inv_records: dict[InventoryKey, dict[str, Any]],
+        material_id: str,
+        location_id: str,
+        from_row: int | None,
+        from_column: int | None,
+    ) -> tuple[InventoryKey, dict[str, Any]]:
+        old_key = self._inv_key(material_id, location_id, from_row, from_column)
+        if old_key in inv_records:
+            rec = inv_records[old_key]
+            qty = field_number(rec.get("fields", {}).get(self.settings.bitable_f_inventory_quantity))
+            if qty > 0:
+                return old_key, rec
+
+        matches: list[tuple[InventoryKey, dict[str, Any]]] = []
+        for key, rec in inv_records.items():
+            if key_material_id(key) != material_id or key_location_id(key) != location_id:
+                continue
+            qty = field_number(rec.get("fields", {}).get(self.settings.bitable_f_inventory_quantity))
+            if qty <= 0:
+                continue
+            row, column = self._slot_from_key_or_fields(key, rec.get("fields", {}))
+            if from_row is not None and from_column is not None:
+                if row == from_row and column == from_column:
+                    matches.append((key, rec))
+            elif from_row is None and from_column is None:
+                matches.append((key, rec))
+
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError("ambiguous_inventory")
+        raise ValueError("inventory_not_found")
+
+    def _inventory_item_from_record(
+        self,
+        key: InventoryKey,
+        rec: dict[str, Any],
+        locations: dict[str, Location],
+    ) -> InventoryItem:
+        fields = rec.get("fields", {})
+        qty = field_number(fields.get(self.settings.bitable_f_inventory_quantity))
+        updated = fields.get(self.settings.bitable_f_inventory_updated)
+        last_updated = None
+        if isinstance(updated, (int, float)):
+            last_updated = datetime.fromtimestamp(updated / 1000, tz=timezone.utc)
+        lid = key_location_id(key)
+        loc = locations.get(lid)
+        if self._slots_enabled():
+            field_row, field_col = self._read_inventory_slot(fields)
+            if field_row is not None and field_col is not None:
+                row, column = field_row, field_col
+            else:
+                row, column = key_row(key), key_column(key)
+        else:
+            row, column = None, None
+        return InventoryItem(
+            material_id=key_material_id(key),
+            location_id=lid,
+            location_name=loc.name if loc else lid,
+            quantity=qty,
+            row=row,
+            column=column,
+            last_updated=last_updated,
+        )
 
     async def _list_all(self, table_id: str) -> list[dict[str, Any]]:
         if not table_id:
@@ -99,6 +219,8 @@ class BitableRepository:
                 merged = {
                     **item,
                     **record,
+                    "created_time": record.get("created_time") or item.get("created_time"),
+                    "last_modified_time": record.get("last_modified_time") or item.get("last_modified_time"),
                     "fields": {
                         **item.get("fields", {}),
                         **record.get("fields", {}),
@@ -150,17 +272,19 @@ class BitableRepository:
         force: bool,
         retries: int = 3,
     ) -> dict[str, str | None]:
-        results: dict[str, str | None] = {}
-        for table_id in table_ids:
-            if not table_id:
-                continue
+        async def refresh_one(table_id: str) -> tuple[str, str | None]:
             try:
                 await self._refresh_table_cache(table_id, force=force, retries=retries)
-                results[table_id] = None
+                return table_id, None
             except Exception as exc:
                 # 刷新失败时保留旧缓存，避免把后续读操作打回全表冷加载。
-                results[table_id] = str(exc)
-        return results
+                return table_id, str(exc)
+
+        unique_ids = [table_id for table_id in table_ids if table_id]
+        if not unique_ids:
+            return {}
+        pairs = await asyncio.gather(*(refresh_one(table_id) for table_id in unique_ids))
+        return dict(pairs)
 
     async def _refresh_table_cache(
         self,
@@ -194,9 +318,11 @@ class BitableRepository:
         if self._materials_cache is not None:
             return self._materials_cache
         s = self.settings
-        records = await self._list_all(s.bitable_table_materials)
-        locations = await self._load_locations()
-        categories = await self._load_categories()
+        records, locations, categories = await asyncio.gather(
+            self._list_all(s.bitable_table_materials),
+            self._load_locations(),
+            self._load_categories(),
+        )
         result: dict[str, Material] = {}
         for rec in records:
             fields = rec.get("fields", {})
@@ -379,10 +505,13 @@ class BitableRepository:
         page: int,
         size: int,
     ) -> tuple[list[MaterialSearchItem], int]:
-        materials = list((await self._load_materials()).values())
-        inv_records = await self._load_inventory_records()
+        materials_map, inv_records, locations = await asyncio.gather(
+            self._load_materials(),
+            self._load_inventory_records(),
+            self._load_locations(),
+        )
+        materials = list(materials_map.values())
         inventory = self._inventory_map_from_records(inv_records)
-        locations = await self._load_locations()
 
         if q:
             keyword = q.lower()
@@ -426,35 +555,39 @@ class BitableRepository:
                     or m.sub_category == category
                 ]
         if location:
-            mat_ids = {mid for (mid, lid), qty in inventory.items() if lid == location and qty > 0}
+            mat_ids = {
+                key_material_id(key)
+                for key, qty in inventory.items()
+                if key_location_id(key) == location and qty > 0
+            }
             materials = [m for m in materials if m.id in mat_ids]
         if stock_only:
-            mat_ids = {mid for (mid, _), qty in inventory.items() if qty > 0}
+            mat_ids = {key_material_id(key) for key, qty in inventory.items() if qty > 0}
             materials = [m for m in materials if m.id in mat_ids]
 
         total = len(materials)
         start = (page - 1) * size
         return [
-            self._to_search_item(m, inventory, locations)
+            self._to_search_item(m, inventory, inv_records, locations)
             for m in materials[start : start + size]
         ], total
 
     def _to_search_item(
         self,
         material: Material,
-        inventory: dict[tuple[str, str], int],
+        inventory: dict[InventoryKey, int],
+        inv_records: dict[InventoryKey, dict[str, Any]],
         locations: dict[str, Location],
     ) -> MaterialSearchItem:
-        items = [
-            (lid, qty)
-            for (mid, lid), qty in inventory.items()
-            if mid == material.id and qty > 0
-        ]
-        total = sum(qty for _, qty in items)
-        summary = " · ".join(
-            f"{locations.get(lid).name if locations.get(lid) else lid} {qty}"
-            for lid, qty in items[:3]
-        )
+        inv_items: list[InventoryItem] = []
+        for key, qty in inventory.items():
+            if key_material_id(key) != material.id or qty <= 0:
+                continue
+            rec = inv_records.get(key, {})
+            inv_items.append(self._inventory_item_from_record(key, rec, locations))
+        inv_items.sort(key=lambda item: (item.location_name or "", item.row or 0, item.column or 0))
+        total = sum(item.quantity for item in inv_items)
+        summary = "\n".join(format_inventory_slot(item) for item in inv_items[:5]) or None
         return MaterialSearchItem(
             **material.model_dump(),
             total_quantity=total,
@@ -535,6 +668,98 @@ class BitableRepository:
         )
         return material.model_copy(update={"supplier": supplier_value})
 
+    async def update_material(self, material_id: str, payload: MaterialUpdate) -> Material:
+        material = await self.get_material(material_id)
+        if not material:
+            raise ValueError("material_not_found")
+        updates = payload.model_dump(exclude_unset=True)
+        if not updates:
+            return material
+
+        categories = await self._load_categories()
+        locations = await self._load_locations()
+        category_id = updates.get("category_id", material.category_id)
+        category = categories.get(category_id)
+        if "category_id" in updates and not category:
+            raise ValueError("category_not_found")
+        default_location_id = updates.get("default_location_id", material.default_location_id)
+        if default_location_id and default_location_id not in locations:
+            raise ValueError("location_not_found")
+
+        s = self.settings
+        fields: dict[str, Any] = {}
+        if "name" in updates:
+            fields[s.bitable_f_material_name] = updates["name"].strip()
+        if "code" in updates and updates["code"]:
+            fields[s.bitable_f_material_code] = updates["code"].strip()
+        if "category_id" in updates:
+            fields[s.bitable_f_material_category] = write_link(category_id)
+            fields[s.bitable_f_material_major_category] = (
+                updates.get("major_category") or (category.major_name if category else material.major_category)
+            )
+            fields[s.bitable_f_material_sub_category] = (
+                updates.get("sub_category") or (category.sub_name if category else material.sub_category)
+            )
+        elif "major_category" in updates:
+            fields[s.bitable_f_material_major_category] = updates["major_category"]
+        elif "sub_category" in updates:
+            fields[s.bitable_f_material_sub_category] = updates["sub_category"]
+        if "unit" in updates:
+            fields[s.bitable_f_material_unit] = updates["unit"].strip() or "个"
+        if "spec" in updates:
+            fields[s.bitable_f_material_spec] = updates["spec"].strip() if updates["spec"] else ""
+        if "barcode" in updates and s.bitable_f_material_barcode:
+            fields[s.bitable_f_material_barcode] = updates["barcode"].strip() if updates["barcode"] else ""
+        if "default_location_id" in updates:
+            fields[s.bitable_f_material_default_location] = (
+                write_link(default_location_id) if default_location_id else []
+            )
+        if "supplier" in updates:
+            fields[s.bitable_f_material_supplier] = updates["supplier"].strip() if updates["supplier"] else ""
+        if "min_stock" in updates and updates["min_stock"] is not None:
+            fields[s.bitable_f_material_min_stock] = updates["min_stock"]
+
+        if fields:
+            rec = await self.client.update_record(s.bitable_table_materials, material_id, fields)
+            self._materials_cache = None
+            self._upsert_cached_record(
+                s.bitable_table_materials,
+                rec if rec.get("fields") else self._cached_record(material_id, fields),
+            )
+
+        refreshed = await self.get_material(material_id)
+        return refreshed or material
+
+    async def _material_stock_total(self, material_id: str) -> int:
+        inv_map = await self._load_inventory_map()
+        return sum(qty for key, qty in inv_map.items() if key_material_id(key) == material_id and qty > 0)
+
+    async def _material_has_transactions(self, material_id: str) -> bool:
+        s = self.settings
+        for rec in await self._list_all(s.bitable_table_transactions):
+            mid = field_link_id(rec.get("fields", {}).get(s.bitable_f_tx_material))
+            if mid == material_id:
+                return True
+        if s.bitable_table_requests:
+            for rec in await self._list_all(s.bitable_table_requests):
+                mid = field_link_id(rec.get("fields", {}).get(s.bitable_f_request_material))
+                if mid == material_id:
+                    return True
+        return False
+
+    async def delete_material(self, material_id: str) -> None:
+        if not await self.get_material(material_id):
+            raise ValueError("material_not_found")
+        stock = await self._material_stock_total(material_id)
+        if stock > 0:
+            raise ValueError(f"material_has_stock:{stock}")
+        if await self._material_has_transactions(material_id):
+            raise ValueError("material_has_transactions")
+        s = self.settings
+        await self.client.delete_record(s.bitable_table_materials, material_id)
+        self._materials_cache = None
+        self._remove_cached_record(s.bitable_table_materials, material_id)
+
     async def list_material_catalog(
         self,
         q: str | None = None,
@@ -565,24 +790,11 @@ class BitableRepository:
         catalog: list[MaterialDetail] = []
         for m in sorted(materials, key=lambda x: x.name):
             items: list[InventoryItem] = []
-            for (mid, lid), qty in inv_map.items():
-                if mid != m.id or qty <= 0:
+            for key, qty in inv_map.items():
+                if key_material_id(key) != m.id or qty <= 0:
                     continue
-                rec = inv_records.get((mid, lid), {})
-                updated = rec.get("fields", {}).get(s.bitable_f_inventory_updated)
-                last_updated = None
-                if isinstance(updated, (int, float)):
-                    last_updated = datetime.fromtimestamp(updated / 1000, tz=timezone.utc)
-                loc = locations.get(lid)
-                items.append(
-                    InventoryItem(
-                        material_id=mid,
-                        location_id=lid,
-                        location_name=loc.name if loc else lid,
-                        quantity=qty,
-                        last_updated=last_updated,
-                    )
-                )
+                rec = inv_records.get(key, {})
+                items.append(self._inventory_item_from_record(key, rec, locations))
             total = sum(i.quantity for i in items)
             if stock_only and total <= 0:
                 continue
@@ -649,7 +861,11 @@ class BitableRepository:
             raise ValueError("location_not_found")
 
         inventory = await self._load_inventory_map()
-        occupied = sum(qty for (_, lid), qty in inventory.items() if lid == location_id and qty > 0)
+        occupied = sum(
+            qty
+            for key, qty in inventory.items()
+            if key_location_id(key) == location_id and qty > 0
+        )
         if occupied > 0:
             raise ValueError(f"location_not_empty:{occupied}")
 
@@ -658,6 +874,12 @@ class BitableRepository:
         self._locations_cache = None
         self._remove_cached_record(s.bitable_table_locations, location_id)
 
+    def _maybe_set_user_field(self, fields: dict[str, Any], field_name: str, open_id: str) -> bool:
+        if is_feishu_user_id(open_id):
+            fields[field_name] = write_user(open_id)
+            return True
+        return False
+
     def _build_tx_fields(
         self,
         tx_type: str,
@@ -665,35 +887,44 @@ class BitableRepository:
         location_id: str,
         qty: int,
         operator_open_id: str,
+        operator_name: str,
         remark: str | None,
     ) -> dict[str, Any]:
         s = self.settings
+        effective_remark = remark or ""
         fields: dict[str, Any] = {
             s.bitable_f_tx_type: tx_type,
             s.bitable_f_tx_material: write_link(material_id),
             s.bitable_f_tx_location: write_link(location_id),
             s.bitable_f_tx_quantity: qty,
-            s.bitable_f_tx_remark: remark or "",
         }
-        if operator_open_id:
-            fields[s.bitable_f_tx_operator] = write_user(operator_open_id)
+        if not self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id):
+            effective_remark = append_operator_label(effective_remark, operator_name)
+        fields[s.bitable_f_tx_remark] = effective_remark
         return fields
 
     async def _write_inventory_quantity(
         self,
-        inv_records: dict[tuple[str, str], dict[str, Any]],
+        inv_records: dict[InventoryKey, dict[str, Any]],
         material_id: str,
         location_id: str,
         qty: int,
         updated_at: int,
+        row: int | None = None,
+        column: int | None = None,
     ) -> str:
+        if self._slots_enabled() and ((row is None) ^ (column is None)):
+            raise ValueError("slot_incomplete")
         s = self.settings
-        key = (material_id, location_id)
+        key = self._inv_key(material_id, location_id, row, column)
+        inv_fields: dict[str, Any] = {
+            s.bitable_f_inventory_quantity: qty,
+            s.bitable_f_inventory_updated: updated_at,
+        }
+        if self._slots_enabled() and row is not None and column is not None:
+            inv_fields[s.bitable_f_inventory_row] = row
+            inv_fields[s.bitable_f_inventory_column] = column
         if key in inv_records:
-            inv_fields = {
-                s.bitable_f_inventory_quantity: qty,
-                s.bitable_f_inventory_updated: updated_at,
-            }
             record_id = inv_records[key]["record_id"]
             await self.client.update_record(
                 s.bitable_table_inventory,
@@ -704,14 +935,11 @@ class BitableRepository:
                 s.bitable_table_inventory,
                 self._cached_record(record_id, inv_fields),
             )
+            inv_records[key] = self._cached_record(record_id, inv_fields)
             return record_id
 
-        inv_fields = {
-            s.bitable_f_inventory_material: write_link(material_id),
-            s.bitable_f_inventory_location: write_link(location_id),
-            s.bitable_f_inventory_quantity: qty,
-            s.bitable_f_inventory_updated: updated_at,
-        }
+        inv_fields[s.bitable_f_inventory_material] = write_link(material_id)
+        inv_fields[s.bitable_f_inventory_location] = write_link(location_id)
         inv_rec = await self.client.create_record(s.bitable_table_inventory, inv_fields)
         record_id = inv_rec.get("record_id", "")
         self._upsert_cached_record(
@@ -721,53 +949,120 @@ class BitableRepository:
         inv_records[key] = self._cached_record(record_id, inv_fields)
         return record_id
 
-    async def _load_inventory_map(self) -> dict[tuple[str, str], int]:
+    async def _load_inventory_map(self) -> dict[InventoryKey, int]:
         return self._inventory_map_from_records(await self._load_inventory_records())
 
     def _inventory_map_from_records(
-        self, records: dict[tuple[str, str], dict[str, Any]]
-    ) -> dict[tuple[str, str], int]:
+        self, records: dict[InventoryKey, dict[str, Any]]
+    ) -> dict[InventoryKey, int]:
         s = self.settings
-        result: dict[tuple[str, str], int] = {}
+        result: dict[InventoryKey, int] = {}
         for key, rec in records.items():
             result[key] = field_number(rec.get("fields", {}).get(s.bitable_f_inventory_quantity))
         return result
 
-    async def _load_inventory_records(self) -> dict[tuple[str, str], dict[str, Any]]:
+    async def _load_inventory_records(self) -> dict[InventoryKey, dict[str, Any]]:
         s = self.settings
         records = await self._list_all(s.bitable_table_inventory)
-        result: dict[tuple[str, str], dict[str, Any]] = {}
+        result: dict[InventoryKey, dict[str, Any]] = {}
         for rec in records:
             fields = rec.get("fields", {})
             mid = field_link_id(fields.get(s.bitable_f_inventory_material))
             lid = field_link_id(fields.get(s.bitable_f_inventory_location))
-            if mid and lid:
-                result[(mid, lid)] = rec
+            if not mid or not lid:
+                continue
+            row, column = self._read_inventory_slot(fields)
+            key = self._inv_key(mid, lid, row, column)
+            result[key] = rec
         return result
+
+    async def update_inventory_slot(
+        self,
+        material_id: str,
+        location_id: str,
+        row: int,
+        column: int,
+        from_row: int | None = None,
+        from_column: int | None = None,
+    ) -> InventoryItem:
+        if not self._slots_enabled():
+            raise ValueError("slots_not_enabled")
+        if not await self.get_material(material_id):
+            raise ValueError("material_not_found")
+        locations = await self._load_locations()
+        if location_id not in locations:
+            raise ValueError("location_not_found")
+
+        inv_records = await self._load_inventory_records()
+        try:
+            old_key, old_rec = self._resolve_inventory_record(
+                inv_records, material_id, location_id, from_row, from_column
+            )
+        except ValueError as exc:
+            raise ValueError("inventory_not_found") from exc
+        new_key = self._inv_key(material_id, location_id, row, column)
+        s = self.settings
+        old_qty = field_number(old_rec.get("fields", {}).get(s.bitable_f_inventory_quantity))
+        if old_qty <= 0:
+            raise ValueError("inventory_not_found")
+
+        updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        old_record_id = old_rec.get("record_id", "")
+
+        if old_key == new_key:
+            inv_fields = {
+                s.bitable_f_inventory_row: row,
+                s.bitable_f_inventory_column: column,
+                s.bitable_f_inventory_updated: updated_at,
+            }
+            await self.client.update_record(s.bitable_table_inventory, old_record_id, inv_fields)
+            self._upsert_cached_record(
+                s.bitable_table_inventory,
+                self._cached_record(old_record_id, inv_fields),
+            )
+        elif new_key in inv_records:
+            target_rec = inv_records[new_key]
+            target_id = target_rec.get("record_id", "")
+            target_qty = field_number(target_rec.get("fields", {}).get(s.bitable_f_inventory_quantity))
+            await self.client.update_record(
+                s.bitable_table_inventory,
+                target_id,
+                {
+                    s.bitable_f_inventory_quantity: target_qty + old_qty,
+                    s.bitable_f_inventory_updated: updated_at,
+                },
+            )
+            await self.client.delete_record(s.bitable_table_inventory, old_record_id)
+            self._invalidate_table_cache(s.bitable_table_inventory)
+        else:
+            inv_fields = {
+                s.bitable_f_inventory_row: row,
+                s.bitable_f_inventory_column: column,
+                s.bitable_f_inventory_updated: updated_at,
+            }
+            await self.client.update_record(s.bitable_table_inventory, old_record_id, inv_fields)
+            self._upsert_cached_record(
+                s.bitable_table_inventory,
+                self._cached_record(old_record_id, inv_fields),
+            )
+
+        self._invalidate_table_cache(s.bitable_table_inventory)
+        items = await self.get_inventory_for_material(material_id)
+        for item in items:
+            if item.location_id == location_id and item.row == row and item.column == column:
+                return item
+        raise ValueError("inventory_not_found")
 
     async def get_inventory_for_material(self, material_id: str) -> list[InventoryItem]:
         locations = await self._load_locations()
         inv_records = await self._load_inventory_records()
         inv_map = self._inventory_map_from_records(inv_records)
         items: list[InventoryItem] = []
-        for (mid, lid), qty in inv_map.items():
-            if mid != material_id or qty <= 0:
+        for key, qty in inv_map.items():
+            if key_material_id(key) != material_id or qty <= 0:
                 continue
-            rec = inv_records.get((mid, lid), {})
-            updated = rec.get("fields", {}).get(self.settings.bitable_f_inventory_updated)
-            last_updated = None
-            if isinstance(updated, (int, float)):
-                last_updated = datetime.fromtimestamp(updated / 1000, tz=timezone.utc)
-            loc = locations.get(lid)
-            items.append(
-                InventoryItem(
-                    material_id=mid,
-                    location_id=lid,
-                    location_name=loc.name if loc else lid,
-                    quantity=qty,
-                    last_updated=last_updated,
-                )
-            )
+            rec = inv_records.get(key, {})
+            items.append(self._inventory_item_from_record(key, rec, locations))
         return items
 
     async def list_inventory(
@@ -776,29 +1071,16 @@ class BitableRepository:
         locations = await self._load_locations()
         inv_records = await self._load_inventory_records()
         all_items: list[InventoryItem] = []
-        for (mid, lid), rec in inv_records.items():
-            if material_id and mid != material_id:
+        for key, rec in inv_records.items():
+            if material_id and key_material_id(key) != material_id:
                 continue
-            if location_id and lid != location_id:
+            if location_id and key_location_id(key) != location_id:
                 continue
             fields = rec.get("fields", {})
             qty = field_number(fields.get(self.settings.bitable_f_inventory_quantity))
             if qty <= 0:
                 continue
-            updated = fields.get(self.settings.bitable_f_inventory_updated)
-            last_updated = None
-            if isinstance(updated, (int, float)):
-                last_updated = datetime.fromtimestamp(updated / 1000, tz=timezone.utc)
-            loc = locations.get(lid)
-            all_items.append(
-                InventoryItem(
-                    material_id=mid,
-                    location_id=lid,
-                    location_name=loc.name if loc else lid,
-                    quantity=qty,
-                    last_updated=last_updated,
-                )
-            )
+            all_items.append(self._inventory_item_from_record(key, rec, locations))
         return all_items
 
     async def get_transactions(self, material_id: str, limit: int) -> list[Transaction]:
@@ -821,10 +1103,7 @@ class BitableRepository:
                 tx_enum = TransactionType.TRANSFER
             else:
                 tx_enum = TransactionType.OUTBOUND
-            created = fields.get(s.bitable_f_tx_created)
-            created_at = datetime.now(timezone.utc)
-            if isinstance(created, (int, float)):
-                created_at = datetime.fromtimestamp(created / 1000, tz=timezone.utc)
+            created_at = self._parse_transaction_created_at(rec, fields)
             material = materials.get(mid)
             loc = locations.get(lid)
             txs.append(
@@ -836,7 +1115,11 @@ class BitableRepository:
                     location_id=lid,
                     location_name=loc.name if loc else lid,
                     quantity=field_number(fields.get(s.bitable_f_tx_quantity)),
-                    operator=field_user_name(fields.get(s.bitable_f_tx_operator)) or "未知",
+                    operator=resolve_person_name(
+                        fields.get(s.bitable_f_tx_operator),
+                        field_text(fields.get(s.bitable_f_tx_remark)),
+                        remark_prefix="操作人",
+                    ),
                     remark=field_text(fields.get(s.bitable_f_tx_remark)),
                     created_at=created_at,
                 )
@@ -870,12 +1153,10 @@ class BitableRepository:
                 tx_enum = TransactionType.TRANSFER
             else:
                 tx_enum = TransactionType.OUTBOUND
-            created = fields.get(s.bitable_f_tx_created)
-            created_at = datetime.now(timezone.utc)
-            if isinstance(created, (int, float)):
-                created_at = datetime.fromtimestamp(created / 1000, tz=timezone.utc)
+            created_at = self._parse_transaction_created_at(rec, fields)
             material = materials.get(mid)
             loc = locations.get(lid)
+            tx_remark = field_text(fields.get(s.bitable_f_tx_remark))
             tx = Transaction(
                 id=rec["record_id"],
                 type=tx_enum,
@@ -884,8 +1165,12 @@ class BitableRepository:
                 location_id=lid,
                 location_name=loc.name if loc else lid,
                 quantity=field_number(fields.get(s.bitable_f_tx_quantity)),
-                operator=field_user_name(fields.get(s.bitable_f_tx_operator)) or "未知",
-                remark=field_text(fields.get(s.bitable_f_tx_remark)),
+                operator=resolve_person_name(
+                    fields.get(s.bitable_f_tx_operator),
+                    tx_remark,
+                    remark_prefix="操作人",
+                ),
+                remark=tx_remark,
                 created_at=created_at,
             )
             txs.append(tx)
@@ -946,6 +1231,24 @@ class BitableRepository:
             return parsed
         return None
 
+    def _parse_transaction_created_at(self, rec: dict[str, Any], fields: dict[str, Any]) -> datetime:
+        """优先读业务时间列，否则用 Bitable 记录 created_time（勿 fallback 到 now）。"""
+        s = self.settings
+        field_names = [s.bitable_f_tx_created, "创建时间", "交易时间"]
+        seen: set[str] = set()
+        for name in field_names:
+            key = (name or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            parsed = self._parse_bitable_datetime(fields.get(key))
+            if parsed:
+                return parsed
+        record_ts = rec.get("created_time")
+        if isinstance(record_ts, (int, float)):
+            return datetime.fromtimestamp(record_ts / 1000, tz=timezone.utc)
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
     def _parse_request(self, rec: dict[str, Any], materials: dict[str, Material], locations: dict[str, Location]) -> StockRequest:
         s = self.settings
         fields = rec.get("fields", {})
@@ -957,10 +1260,16 @@ class BitableRepository:
         reviewed_at = self._parse_bitable_datetime(fields.get(s.bitable_f_request_reviewed))
         material = materials.get(mid)
         location = locations.get(lid) if lid else None
-        requester_name = field_user_name(fields.get(s.bitable_f_request_requester)) or "未知"
+        raw_remark = field_text(fields.get(s.bitable_f_request_remark))
+        requester_name = resolve_person_name(
+            fields.get(s.bitable_f_request_requester),
+            raw_remark,
+            remark_prefix="申请人",
+        )
         requester_open_id = field_user_id(fields.get(s.bitable_f_request_requester)) or ""
         approver_open_id = field_user_id(fields.get(s.bitable_f_request_approver))
         approver_name = field_user_name(fields.get(s.bitable_f_request_approver))
+        remark, row, column, return_required, return_due_at = parse_request_remark(raw_remark)
         return StockRequest(
             id=rec["record_id"],
             type=req_type,
@@ -974,8 +1283,12 @@ class BitableRepository:
             requester_name=requester_name,
             approver_open_id=approver_open_id,
             approver_name=approver_name,
-            remark=field_text(fields.get(s.bitable_f_request_remark)),
+            remark=remark,
             reject_reason=field_text(fields.get(s.bitable_f_request_reject_reason)),
+            return_required=return_required,
+            return_due_at=return_due_at,
+            row=row,
+            column=column,
             transaction_id=field_text(fields.get(s.bitable_f_request_transaction)),
             created_at=created_at,
             reviewed_at=reviewed_at,
@@ -1000,7 +1313,7 @@ class BitableRepository:
             raise ValueError("location_not_found")
 
         s = self.settings
-        remark = self._format_request_remark(payload)
+        remark = format_request_remark(payload)
         fields: dict[str, Any] = {
             s.bitable_f_request_type: payload.type.value,
             s.bitable_f_request_status: StockRequestStatus.PENDING.value,
@@ -1010,8 +1323,12 @@ class BitableRepository:
         }
         if payload.location_id:
             fields[s.bitable_f_request_location] = write_link(payload.location_id)
-        if requester_open_id:
-            fields[s.bitable_f_request_requester] = write_user(requester_open_id)
+        if not self._maybe_set_user_field(fields, s.bitable_f_request_requester, requester_open_id):
+            fields[s.bitable_f_request_remark] = append_operator_label(
+                fields[s.bitable_f_request_remark],
+                requester_name,
+                prefix="申请人",
+            )
 
         rec = await self.client.create_record(s.bitable_table_requests, fields)
         self._upsert_cached_record(
@@ -1029,20 +1346,17 @@ class BitableRepository:
             quantity=payload.qty,
             requester_open_id=requester_open_id,
             requester_name=requester_name,
-            remark=remark,
+            remark=payload.note,
             return_required=payload.return_required,
             return_due_at=payload.return_due_at,
+            row=payload.row,
+            column=payload.column,
             created_at=datetime.now(timezone.utc),
         )
 
     @staticmethod
     def _format_request_remark(payload: StockRequestCreate) -> str:
-        if payload.type != StockRequestType.OUTBOUND or payload.return_required is None:
-            return payload.note
-        if payload.return_required:
-            due = payload.return_due_at.isoformat() if payload.return_due_at else ""
-            return f"{payload.note} | 需归还：{due}"
-        return f"{payload.note} | 无须归还"
+        return format_request_remark(payload)
 
     async def list_requests(
         self,
@@ -1120,6 +1434,19 @@ class BitableRepository:
         else:
             if not req.location_id or req.location_id not in locations:
                 raise ValueError("location_not_found")
+            inv_records = await self._load_inventory_records()
+            inv_map = self._inventory_map_from_records(inv_records)
+            out_row = row if row is not None else req.row
+            out_column = column if column is not None else req.column
+            out_row, out_column = resolve_outbound_slot(
+                inv_map,
+                req.material_id,
+                req.location_id,
+                req.quantity,
+                out_row,
+                out_column,
+                slots_enabled=self._slots_enabled(),
+            )
             tx = await self.apply_outbound(
                 req.material_id,
                 req.location_id,
@@ -1127,6 +1454,8 @@ class BitableRepository:
                 requester_open_id,
                 req.requester_name,
                 approval_note,
+                row=out_row,
+                column=out_column,
             )
             target_location_id = req.location_id
             target_location = locations[target_location_id]
@@ -1139,8 +1468,7 @@ class BitableRepository:
             s.bitable_f_request_reviewed: reviewed_at,
             s.bitable_f_request_location: write_link(target_location_id),
         }
-        if approver_open_id:
-            fields[s.bitable_f_request_approver] = write_user(approver_open_id)
+        self._maybe_set_user_field(fields, s.bitable_f_request_approver, approver_open_id)
         updated_rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
         self._upsert_cached_record(
             s.bitable_table_requests,
@@ -1183,8 +1511,12 @@ class BitableRepository:
             s.bitable_f_request_reject_reason: reason,
             s.bitable_f_request_reviewed: reviewed_at,
         }
-        if approver_open_id:
-            fields[s.bitable_f_request_approver] = write_user(approver_open_id)
+        if not self._maybe_set_user_field(fields, s.bitable_f_request_approver, approver_open_id):
+            fields[s.bitable_f_request_reject_reason] = append_operator_label(
+                reason,
+                approver_name,
+                prefix="审批人",
+            )
         updated_rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
         self._upsert_cached_record(
             s.bitable_table_requests,
@@ -1208,15 +1540,19 @@ class BitableRepository:
         operator_open_id: str,
         operator_name: str,
         remark: str | None,
+        row: int | None = None,
+        column: int | None = None,
     ) -> Transaction:
         if not await self.get_material(material_id):
             raise ValueError("material_not_found")
         locations = await self._load_locations()
         if location_id not in locations:
             raise ValueError("location_not_found")
+        if self._slots_enabled() and ((row is None) ^ (column is None)):
+            raise ValueError("slot_incomplete")
 
         inv_records = await self._load_inventory_records()
-        key = (material_id, location_id)
+        key = self._inv_key(material_id, location_id, row, column)
         s = self.settings
         current = field_number(
             inv_records.get(key, {}).get("fields", {}).get(s.bitable_f_inventory_quantity)
@@ -1224,7 +1560,9 @@ class BitableRepository:
         new_qty = current + qty
         updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-        await self._write_inventory_quantity(inv_records, material_id, location_id, new_qty, updated_at)
+        await self._write_inventory_quantity(
+            inv_records, material_id, location_id, new_qty, updated_at, row=row, column=column
+        )
 
         tx_fields = self._build_tx_fields(
             s.bitable_v_tx_inbound,
@@ -1232,12 +1570,15 @@ class BitableRepository:
             location_id,
             qty,
             operator_open_id,
+            operator_name,
             remark,
         )
         try:
             tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
         except Exception:
-            await self._write_inventory_quantity(inv_records, material_id, location_id, current, updated_at)
+            await self._write_inventory_quantity(
+                inv_records, material_id, location_id, current, updated_at, row=row, column=column
+            )
             raise
         self._upsert_cached_record(
             s.bitable_table_transactions,
@@ -1245,6 +1586,7 @@ class BitableRepository:
         )
         material = (await self._load_materials())[material_id]
         loc = locations[location_id]
+        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
         return Transaction(
             id=tx_rec.get("record_id", "tx_new"),
             type=TransactionType.INBOUND,
@@ -1255,7 +1597,7 @@ class BitableRepository:
             quantity=qty,
             operator=operator_name,
             remark=remark,
-            created_at=datetime.now(timezone.utc),
+            created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
         )
 
     async def apply_outbound(
@@ -1266,32 +1608,62 @@ class BitableRepository:
         operator_open_id: str,
         operator_name: str,
         remark: str | None,
+        row: int | None = None,
+        column: int | None = None,
     ) -> Transaction:
         if not await self.get_material(material_id):
             raise ValueError("material_not_found")
         inv_records = await self._load_inventory_records()
-        key = (material_id, location_id)
+        inv_map = self._inventory_map_from_records(inv_records)
+        out_row, out_column = resolve_outbound_slot(
+            inv_map,
+            material_id,
+            location_id,
+            qty,
+            row,
+            column,
+            slots_enabled=self._slots_enabled(),
+        )
+        key = self._inv_key(material_id, location_id, out_row, out_column)
         s = self.settings
         if key not in inv_records:
-            raise ValueError("insufficient_stock:0")
+            available = inv_map.get(key, 0)
+            raise ValueError(f"insufficient_stock:{available}")
         current = field_number(inv_records[key]["fields"].get(s.bitable_f_inventory_quantity))
         if current < qty:
             raise ValueError(f"insufficient_stock:{current}")
 
         updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
-        await self._write_inventory_quantity(inv_records, material_id, location_id, current - qty, updated_at)
+        await self._write_inventory_quantity(
+            inv_records,
+            material_id,
+            location_id,
+            current - qty,
+            updated_at,
+            row=out_row,
+            column=out_column,
+        )
         tx_fields = self._build_tx_fields(
             s.bitable_v_tx_outbound,
             material_id,
             location_id,
             -qty,
             operator_open_id,
+            operator_name,
             remark,
         )
         try:
             tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
         except Exception:
-            await self._write_inventory_quantity(inv_records, material_id, location_id, current, updated_at)
+            await self._write_inventory_quantity(
+                inv_records,
+                material_id,
+                location_id,
+                current,
+                updated_at,
+                row=out_row,
+                column=out_column,
+            )
             raise
         self._upsert_cached_record(
             s.bitable_table_transactions,
@@ -1299,6 +1671,7 @@ class BitableRepository:
         )
         materials = await self._load_materials()
         locations = await self._load_locations()
+        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
         return Transaction(
             id=tx_rec.get("record_id", "tx_new"),
             type=TransactionType.OUTBOUND,
@@ -1309,7 +1682,7 @@ class BitableRepository:
             quantity=-qty,
             operator=operator_name,
             remark=remark,
-            created_at=datetime.now(timezone.utc),
+            created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
         )
 
     async def apply_transfer(
@@ -1321,19 +1694,36 @@ class BitableRepository:
         operator_open_id: str,
         operator_name: str,
         remark: str | None,
+        to_row: int | None = None,
+        to_column: int | None = None,
+        from_row: int | None = None,
+        from_column: int | None = None,
     ) -> list[Transaction]:
         if from_location_id == to_location_id:
             raise ValueError("same_location")
         if not await self.get_material(material_id):
             raise ValueError("material_not_found")
+        if self._slots_enabled():
+            if (from_row is None) ^ (from_column is None) or (to_row is None) ^ (to_column is None):
+                raise ValueError("slot_incomplete")
 
         locations = await self._load_locations()
         if from_location_id not in locations or to_location_id not in locations:
             raise ValueError("location_not_found")
 
         inv_records = await self._load_inventory_records()
-        source_key = (material_id, from_location_id)
-        target_key = (material_id, to_location_id)
+        inv_map = self._inventory_map_from_records(inv_records)
+        out_row, out_column = resolve_outbound_slot(
+            inv_map,
+            material_id,
+            from_location_id,
+            qty,
+            from_row,
+            from_column,
+            slots_enabled=self._slots_enabled(),
+        )
+        source_key = self._inv_key(material_id, from_location_id, out_row, out_column)
+        target_key = self._inv_key(material_id, to_location_id, to_row, to_column)
         s = self.settings
         source_current = field_number(
             inv_records.get(source_key, {}).get("fields", {}).get(s.bitable_f_inventory_quantity)
@@ -1351,6 +1741,8 @@ class BitableRepository:
             from_location_id,
             source_current - qty,
             updated_at,
+            row=out_row,
+            column=out_column,
         )
         try:
             await self._write_inventory_quantity(
@@ -1359,6 +1751,8 @@ class BitableRepository:
                 to_location_id,
                 target_current + qty,
                 updated_at,
+                row=to_row,
+                column=to_column,
             )
         except Exception:
             await self._write_inventory_quantity(
@@ -1367,6 +1761,8 @@ class BitableRepository:
                 from_location_id,
                 source_current,
                 updated_at,
+                row=out_row,
+                column=out_column,
             )
             raise
 
@@ -1378,6 +1774,7 @@ class BitableRepository:
             from_location_id,
             -qty,
             operator_open_id,
+            operator_name,
             f"移动至 {target_loc.name}" + (f"；{remark}" if remark else ""),
         )
         try:
@@ -1389,6 +1786,8 @@ class BitableRepository:
                 from_location_id,
                 source_current,
                 updated_at,
+                row=out_row,
+                column=out_column,
             )
             await self._write_inventory_quantity(
                 inv_records,
@@ -1396,6 +1795,8 @@ class BitableRepository:
                 to_location_id,
                 target_current,
                 updated_at,
+                row=to_row,
+                column=to_column,
             )
             raise
 
@@ -1405,7 +1806,8 @@ class BitableRepository:
         )
 
         material = (await self._load_materials())[material_id]
-        now = datetime.now(timezone.utc)
+        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
+        created_at = self._parse_transaction_created_at(tx_record, tx_record.get("fields", {}))
         return [
             Transaction(
                 id=tx_rec.get("record_id", "tx_transfer"),
@@ -1417,7 +1819,7 @@ class BitableRepository:
                 quantity=-qty,
                 operator=operator_name,
                 remark=tx_fields.get(s.bitable_f_tx_remark),
-                created_at=now,
+                created_at=created_at,
             ),
         ]
 

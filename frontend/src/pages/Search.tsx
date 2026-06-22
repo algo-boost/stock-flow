@@ -290,9 +290,10 @@ export default function SearchPage() {
                   ? `${m.major_category} / ${m.sub_category}`
                   : m.category_name
               }
-              unit={`库存 ${m.total_quantity} ${m.unit}`}
+              spec={m.spec ?? undefined}
+              unit={`总库存 ${m.total_quantity} ${m.unit}`}
               warning={isLowStock ? `缺货预警：低于安全库存 ${m.min_stock ?? 5}` : undefined}
-              stockSummary={m.locations_summary ?? "暂无库存"}
+              stockSummary={m.locations_summary ?? "暂无库位库存"}
               onClick={() => navigate(`/materials/${m.id}`)}
             />
           );

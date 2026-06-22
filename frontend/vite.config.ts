@@ -8,9 +8,12 @@ export default defineConfig({
     port: 5173,
     // ngrok 等穿透域名访问 dev server
     allowedHosts: true,
+    headers: {
+      "Cache-Control": "no-store",
+    },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://127.0.0.1:8003",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
@@ -22,7 +25,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://127.0.0.1:8003",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },

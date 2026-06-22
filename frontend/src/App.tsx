@@ -3,6 +3,7 @@ import { AuthProvider } from "./components/AuthGate";
 import AdminCenterPage from "./pages/AdminCenter";
 import DetailPage from "./pages/Detail";
 import HistoryPage from "./pages/History";
+import PendingReturnsPage from "./pages/PendingReturns";
 import LocationsPage from "./pages/Locations";
 import PurchasePage from "./pages/Purchase";
 import SearchPage from "./pages/Search";
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/approvals" element={<ApprovalsRedirect />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/returns" element={<PendingReturnsPage />} />
           <Route path="/admin-center" element={<AdminCenterPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

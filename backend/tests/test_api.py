@@ -138,8 +138,8 @@ def test_list_material_categories():
     resp = client.get("/materials/categories", headers=HEADERS_USER)
     assert resp.status_code == 200
     categories = resp.json()["data"]
-    assert any(category["name"] == "达妙电机" for category in categories)
-    assert any(category["name"] == "电器类" and category["parent_id"] is None for category in categories)
+    assert any(category["name"] == "电机模组" for category in categories)
+    assert any(category["name"] == "电气类" and category["parent_id"] is None for category in categories)
 
 
 def test_category_crud_admin():
@@ -164,11 +164,11 @@ def test_category_crud_admin():
 
 
 def test_delete_leaf_category_reassigns_material():
-    resp = client.delete("/materials/categories/cat_motor_dm", headers=HEADERS_ADMIN)
+    resp = client.delete("/materials/categories/cat_motor_module", headers=HEADERS_ADMIN)
     assert resp.status_code == 200
     material = client.get("/materials/mat_001", headers=HEADERS_USER).json()["data"]["material"]
-    assert material["category_id"] == "cat_motor_module"
-    assert material["category_name"] == "电机模组"
+    assert material["category_id"] == "cat_electrical"
+    assert material["category_name"] == "电气类"
 
 
 def test_category_create_forbidden_for_user():
@@ -230,7 +230,7 @@ def test_create_material_forbidden_for_user():
         headers=HEADERS_USER,
         json={
             "name": "测试新物料-无权限",
-            "category_id": "cat_motor_dm",
+            "category_id": "cat_motor_module",
             "unit": "个",
         },
     )
@@ -243,9 +243,9 @@ def test_create_material_success_for_keeper():
         headers=HEADERS_KEEPER,
         json={
             "name": "测试新物料",
-            "category_id": "cat_motor_dm",
-            "major_category": "电器类",
-            "sub_category": "达妙电机",
+            "category_id": "cat_motor_module",
+            "major_category": "电气类",
+            "sub_category": "电机模组",
             "unit": "个",
             "spec": "测试规格",
             "default_location_id": "loc_01",
@@ -257,15 +257,74 @@ def test_create_material_success_for_keeper():
     material = resp.json()["data"]
     assert material["id"]
     assert material["name"] == "测试新物料"
-    assert material["category_name"] == "达妙电机"
-    assert material["major_category"] == "电器类"
-    assert material["sub_category"] == "达妙电机"
+    assert material["category_name"] == "电机模组"
+    assert material["major_category"] == "电气类"
+    assert material["sub_category"] == "电机模组"
     assert material["supplier"] == "测试供货商"
     assert material["min_stock"] == 5
 
     detail_resp = client.get(f"/materials/{material['id']}", headers=HEADERS_KEEPER)
     assert detail_resp.status_code == 200
     assert detail_resp.json()["data"]["material"]["name"] == "测试新物料"
+
+
+def test_update_material_success_for_keeper():
+    create_resp = client.post(
+        "/materials",
+        headers=HEADERS_KEEPER,
+        json={
+            "name": "待修改物料",
+            "category_id": "cat_motor_module",
+            "unit": "个",
+        },
+    )
+    material_id = create_resp.json()["data"]["id"]
+
+    patch_resp = client.patch(
+        f"/materials/{material_id}",
+        headers=HEADERS_KEEPER,
+        json={"name": "已修改物料", "spec": "新规格"},
+    )
+    assert patch_resp.status_code == 200
+    updated = patch_resp.json()["data"]
+    assert updated["name"] == "已修改物料"
+    assert updated["spec"] == "新规格"
+
+
+def test_delete_material_success_when_no_stock_or_transactions():
+    create_resp = client.post(
+        "/materials",
+        headers=HEADERS_KEEPER,
+        json={
+            "name": "待删除物料",
+            "category_id": "cat_motor_module",
+            "unit": "个",
+        },
+    )
+    material_id = create_resp.json()["data"]["id"]
+
+    delete_resp = client.delete(f"/materials/{material_id}", headers=HEADERS_KEEPER)
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["data"]["deleted"] is True
+
+    detail_resp = client.get(f"/materials/{material_id}", headers=HEADERS_KEEPER)
+    assert detail_resp.status_code == 404
+
+
+def test_delete_material_forbidden_for_user():
+    create_resp = client.post(
+        "/materials",
+        headers=HEADERS_KEEPER,
+        json={
+            "name": "普通用户不可删",
+            "category_id": "cat_motor_module",
+            "unit": "个",
+        },
+    )
+    material_id = create_resp.json()["data"]["id"]
+
+    delete_resp = client.delete(f"/materials/{material_id}", headers=HEADERS_USER)
+    assert delete_resp.status_code == 403
 
 
 def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
@@ -321,7 +380,7 @@ def test_low_stock_alerts_less_than_threshold_only():
         headers=HEADERS_KEEPER,
         json={
             "name": "低库存边界测试物料",
-            "category_id": "cat_motor_dm",
+            "category_id": "cat_motor_module",
             "unit": "个",
             "default_location_id": "loc_01",
             "supplier": "边界供货商",
@@ -366,6 +425,7 @@ def test_outbound_forbidden_for_user():
             "qty": 1,
             "idempotency_key": "test-outbound-user-deny",
             "note": "项目测试领用",
+            "return_required": False,
         },
     )
     assert resp.status_code == 403
@@ -382,6 +442,8 @@ def test_outbound_success_for_keeper():
             "qty": 1,
             "idempotency_key": key,
             "note": "项目测试领用",
+            "return_required": True,
+            "return_due_at": "2026-06-30",
         },
     )
     assert resp.status_code == 200
@@ -399,6 +461,8 @@ def test_outbound_success_for_keeper():
             "qty": 1,
             "idempotency_key": key,
             "note": "项目测试领用",
+            "return_required": True,
+            "return_due_at": "2026-06-30",
         },
     )
     assert resp2.json()["data"]["transaction_id"] == tx_id
@@ -406,7 +470,8 @@ def test_outbound_success_for_keeper():
     tx_resp = client.get("/materials/mat_001/transactions", headers=HEADERS_KEEPER)
     assert tx_resp.status_code == 200
     txs = tx_resp.json()["data"]
-    assert any(tx["id"] == tx_id and tx["quantity"] < 0 for tx in txs)
+    matched = next(tx for tx in txs if tx["id"] == tx_id and tx["quantity"] < 0)
+    assert "需归还：2026-06-30" in (matched.get("remark") or "")
 
 
 def test_outbound_insufficient_stock():
@@ -419,6 +484,7 @@ def test_outbound_insufficient_stock():
             "qty": 9999,
             "idempotency_key": "test-outbound-overflow",
             "note": "超额领用",
+            "return_required": False,
         },
     )
     assert resp.status_code == 400
@@ -532,6 +598,50 @@ def test_inbound_keeps_separate_cabinet_slots():
     assert detail["total_quantity"] == 10
 
 
+def test_update_second_inventory_slot():
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 7,
+            "idempotency_key": "slot-update-a",
+            "note": "A",
+            "row": 1,
+            "column": 9,
+        },
+    )
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 4,
+            "idempotency_key": "slot-update-b",
+            "note": "B",
+            "row": 1,
+            "column": 5,
+        },
+    )
+    resp = client.patch(
+        "/materials/mat_001/inventory/loc_01/slot",
+        headers=HEADERS_KEEPER,
+        json={"row": 1, "column": 7, "from_row": 1, "from_column": 5},
+    )
+    assert resp.status_code == 200
+    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    slots = {
+        (item["row"], item["column"]): item["quantity"]
+        for item in detail["inventory"]
+        if item["location_id"] == "loc_01"
+    }
+    assert slots[(1, 9)] == 7
+    assert slots[(1, 7)] == 4
+    assert (1, 5) not in slots
+
+
 def test_outbound_request_approval_uses_cabinet_slot():
     client.post(
         "/inbound",
@@ -640,6 +750,24 @@ def test_inbound_success_for_keeper():
     )
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
+
+
+def test_inbound_updates_material_spec_for_keeper():
+    resp = client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "test-inbound-spec-001",
+            "note": "补型号",
+            "spec": "D435i 新版",
+        },
+    )
+    assert resp.status_code == 200
+    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    assert detail["material"]["spec"] == "D435i 新版"
 
 
 def test_transfer_forbidden_for_user():
@@ -755,3 +883,40 @@ def test_admin_overview_contains_statistics():
     assert "tables" in data
     assert data["totals"]["inventory_quantity"] >= 0
     assert "pending_requests" in data["totals"]
+
+
+def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
+    client.post(
+        "/outbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_realsense",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "pending-return-out-001",
+            "note": "项目借用",
+            "return_required": True,
+            "return_due_at": "2026-07-01",
+        },
+    )
+    pending_keeper = client.get("/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
+    assert pending_keeper.status_code == 200
+    items = pending_keeper.json()["data"]
+    assert len(items) == 1
+    assert items[0]["quantity"] == 1
+    assert items[0]["return_due_at"] == "2026-07-01"
+
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_realsense",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "pending-return-in-001",
+            "note": "项目结束归还",
+        },
+    )
+    cleared = client.get("/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
+    assert cleared.status_code == 200
+    assert cleared.json()["data"] == []

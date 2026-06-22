@@ -201,7 +201,7 @@ export function CategoryCascade({
             </Button>
           </div>
           <div className="category-picker-admin-hint">
-            「添加顶层」= 与电器类同级；「添加子类」= 在当前选中项（或左侧大类）下新增
+            「添加顶层」= 与电气类同级；「添加子类」= 在当前选中项（或左侧大类）下新增
           </div>
         </div>
       )}

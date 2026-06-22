@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+
+_FEISHU_OPEN_ID = re.compile(r"^ou_[0-9a-zA-Z]{12,}$")
+_FEISHU_UNION_ID = re.compile(r"^on_[0-9a-zA-Z]{12,}$")
+_PERSON_LABEL_IN_REMARK = re.compile(r"(?:^|；)\s*(申请人|操作人):\s*([^；]+)")
 
 
 def field_text(value: Any) -> str | None:
@@ -94,8 +99,58 @@ def write_link(record_id: str) -> list[str]:
     return [record_id]
 
 
+def is_feishu_user_id(value: str | None) -> bool:
+    if not value:
+        return False
+    trimmed = value.strip()
+    if trimmed.startswith("ou_mock_"):
+        return False
+    return bool(_FEISHU_OPEN_ID.match(trimmed) or _FEISHU_UNION_ID.match(trimmed))
+
+
 def write_user(open_id: str) -> list[dict[str, str]]:
-    return [{"id": open_id}]
+    return [{"id": open_id.strip()}]
+
+
+def extract_person_label_from_remark(remark: str | None, prefix: str) -> str | None:
+    """从备注中的「申请人: xxx / 操作人: xxx」解析姓名（Mock 用户无法写入人员字段时的兜底）。"""
+    if not remark or not prefix:
+        return None
+    for match in _PERSON_LABEL_IN_REMARK.finditer(remark):
+        if match.group(1) == prefix:
+            name = match.group(2).strip()
+            return name or None
+    return None
+
+
+def resolve_person_name(
+    user_field_value: Any,
+    remark: str | None,
+    *,
+    remark_prefix: str,
+    default: str = "未知",
+) -> str:
+    name = field_user_name(user_field_value)
+    if name:
+        return name
+    fallback = extract_person_label_from_remark(remark, remark_prefix)
+    if fallback and fallback != default:
+        return fallback
+    if remark_prefix == "操作人":
+        applicant = extract_person_label_from_remark(remark, "申请人")
+        if applicant and applicant != default:
+            return applicant
+    return default
+
+
+def append_operator_label(remark: str | None, label: str, *, prefix: str = "操作人") -> str:
+    if not label:
+        return (remark or "").strip()
+    text = (remark or "").strip()
+    suffix = f"{prefix}: {label}"
+    if suffix in text:
+        return text
+    return f"{text}；{suffix}" if text else suffix
 
 
 def normalize_tx_type(value: Any) -> str:

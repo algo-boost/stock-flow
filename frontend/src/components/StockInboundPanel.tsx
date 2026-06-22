@@ -23,6 +23,8 @@ export function StockInboundPanel() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
+  const presetQty = Number(params.get("qty") ?? "");
+  const presetReturnNote = params.get("return_note") ?? "";
   const activeTab = params.get("tab");
   const shouldLoadPreset = activeTab === "inbound";
   const navigate = useNavigate();
@@ -39,6 +41,7 @@ export function StockInboundPanel() {
   const [locationId, setLocationId] = useState("");
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
+  const [inboundSpec, setInboundSpec] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showCreateMaterial, setShowCreateMaterial] = useState(false);
   const [creatingMaterial, setCreatingMaterial] = useState(false);
@@ -102,14 +105,17 @@ export function StockInboundPanel() {
       try {
         const detail = await getMaterial(presetMaterialId);
         setSelected(detail);
+        setInboundSpec(detail.material.spec ?? "");
         const defaultLoc =
           detail.material.default_location_id ?? detail.inventory[0]?.location_id ?? locationId;
         if (defaultLoc) setLocationId(defaultLoc);
+        if (Number.isFinite(presetQty) && presetQty > 0) setQty(presetQty);
+        if (presetReturnNote.trim()) setNote(presetReturnNote.trim());
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
-  }, [locationId, presetMaterialId, shouldLoadPreset]);
+  }, [locationId, presetMaterialId, presetQty, presetReturnNote, shouldLoadPreset]);
 
   const selectedStock = useMemo(() => {
     if (!selected || !locationId) return null;
@@ -161,6 +167,7 @@ export function StockInboundPanel() {
       if (defaultLoc) setLocationId(defaultLoc);
       setQty(1);
       setNote("");
+      setInboundSpec(detail.material.spec ?? "");
       setSlotRow(1);
       setSlotColumn(1);
     } catch (e) {
@@ -174,6 +181,7 @@ export function StockInboundPanel() {
     setSelected(null);
     setQty(1);
     setNote("");
+    setInboundSpec("");
     setSlotRow(1);
     setSlotColumn(1);
   };
@@ -252,26 +260,34 @@ export function StockInboundPanel() {
     setSubmitting(true);
     try {
       if (isDirectInbound) {
-        const result = await postInbound({
+        const trimmedNote = note.trim();
+        const isReturnInbound =
+          trimmedNote.includes("归还") || presetReturnNote.trim().includes("归还");
+        await postInbound({
           material_id: selected.material.id,
           location_id: locationId,
           qty,
           idempotency_key: newIdempotencyKey(),
-          note: note.trim() || undefined,
+          note: trimmedNote || undefined,
+          spec: inboundSpec.trim() || undefined,
           row: showCabinetSlot ? slotRow : undefined,
           column: showCabinetSlot ? slotColumn : undefined,
         });
-        Toast.show({ icon: "success", content: `已同步 Bitable · ${result.transaction_id}` });
-        navigate(`/materials/${selected.material.id}`);
+        Toast.show({ icon: "success", content: isReturnInbound ? "归还入库成功" : "入库成功" });
+        if (isReturnInbound) {
+          navigate(canInbound ? "/history?view=returns" : "/returns");
+        } else {
+          navigate(`/materials/${selected.material.id}`);
+        }
       } else {
-        const result = await createStockRequest({
+        await createStockRequest({
           type: "入库",
           material_id: selected.material.id,
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim(),
         });
-        Toast.show({ icon: "success", content: `已提交入库申请 ${result.request_id}` });
+        Toast.show({ icon: "success", content: "已提交入库申请" });
         navigate("/history");
       }
     } catch (e) {
@@ -331,6 +347,15 @@ export function StockInboundPanel() {
             <Form.Item label="入库数量">
               <Stepper min={1} value={qty} onChange={setQty} />
             </Form.Item>
+            {isDirectInbound && (
+              <Form.Item label="型号（可选）">
+                <Input
+                  value={inboundSpec}
+                  onChange={setInboundSpec}
+                  placeholder="入库时补充或更新物料型号 / 规格"
+                />
+              </Form.Item>
+            )}
             <Form.Item label="备注">
               <TextArea
                 value={note}
@@ -397,6 +422,18 @@ export function StockInboundPanel() {
                 </div>
                 <div className="catalog-row-right">
                   <span className="stock-badge">{item.total_quantity}</span>
+                  {isDirectInbound && (
+                    <button
+                      type="button"
+                      className="catalog-manage-link"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/materials/${item.id}`);
+                      }}
+                    >
+                      管理
+                    </button>
+                  )}
                   <span className="material-card-arrow">›</span>
                 </div>
               </button>

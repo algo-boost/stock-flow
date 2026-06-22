@@ -16,6 +16,7 @@ from app.models import (
     Material,
     MaterialCreate,
     MaterialDetail,
+    MaterialUpdate,
     OutboundCreate,
     PaginatedMaterials,
     PurchaseInboundCreate,
@@ -28,8 +29,10 @@ from app.models import (
     TransferCreate,
     User,
 )
+from app.services.pending_returns import compute_pending_returns
 from app.utils.categories import attach_category_stats
 from app.utils.inventory_display import format_inventory_summary
+from app.utils.request_remark import format_outbound_remark
 from app.utils.response import AppError
 
 
@@ -49,11 +52,30 @@ def _wrap_bitable_error(exc: Exception) -> AppError:
             "Bitable 字段名不匹配，请检查 backend/.env 中 BITABLE_F_* 是否与多维表格列名一致",
             500,
         )
+    if msg == "category_crud_requires_mock_or_bitable_parent_field":
+        return AppError(
+            5002,
+            "分类增删尚未生效，请重启后端（8002）后再试；若仍失败，请检查 categories 表是否有「父分类ID」列",
+            500,
+        )
+    if msg == "category_parent_field_not_configured":
+        return AppError(
+            5002,
+            "未配置父分类字段，请在 backend/.env 设置 BITABLE_F_CATEGORY_PARENT=父分类ID",
+            500,
+        )
     return AppError(5002, msg, 500)
 
 
 def _wrap_data_error(area: str, exc: Exception) -> AppError:
     return AppError(5003, f"{area}数据格式或字段配置错误: {type(exc).__name__}: {exc}", 500)
+
+
+def _user_owns_transaction(tx: Transaction, user_name: str) -> bool:
+    if tx.operator == user_name:
+        return True
+    remark = tx.remark or ""
+    return f"申请人: {user_name}" in remark or f"操作人: {user_name}" in remark
 
 
 class InventoryService:
@@ -176,6 +198,44 @@ class InventoryService:
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
 
+    async def update_material(self, material_id: str, payload: MaterialUpdate) -> Material:
+        try:
+            if self.repo:
+                return await self.repo.update_material(material_id, payload)
+            return self.store.update_material(material_id, payload)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "material_not_found":
+                raise AppError(4004, "物料未找到", 404) from exc
+            if msg == "category_not_found":
+                raise AppError(1001, "分类未找到", 400) from exc
+            if msg == "location_not_found":
+                raise AppError(1001, "默认库位未找到", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def delete_material(self, material_id: str) -> None:
+        try:
+            if self.repo:
+                await self.repo.delete_material(material_id)
+            else:
+                self.store.delete_material(material_id)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "material_not_found":
+                raise AppError(4004, "物料未找到", 404) from exc
+            if msg.startswith("material_has_stock:"):
+                stock = msg.split(":", 1)[1]
+                raise AppError(4003, f"物料仍有库存 {stock}，请先出库或移动后再删除", 400) from exc
+            if msg == "material_has_transactions":
+                raise AppError(4003, "物料已有出入库流水或申请记录，不能删除", 400) from exc
+            if msg == "material_has_requests":
+                raise AppError(4003, "物料仍有出入库申请，不能删除", 400) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
     async def get_material_detail(self, material_id: str) -> MaterialDetail:
         try:
             if self.repo:
@@ -228,25 +288,40 @@ class InventoryService:
         end_at=None,
         limit: int = 100,
     ) -> list[Transaction]:
-        effective_operator = operator
-        if user.role.value == "USER":
-            effective_operator = user.name
+        scope_to_user = user.role.value == "USER"
+        effective_operator = None if scope_to_user else operator
         try:
             if self.repo:
-                return await self.repo.list_transactions(
+                items = await self.repo.list_transactions(
                     operator=effective_operator,
                     keyword=keyword,
                     start_at=start_at,
                     end_at=end_at,
-                    limit=limit,
+                    limit=limit if not scope_to_user else min(limit * 4, 500),
                 )
-            return self.store.list_transactions(
-                operator=effective_operator,
-                keyword=keyword,
-                start_at=start_at,
-                end_at=end_at,
-                limit=limit,
-            )
+            else:
+                items = self.store.list_transactions(
+                    operator=effective_operator,
+                    keyword=keyword,
+                    start_at=start_at,
+                    end_at=end_at,
+                    limit=limit if not scope_to_user else min(limit * 4, 500),
+                )
+            if scope_to_user:
+                items = [tx for tx in items if _user_owns_transaction(tx, user.name)]
+            return items[:limit]
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+        except ValueError as exc:
+            raise AppError(5003, f"Bitable 流水表数据格式错误: {exc}", 500) from exc
+
+    async def list_pending_returns(self, *, borrower: str | None = None):
+        try:
+            if self.repo:
+                txs = await self.repo.list_transactions(limit=500)
+            else:
+                txs = self.store.list_transactions(limit=500)
+            return compute_pending_returns(txs, borrower=borrower)
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
         except ValueError as exc:
@@ -333,23 +408,30 @@ class InventoryService:
     async def inbound(self, payload: InboundCreate, user: User) -> Transaction:
         try:
             if self.repo:
-                return await self.repo.apply_inbound(
+                tx = await self.repo.apply_inbound(
                     payload.material_id,
                     payload.location_id,
                     payload.qty,
                     user.open_id,
                     user.name,
                     payload.note,
+                    row=payload.row,
+                    column=payload.column,
                 )
-            return self.store.apply_inbound(
-                payload.material_id,
-                payload.location_id,
-                payload.qty,
-                user.name,
-                payload.note,
-                row=payload.row,
-                column=payload.column,
-            )
+            else:
+                tx = self.store.apply_inbound(
+                    payload.material_id,
+                    payload.location_id,
+                    payload.qty,
+                    user.name,
+                    payload.note,
+                    row=payload.row,
+                    column=payload.column,
+                )
+            spec_value = payload.spec.strip() if payload.spec else None
+            if spec_value:
+                await self.update_material(payload.material_id, MaterialUpdate(spec=spec_value))
+            return tx
         except ValueError as exc:
             msg = str(exc)
             if msg == "material_not_found":
@@ -370,7 +452,14 @@ class InventoryService:
     ) -> InventoryItem:
         try:
             if self.repo:
-                raise AppError(1001, "格位编辑当前仅支持 mock 模式，请在 Bitable 库存表补充行列字段后启用", 400)
+                return await self.repo.update_inventory_slot(
+                    material_id,
+                    location_id,
+                    payload.row,
+                    payload.column,
+                    from_row=payload.from_row,
+                    from_column=payload.from_column,
+                )
             return self.store.update_inventory_slot(
                 material_id,
                 location_id,
@@ -387,7 +476,21 @@ class InventoryService:
                 raise AppError(1001, "库位未找到", 400) from exc
             if msg == "inventory_not_found":
                 raise AppError(4004, "该库位暂无库存记录", 404) from exc
+            if msg == "ambiguous_inventory":
+                raise AppError(
+                    1001,
+                    "该库位存在多条库存格位，请指定原行/列后再保存",
+                    400,
+                ) from exc
+            if msg == "slots_not_enabled":
+                raise AppError(
+                    1001,
+                    "格位编辑未启用，请在 Bitable 库存表添加「行」「列」数字列，并配置 BITABLE_F_INVENTORY_ROW / BITABLE_F_INVENTORY_COLUMN",
+                    400,
+                ) from exc
             raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
 
     async def purchase_inbound(self, payload: PurchaseInboundCreate, user: User) -> Transaction:
         note_parts = ["管理员进货"]
@@ -436,6 +539,13 @@ class InventoryService:
             ) from exc
 
     async def outbound(self, payload: OutboundCreate, user: User) -> Transaction:
+        remark = format_outbound_remark(
+            payload.note,
+            return_required=payload.return_required or False,
+            return_due_at=payload.return_due_at,
+            row=payload.row,
+            column=payload.column,
+        )
         try:
             if self.repo:
                 return await self.repo.apply_outbound(
@@ -444,14 +554,16 @@ class InventoryService:
                     payload.qty,
                     user.open_id,
                     user.name,
-                    payload.note,
+                    remark,
+                    row=payload.row,
+                    column=payload.column,
                 )
             return self.store.apply_outbound(
                 payload.material_id,
                 payload.location_id,
                 payload.qty,
                 user.name,
-                payload.note,
+                remark,
                 row=payload.row,
                 column=payload.column,
             )
@@ -580,6 +692,10 @@ class InventoryService:
                     user.open_id,
                     user.name,
                     payload.note,
+                    to_row=payload.to_row,
+                    to_column=payload.to_column,
+                    from_row=payload.from_row,
+                    from_column=payload.from_column,
                 )
             return self.store.apply_transfer(
                 payload.material_id,

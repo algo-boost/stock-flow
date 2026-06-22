@@ -95,6 +95,20 @@ class MaterialCreate(BaseModel):
     min_stock: int = Field(default=5, ge=0, le=100000)
 
 
+class MaterialUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    category_id: str | None = Field(default=None, min_length=1, max_length=128)
+    major_category: str | None = Field(default=None, max_length=100)
+    sub_category: str | None = Field(default=None, max_length=100)
+    code: str | None = Field(default=None, max_length=64)
+    unit: str | None = Field(default=None, min_length=1, max_length=20)
+    spec: str | None = Field(default=None, max_length=200)
+    barcode: str | None = Field(default=None, max_length=100)
+    default_location_id: str | None = Field(default=None, max_length=128)
+    supplier: str | None = Field(default=None, max_length=100)
+    min_stock: int | None = Field(default=None, ge=0, le=100000)
+
+
 class InventoryItem(BaseModel):
     material_id: str
     location_id: str
@@ -133,6 +147,20 @@ class Transaction(BaseModel):
     operator: str
     remark: str | None = None
     created_at: datetime
+
+
+class PendingReturn(BaseModel):
+    source_tx_id: str
+    material_id: str
+    material_name: str | None = None
+    location_id: str
+    location_name: str | None = None
+    quantity: int
+    borrower: str
+    borrowed_at: datetime
+    return_due_at: date | None = None
+    note: str | None = None
+    overdue: bool = False
 
 
 class StockRequest(BaseModel):
@@ -187,6 +215,7 @@ class InboundCreate(BaseModel):
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str | None = Field(default=None, max_length=500)
+    spec: str | None = Field(default=None, max_length=200)
     row: int | None = Field(default=None, ge=1, le=99)
     column: int | None = Field(default=None, ge=1, le=99)
 
@@ -208,8 +237,20 @@ class OutboundCreate(BaseModel):
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str = Field(min_length=1, max_length=500)
+    return_required: bool | None = None
+    return_due_at: date | None = None
     row: int | None = Field(default=None, ge=1, le=99)
     column: int | None = Field(default=None, ge=1, le=99)
+
+    @model_validator(mode="after")
+    def validate_outbound(self) -> "OutboundCreate":
+        if self.return_required is None:
+            raise ValueError("return_policy_required")
+        if self.return_required and not self.return_due_at:
+            raise ValueError("return_due_required")
+        if (self.row is None) ^ (self.column is None):
+            raise ValueError("slot_incomplete")
+        return self
 
 
 class StockRequestCreate(BaseModel):

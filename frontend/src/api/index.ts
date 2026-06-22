@@ -18,6 +18,7 @@ import type {
   Location,
   Material,
   PaginatedMaterials,
+  PendingReturn,
   RoleMeta,
   StockRequest,
   StockRequestStatus,
@@ -155,6 +156,34 @@ export function deleteCategory(categoryId: string) {
   });
 }
 
+export function updateMaterial(
+  materialId: string,
+  payload: {
+    name?: string;
+    category_id?: string;
+    major_category?: string;
+    sub_category?: string;
+    code?: string;
+    unit?: string;
+    spec?: string;
+    barcode?: string;
+    default_location_id?: string;
+    supplier?: string;
+    min_stock?: number;
+  },
+) {
+  return request<Material>(`/materials/${materialId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteMaterial(materialId: string) {
+  return request<{ deleted: boolean }>(`/materials/${materialId}`, {
+    method: "DELETE",
+  });
+}
+
 export function createMaterial(payload: {
   name: string;
   category_id: string;
@@ -268,6 +297,8 @@ export function postOutbound(payload: {
   qty: number;
   idempotency_key: string;
   note: string;
+  return_required: boolean;
+  return_due_at?: string;
   row?: number;
   column?: number;
 }) {
@@ -373,12 +404,20 @@ export function listTransactions(opts?: {
   return request<Transaction[]>(`/transactions${qs ? `?${qs}` : ""}`);
 }
 
+export function listPendingReturns(borrower?: string) {
+  const params = new URLSearchParams();
+  if (borrower?.trim()) params.set("borrower", borrower.trim());
+  const qs = params.toString();
+  return request<PendingReturn[]>(`/returns/pending${qs ? `?${qs}` : ""}`);
+}
+
 export function postInbound(payload: {
   material_id: string;
   location_id: string;
   qty: number;
   idempotency_key: string;
   note?: string;
+  spec?: string;
   row?: number;
   column?: number;
 }) {
