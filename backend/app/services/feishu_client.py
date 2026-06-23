@@ -273,15 +273,15 @@ class FeishuClient:
             logger.warning("is_in_chat 网络异常 chat_id=%s: %s", chat_id, exc)
             return None, {"message": str(exc)}
 
-            try:
-                payload = resp.json()
-            except Exception:
-                return None, {"message": f"非 JSON 响应 HTTP {resp.status_code}"}
+        try:
+            payload = resp.json()
+        except Exception:
+            return None, {"message": f"非 JSON 响应 HTTP {resp.status_code}"}
 
-            if payload.get("code") != 0:
-                return None, self._parse_im_error(payload)
+        if payload.get("code") != 0:
+            return None, self._parse_im_error(payload)
 
-            return bool(payload.get("data", {}).get("is_in_chat")), None
+        return bool(payload.get("data", {}).get("is_in_chat")), None
 
     def _parse_im_error(self, payload: dict[str, Any]) -> dict[str, Any]:
         code = payload.get("code")
