@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -60,6 +60,7 @@ export function StockInboundPanel() {
   const [slotColumn, setSlotColumn] = useState(1);
   const { canInbound } = useAuth();
   const isDirectInbound = canInbound;
+  const createFormRef = useRef<HTMLDivElement>(null);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -126,6 +127,10 @@ export function StockInboundPanel() {
     }
     // 自动打开新增物料表单
     setShowCreateMaterial(true);
+    // 滚动到表单位置
+    setTimeout(() => {
+      createFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
   }, [presetCategoryId, categories]);
 
   useEffect(() => {
@@ -510,6 +515,7 @@ export function StockInboundPanel() {
       </SectionCard>
 
       {isDirectInbound && !loading && locationOptions.length > 0 && categories.length > 0 && (
+        <div ref={createFormRef}>
         <SectionCard
           title="快捷新增物料"
           subtitle="搜索不到物料时，先建档再入库"
@@ -600,6 +606,7 @@ export function StockInboundPanel() {
             </Form>
           )}
         </SectionCard>
+        </div>
       )}
     </>
   );

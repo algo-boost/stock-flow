@@ -307,6 +307,25 @@ class MockStore:
             examples=payload.examples,
         )
         self.categories[category_id] = category
+
+        # 如果在中类下新增子类，自动把中类下的物料迁移到新子类
+        if parent_id and sub_name:
+            migrated = 0
+            for mat in list(self.materials.values()):
+                if mat.category_id == parent_id:
+                    self.materials[mat.id] = mat.model_copy(
+                        update={
+                            "category_id": category.id,
+                            "category_name": category.name,
+                            "sub_category": sub_name,
+                        }
+                    )
+                    migrated += 1
+            if migrated:
+                import logging
+                _logger = logging.getLogger("stock-flow.mock")
+                _logger.info("新增子类 %s → 迁移了 %d 个物料", name, migrated)
+
         return category
 
     def _reassign_material_category(self, material_id: str, category: Category) -> None:

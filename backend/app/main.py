@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import os
 
 from app.api import admin, auth_routes, feishu_events, inventory, materials, returns, transactions
 from app.bitable.repository import BitableRepository
@@ -117,6 +118,19 @@ def create_app() -> FastAPI:
     app.include_router(returns.router)
     app.include_router(admin.router)
     app.include_router(feishu_events.router)
+
+    # 生产模式：托管前端构建产物（dist/）
+    dist_dir = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+    if os.path.isdir(dist_dir):
+        from fastapi.responses import FileResponse
+
+        @app.get("/{full_path:path}")
+        async def serve_frontend(full_path: str):
+            # 如果请求匹配 dist 中的文件，直接返回；否则返回 index.html（SPA 路由）
+            path = os.path.join(dist_dir, full_path) if full_path else dist_dir
+            if os.path.isfile(path):
+                return FileResponse(path)
+            return FileResponse(os.path.join(dist_dir, "index.html"))
 
     return app
 

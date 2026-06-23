@@ -487,6 +487,25 @@ class BitableRepository:
             s.bitable_table_categories,
             rec if rec.get("fields") else self._cached_record(rid, fields),
         )
+
+        # 如果在中类下新增子类，自动把中类下的物料迁移到新子类
+        if parent_id and sub_name:
+            try:
+                materials = await self._load_materials()
+                migrated = 0
+                for mat_id, mat in list(materials.items()):
+                    if mat.category_id == parent_id:
+                        update_fields: dict[str, Any] = {
+                            s.bitable_f_material_category: write_link(rid),
+                            s.bitable_f_material_sub_category: sub_name,
+                        }
+                        await self.client.update_record(s.bitable_table_materials, mat_id, update_fields)
+                        migrated += 1
+                if migrated:
+                    logger.info("新增子类 %s → 迁移了 %d 个物料到 Bitable", name, migrated)
+            except Exception as exc:
+                logger.warning("子类物料迁移失败（非致命）: %s", exc)
+
         return category
 
     async def delete_category(self, category_id: str) -> None:

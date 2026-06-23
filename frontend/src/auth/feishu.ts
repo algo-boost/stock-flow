@@ -206,21 +206,10 @@ export async function feishuLogin(): Promise<{
   user: User;
   role_meta?: RoleMeta | null;
 }> {
-  console.time("🔐 feishuLogin 总耗时");
-
-  console.time("  └ ensureFeishuSdk");
   await ensureFeishuSdk();
-  console.timeEnd("  └ ensureFeishuSdk");
-
-  console.time("  └ fetchAppId");
   const appId = await fetchAppId();
-  console.timeEnd("  └ fetchAppId");
-
-  console.time("  └ requestLoginCode");
   const code = await requestLoginCode(appId);
-  console.timeEnd("  └ requestLoginCode");
 
-  console.time("  └ POST /auth/feishu/login");
   const data = await fetchApiData<{
     token: string;
     user: User;
@@ -230,9 +219,6 @@ export async function feishuLogin(): Promise<{
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code }),
   });
-  console.timeEnd("  └ POST /auth/feishu/login");
-
   setAuthToken(data.token);
-  console.timeEnd("🔐 feishuLogin 总耗时");
   return data;
 }
