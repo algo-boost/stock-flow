@@ -69,6 +69,9 @@ class BitableRepository:
         self._materials_cache: dict[str, Material] | None = None
         self._locations_cache: dict[str, Location] | None = None
 
+    async def close(self) -> None:
+        await self.client.close()
+
     def _slots_enabled(self) -> bool:
         return self.settings.inventory_slots_enabled
 

@@ -31,6 +31,21 @@ class BYTableClient:
         self._base = "https://open.feishu.cn/open-apis/bitable/v1"
         self._cached_token: str | None = None
         self._cached_token_expires = 0.0
+        # 共享连接池，复用 TCP/TLS 连接（省掉每次握手的 50-200ms）
+        self._http: httpx.AsyncClient | None = None
+
+    async def _ensure_http(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(
+                timeout=httpx.Timeout(15.0, connect=8.0),
+                limits=httpx.Limits(max_keepalive_connections=4, max_connections=10),
+            )
+        return self._http
+
+    async def close(self) -> None:
+        if self._http:
+            await self._http.aclose()
+            self._http = None
 
     async def list_records(
         self,
@@ -162,17 +177,17 @@ class BYTableClient:
     ) -> httpx.Response:
         last_exc: Exception | None = None
         headers = {"Authorization": f"Bearer {token}"} if token else None
+        http = await self._ensure_http()
 
         for attempt in range(retries):
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.request(
-                        method,
-                        url,
-                        headers=headers,
-                        params=params,
-                        json=json,
-                    )
+                resp = await http.request(
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=json,
+                )
                 return resp
             except _RETRYABLE as exc:
                 last_exc = exc

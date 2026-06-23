@@ -29,6 +29,49 @@ import type {
 
 let reauthPromise: Promise<void> | null = null;
 
+// ── 前端本地缓存（localStorage） ──
+const CACHE_TTL: Record<string, number> = {
+  categories: 600,
+  locations: 600,
+  inventory: 60,
+  default: 120,
+};
+
+function cacheKey(path: string): string {
+  return `lf_cache:${path}`;
+}
+
+function cacheGet(path: string): { data: unknown; ts: number } | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(path));
+    if (!raw) return null;
+    return JSON.parse(raw) as { data: unknown; ts: number };
+  } catch {
+    return null;
+  }
+}
+
+function cacheSet(path: string, data: unknown): void {
+  try {
+    localStorage.setItem(cacheKey(path), JSON.stringify({ data, ts: Date.now() }));
+  } catch { /* 满了就跳过 */ }
+}
+
+function cacheClearLike(pattern: string): void {
+  const prefix = `lf_cache:/api/${pattern}`;
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(prefix)) localStorage.removeItem(key);
+  }
+}
+
+function cacheTtl(path: string): number {
+  if (path.includes("/categories")) return CACHE_TTL.categories;
+  if (path.includes("/locations")) return CACHE_TTL.locations;
+  if (path.includes("/inventory")) return CACHE_TTL.inventory;
+  return CACHE_TTL.default;
+}
+
 function headers(): HeadersInit {
   const h: Record<string, string> = {
     "Content-Type": "application/json",
@@ -107,6 +150,20 @@ function formatValidationDetail(detail: unknown): string | undefined {
 }
 
 async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized = true): Promise<T> {
+  const isGet = !init || init.method === undefined || init.method?.toUpperCase() === "GET";
+
+  // GET 请求：优先读本地缓存
+  if (isGet) {
+    const cached = cacheGet(path);
+    if (cached && Date.now() - cached.ts < cacheTtl(path) * 1000) {
+      // 后台异步刷新（静默更新）
+      fetchJson<T>(path, init).then(({ body }) => {
+        if (body.code === 0) cacheSet(path, body.data);
+      }).catch(() => {});
+      return cached.data as T;
+    }
+  }
+
   let { resp, body } = await fetchJson<T>(path, init);
   if (retryOnUnauthorized && isUnauthorized(resp, body) && isFeishuClient()) {
     await reauthWithFeishu();
@@ -119,6 +176,14 @@ async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized 
         : formatValidationDetail((body as { detail?: unknown }).detail);
     throw new Error(body.message || detail || `请求失败 (${resp.status})`);
   }
+
+  // GET 成功 → 写入缓存；写操作 → 清关联缓存
+  if (isGet) {
+    cacheSet(path, body.data);
+  } else {
+    cacheClearLike(path.split("/")[1] || "materials");
+  }
+
   return body.data;
 }
 

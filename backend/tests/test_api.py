@@ -37,7 +37,7 @@ def reset_idempotency():
 
 
 def test_health():
-    resp = client.get("/health")
+    resp = client.get("/api/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
 
@@ -86,7 +86,7 @@ def test_role_defaults_to_user_when_groups_empty():
 
 
 def test_me():
-    resp = client.get("/me", headers=HEADERS_USER)
+    resp = client.get("/api/me", headers=HEADERS_USER)
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
@@ -94,7 +94,7 @@ def test_me():
 
 
 def test_search_materials():
-    resp = client.get("/materials/search?q=大喵", headers=HEADERS_USER)
+    resp = client.get("/api/materials/search?q=大喵", headers=HEADERS_USER)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     assert len(items) >= 1
@@ -104,14 +104,14 @@ def test_search_materials():
 
 
 def test_search_materials_by_name():
-    resp = client.get("/materials/search?q=大喵&search_by=name", headers=HEADERS_USER)
+    resp = client.get("/api/materials/search?q=大喵&search_by=name", headers=HEADERS_USER)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     assert any(item["name"] == "大喵电机" for item in items)
 
 
 def test_search_materials_by_code():
-    resp = client.get("/materials/search?q=M001&search_by=code", headers=HEADERS_USER)
+    resp = client.get("/api/materials/search?q=M001&search_by=code", headers=HEADERS_USER)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     assert len(items) >= 1
@@ -119,7 +119,7 @@ def test_search_materials_by_code():
 
 
 def test_search_materials_by_category_tree():
-    resp = client.get("/materials/search?category=cat_sensing", headers=HEADERS_USER)
+    resp = client.get("/api/materials/search?category=cat_sensing", headers=HEADERS_USER)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     assert len(items) >= 2
@@ -127,7 +127,7 @@ def test_search_materials_by_category_tree():
 
 
 def test_search_materials_stock_only():
-    resp = client.get("/materials/search?stock_only=true", headers=HEADERS_USER)
+    resp = client.get("/api/materials/search?stock_only=true", headers=HEADERS_USER)
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     assert len(items) >= 1
@@ -135,7 +135,7 @@ def test_search_materials_stock_only():
 
 
 def test_list_material_categories():
-    resp = client.get("/materials/categories", headers=HEADERS_USER)
+    resp = client.get("/api/materials/categories", headers=HEADERS_USER)
     assert resp.status_code == 200
     categories = resp.json()["data"]
     assert any(category["name"] == "电机模组" for category in categories)
@@ -144,7 +144,7 @@ def test_list_material_categories():
 
 def test_category_crud_admin():
     create_resp = client.post(
-        "/materials/categories",
+        "/api/materials/categories",
         headers=HEADERS_ADMIN,
         json={"name": "测试一级", "parent_id": None},
     )
@@ -153,27 +153,27 @@ def test_category_crud_admin():
     assert category["name"] == "测试一级"
 
     child_resp = client.post(
-        "/materials/categories",
+        "/api/materials/categories",
         headers=HEADERS_ADMIN,
         json={"name": "测试子类", "parent_id": category["id"]},
     )
     assert child_resp.status_code == 200
 
-    delete_parent = client.delete(f"/materials/categories/{category['id']}", headers=HEADERS_ADMIN)
+    delete_parent = client.delete(f"/api/materials/categories/{category['id']}", headers=HEADERS_ADMIN)
     assert delete_parent.status_code == 200
 
 
 def test_delete_leaf_category_reassigns_material():
-    resp = client.delete("/materials/categories/cat_motor_module", headers=HEADERS_ADMIN)
+    resp = client.delete("/api/materials/categories/cat_motor_module", headers=HEADERS_ADMIN)
     assert resp.status_code == 200
-    material = client.get("/materials/mat_001", headers=HEADERS_USER).json()["data"]["material"]
+    material = client.get("/api/materials/mat_001", headers=HEADERS_USER).json()["data"]["material"]
     assert material["category_id"] == "cat_electrical"
     assert material["category_name"] == "电气类"
 
 
 def test_category_create_forbidden_for_user():
     resp = client.post(
-        "/materials/categories",
+        "/api/materials/categories",
         headers=HEADERS_USER,
         json={"name": "无权限分类", "parent_id": None},
     )
@@ -182,7 +182,7 @@ def test_category_create_forbidden_for_user():
 
 def test_location_create_forbidden_for_user():
     resp = client.post(
-        "/locations",
+        "/api/locations",
         headers=HEADERS_USER,
         json={"code": "DENY-01", "name": "无权限库位", "type": "货柜"},
     )
@@ -191,7 +191,7 @@ def test_location_create_forbidden_for_user():
 
 def test_location_crud_for_keeper_when_empty():
     create_resp = client.post(
-        "/locations",
+        "/api/locations",
         headers=HEADERS_KEEPER,
         json={"code": "TEST-EMPTY-01", "name": "测试空库位", "type": "货架"},
     )
@@ -200,24 +200,24 @@ def test_location_crud_for_keeper_when_empty():
     assert location["name"] == "测试空库位"
 
     update_resp = client.patch(
-        f"/locations/{location['id']}",
+        f"/api/locations/{location['id']}",
         headers=HEADERS_KEEPER,
         json={"name": "测试空库位-改名"},
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["data"]["name"] == "测试空库位-改名"
 
-    delete_resp = client.delete(f"/locations/{location['id']}", headers=HEADERS_KEEPER)
+    delete_resp = client.delete(f"/api/locations/{location['id']}", headers=HEADERS_KEEPER)
     assert delete_resp.status_code == 200
     assert delete_resp.json()["data"]["deleted"] is True
 
-    list_resp = client.get("/locations", headers=HEADERS_KEEPER)
+    list_resp = client.get("/api/locations", headers=HEADERS_KEEPER)
     ids = {item["id"] for item in list_resp.json()["data"]}
     assert location["id"] not in ids
 
 
 def test_location_delete_blocked_when_inventory_exists():
-    resp = client.delete("/locations/loc_01", headers=HEADERS_KEEPER)
+    resp = client.delete("/api/locations/loc_01", headers=HEADERS_KEEPER)
     assert resp.status_code == 400
     body = resp.json()
     assert body["code"] == 4003
@@ -263,7 +263,7 @@ def test_create_material_success_for_keeper():
     assert material["supplier"] == "测试供货商"
     assert material["min_stock"] == 5
 
-    detail_resp = client.get(f"/materials/{material['id']}", headers=HEADERS_KEEPER)
+    detail_resp = client.get(f"/api/materials/{material['id']}", headers=HEADERS_KEEPER)
     assert detail_resp.status_code == 200
     assert detail_resp.json()["data"]["material"]["name"] == "测试新物料"
 
@@ -281,7 +281,7 @@ def test_update_material_success_for_keeper():
     material_id = create_resp.json()["data"]["id"]
 
     patch_resp = client.patch(
-        f"/materials/{material_id}",
+        f"/api/materials/{material_id}",
         headers=HEADERS_KEEPER,
         json={"name": "已修改物料", "spec": "新规格"},
     )
@@ -303,11 +303,11 @@ def test_delete_material_success_when_no_stock_or_transactions():
     )
     material_id = create_resp.json()["data"]["id"]
 
-    delete_resp = client.delete(f"/materials/{material_id}", headers=HEADERS_KEEPER)
+    delete_resp = client.delete(f"/api/materials/{material_id}", headers=HEADERS_KEEPER)
     assert delete_resp.status_code == 200
     assert delete_resp.json()["data"]["deleted"] is True
 
-    detail_resp = client.get(f"/materials/{material_id}", headers=HEADERS_KEEPER)
+    detail_resp = client.get(f"/api/materials/{material_id}", headers=HEADERS_KEEPER)
     assert detail_resp.status_code == 404
 
 
@@ -323,7 +323,7 @@ def test_delete_material_forbidden_for_user():
     )
     material_id = create_resp.json()["data"]["id"]
 
-    delete_resp = client.delete(f"/materials/{material_id}", headers=HEADERS_USER)
+    delete_resp = client.delete(f"/api/materials/{material_id}", headers=HEADERS_USER)
     assert delete_resp.status_code == 403
 
 
@@ -342,7 +342,7 @@ def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
     )
     assert forbidden.status_code == 403
 
-    before = client.get("/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    before = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
     before_total = before["total_quantity"]
     resp = client.post(
         "/purchase-inbound",
@@ -360,11 +360,11 @@ def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
     tx_id = resp.json()["data"]["transaction_id"]
     assert tx_id
 
-    after = client.get("/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    after = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
     assert after["total_quantity"] == before_total + 2
     assert after["material"]["supplier"] == "管理员供货商"
 
-    txs = client.get("/materials/mat_001/transactions", headers=HEADERS_ADMIN).json()["data"]
+    txs = client.get("/api/materials/mat_001/transactions", headers=HEADERS_ADMIN).json()["data"]
     assert any(
         tx["id"] == tx_id
         and tx["quantity"] == 2
@@ -390,12 +390,12 @@ def test_low_stock_alerts_less_than_threshold_only():
     assert create_resp.status_code == 200
     material = create_resp.json()["data"]
 
-    low_resp = client.get("/inventory/low-stock", headers=HEADERS_ADMIN)
+    low_resp = client.get("/api/inventory/low-stock", headers=HEADERS_ADMIN)
     assert low_resp.status_code == 200
     low_items = low_resp.json()["data"]
     assert any(item["id"] == material["id"] and item["threshold"] == 5 for item in low_items)
 
-    forbidden = client.get("/inventory/low-stock", headers=HEADERS_KEEPER)
+    forbidden = client.get("/api/inventory/low-stock", headers=HEADERS_KEEPER)
     assert forbidden.status_code == 403
 
     purchase_resp = client.post(
@@ -411,13 +411,13 @@ def test_low_stock_alerts_less_than_threshold_only():
     )
     assert purchase_resp.status_code == 200
 
-    low_after = client.get("/inventory/low-stock", headers=HEADERS_ADMIN).json()["data"]
+    low_after = client.get("/api/inventory/low-stock", headers=HEADERS_ADMIN).json()["data"]
     assert all(item["id"] != material["id"] for item in low_after)
 
 
 def test_outbound_forbidden_for_user():
     resp = client.post(
-        "/outbound",
+        "/api/outbound",
         headers=HEADERS_USER,
         json={
             "material_id": "mat_001",
@@ -434,7 +434,7 @@ def test_outbound_forbidden_for_user():
 def test_outbound_success_for_keeper():
     key = "test-outbound-key-001"
     resp = client.post(
-        "/outbound",
+        "/api/outbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -453,7 +453,7 @@ def test_outbound_success_for_keeper():
 
     # 幂等：重复请求返回相同结果
     resp2 = client.post(
-        "/outbound",
+        "/api/outbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -467,7 +467,7 @@ def test_outbound_success_for_keeper():
     )
     assert resp2.json()["data"]["transaction_id"] == tx_id
 
-    tx_resp = client.get("/materials/mat_001/transactions", headers=HEADERS_KEEPER)
+    tx_resp = client.get("/api/materials/mat_001/transactions", headers=HEADERS_KEEPER)
     assert tx_resp.status_code == 200
     txs = tx_resp.json()["data"]
     matched = next(tx for tx in txs if tx["id"] == tx_id and tx["quantity"] < 0)
@@ -476,7 +476,7 @@ def test_outbound_success_for_keeper():
 
 def test_outbound_insufficient_stock():
     resp = client.post(
-        "/outbound",
+        "/api/outbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -493,7 +493,7 @@ def test_outbound_insufficient_stock():
 
 def test_user_request_approved_by_admin_creates_history():
     create_resp = client.post(
-        "/requests",
+        "/api/requests",
         headers=HEADERS_USER,
         json={
             "type": "出库",
@@ -509,21 +509,21 @@ def test_user_request_approved_by_admin_creates_history():
     assert create_resp.status_code == 200
     request_id = create_resp.json()["data"]["request_id"]
 
-    mine_resp = client.get("/requests/mine", headers=HEADERS_USER)
+    mine_resp = client.get("/api/requests/mine", headers=HEADERS_USER)
     assert mine_resp.status_code == 200
     assert any(item["id"] == request_id and item["status"] == "待审批" for item in mine_resp.json()["data"])
 
-    pending_resp = client.get("/requests?status=待审批", headers=HEADERS_ADMIN)
+    pending_resp = client.get("/api/requests?status=待审批", headers=HEADERS_ADMIN)
     assert pending_resp.status_code == 200
     assert any(item["id"] == request_id for item in pending_resp.json()["data"])
 
-    approve_resp = client.post(f"/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    approve_resp = client.post(f"/api/requests/{request_id}/approve", headers=HEADERS_ADMIN)
     assert approve_resp.status_code == 200
     approved = approve_resp.json()["data"]
     assert approved["status"] == "已通过"
     assert approved["transaction_id"]
 
-    history_resp = client.get("/transactions", headers=HEADERS_USER)
+    history_resp = client.get("/api/transactions", headers=HEADERS_USER)
     assert history_resp.status_code == 200
     txs = history_resp.json()["data"]
     assert any(tx["id"] == approved["transaction_id"] and tx["operator"] == "研发用户" for tx in txs)
@@ -531,7 +531,7 @@ def test_user_request_approved_by_admin_creates_history():
 
 def test_user_inbound_request_without_location_approved_by_admin():
     create_resp = client.post(
-        "/requests",
+        "/api/requests",
         headers=HEADERS_USER,
         json={
             "type": "入库",
@@ -544,12 +544,12 @@ def test_user_inbound_request_without_location_approved_by_admin():
     assert create_resp.status_code == 200
     request_id = create_resp.json()["data"]["request_id"]
 
-    pending_resp = client.get("/requests?status=待审批", headers=HEADERS_ADMIN)
+    pending_resp = client.get("/api/requests?status=待审批", headers=HEADERS_ADMIN)
     pending_item = next(item for item in pending_resp.json()["data"] if item["id"] == request_id)
     assert pending_item["location_id"] is None
 
     approve_resp = client.post(
-        f"/requests/{request_id}/approve",
+        f"/api/requests/{request_id}/approve",
         headers=HEADERS_ADMIN,
         json={"location_id": "loc_01", "row": 2, "column": 3},
     )
@@ -562,7 +562,7 @@ def test_user_inbound_request_without_location_approved_by_admin():
 
 def test_inbound_keeps_separate_cabinet_slots():
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -575,7 +575,7 @@ def test_inbound_keeps_separate_cabinet_slots():
         },
     )
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -587,7 +587,7 @@ def test_inbound_keeps_separate_cabinet_slots():
             "column": 10,
         },
     )
-    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    detail = client.get("/api/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
     slots = {
         (item["row"], item["column"]): item["quantity"]
         for item in detail["inventory"]
@@ -600,7 +600,7 @@ def test_inbound_keeps_separate_cabinet_slots():
 
 def test_update_second_inventory_slot():
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -613,7 +613,7 @@ def test_update_second_inventory_slot():
         },
     )
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -626,12 +626,12 @@ def test_update_second_inventory_slot():
         },
     )
     resp = client.patch(
-        "/materials/mat_001/inventory/loc_01/slot",
+        "/api/materials/mat_001/inventory/loc_01/slot",
         headers=HEADERS_KEEPER,
         json={"row": 1, "column": 7, "from_row": 1, "from_column": 5},
     )
     assert resp.status_code == 200
-    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    detail = client.get("/api/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
     slots = {
         (item["row"], item["column"]): item["quantity"]
         for item in detail["inventory"]
@@ -644,7 +644,7 @@ def test_update_second_inventory_slot():
 
 def test_outbound_request_approval_uses_cabinet_slot():
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -657,7 +657,7 @@ def test_outbound_request_approval_uses_cabinet_slot():
         },
     )
     create_resp = client.post(
-        "/requests",
+        "/api/requests",
         headers=HEADERS_USER,
         json={
             "type": "出库",
@@ -675,10 +675,10 @@ def test_outbound_request_approval_uses_cabinet_slot():
     assert create_resp.status_code == 200
     request_id = create_resp.json()["data"]["request_id"]
 
-    approve_resp = client.post(f"/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    approve_resp = client.post(f"/api/requests/{request_id}/approve", headers=HEADERS_ADMIN)
     assert approve_resp.status_code == 200
 
-    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    detail = client.get("/api/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
     slots = {
         (item["row"], item["column"]): item["quantity"]
         for item in detail["inventory"]
@@ -689,7 +689,7 @@ def test_outbound_request_approval_uses_cabinet_slot():
 
 def test_outbound_request_approval_auto_picks_slot_when_missing():
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -702,7 +702,7 @@ def test_outbound_request_approval_auto_picks_slot_when_missing():
         },
     )
     create_resp = client.post(
-        "/requests",
+        "/api/requests",
         headers=HEADERS_USER,
         json={
             "type": "出库",
@@ -717,13 +717,13 @@ def test_outbound_request_approval_auto_picks_slot_when_missing():
     assert create_resp.status_code == 200
     request_id = create_resp.json()["data"]["request_id"]
 
-    approve_resp = client.post(f"/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    approve_resp = client.post(f"/api/requests/{request_id}/approve", headers=HEADERS_ADMIN)
     assert approve_resp.status_code == 200
 
 
 def test_inbound_forbidden_for_user():
     resp = client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_USER,
         json={
             "material_id": "mat_001",
@@ -738,7 +738,7 @@ def test_inbound_forbidden_for_user():
 
 def test_inbound_success_for_keeper():
     resp = client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -754,7 +754,7 @@ def test_inbound_success_for_keeper():
 
 def test_inbound_updates_material_spec_for_keeper():
     resp = client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -766,13 +766,13 @@ def test_inbound_updates_material_spec_for_keeper():
         },
     )
     assert resp.status_code == 200
-    detail = client.get("/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    detail = client.get("/api/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
     assert detail["material"]["spec"] == "D435i 新版"
 
 
 def test_transfer_forbidden_for_user():
     resp = client.post(
-        "/transfer",
+        "/api/transfer",
         headers=HEADERS_USER,
         json={
             "material_id": "mat_realsense",
@@ -789,7 +789,7 @@ def test_transfer_forbidden_for_user():
 def test_transfer_success_for_keeper():
     key = "test-transfer-keeper-001"
     resp = client.post(
-        "/transfer",
+        "/api/transfer",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_realsense",
@@ -807,7 +807,7 @@ def test_transfer_success_for_keeper():
     assert len(tx_ids) == 1
 
     resp2 = client.post(
-        "/transfer",
+        "/api/transfer",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_realsense",
@@ -820,11 +820,11 @@ def test_transfer_success_for_keeper():
     )
     assert resp2.json()["data"]["transaction_ids"] == tx_ids
 
-    detail = client.get("/materials/mat_realsense", headers=HEADERS_KEEPER).json()["data"]
+    detail = client.get("/api/materials/mat_realsense", headers=HEADERS_KEEPER).json()["data"]
     by_location = {item["location_id"]: item["quantity"] for item in detail["inventory"]}
     assert by_location["loc_staging"] >= 1
 
-    tx_resp = client.get("/materials/mat_realsense/transactions", headers=HEADERS_KEEPER)
+    tx_resp = client.get("/api/materials/mat_realsense/transactions", headers=HEADERS_KEEPER)
     txs = tx_resp.json()["data"]
     movement = [tx for tx in txs if tx["id"] in tx_ids]
     assert {tx["type"] for tx in movement} == {"移动"}
@@ -833,12 +833,12 @@ def test_transfer_success_for_keeper():
 
 
 def test_refresh_cache_forbidden_for_user():
-    resp = client.post("/admin/cache/refresh", headers=HEADERS_USER)
+    resp = client.post("/api/admin/cache/refresh", headers=HEADERS_USER)
     assert resp.status_code == 403
 
 
 def test_refresh_cache_success_for_keeper():
-    resp = client.post("/admin/cache/refresh", headers=HEADERS_KEEPER)
+    resp = client.post("/api/admin/cache/refresh", headers=HEADERS_KEEPER)
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
@@ -847,22 +847,22 @@ def test_refresh_cache_success_for_keeper():
 
 def test_admin_center_keeps_existing_admin_and_keeper_permissions():
     create_resp = client.post(
-        "/locations",
+        "/api/locations",
         headers=HEADERS_ADMIN,
         json={"code": "ADMIN-EMPTY-01", "name": "管理员测试空库位", "type": "货柜"},
     )
     assert create_resp.status_code == 200
     location = create_resp.json()["data"]
 
-    list_resp = client.get("/requests", headers=HEADERS_ADMIN)
+    list_resp = client.get("/api/requests", headers=HEADERS_ADMIN)
     assert list_resp.status_code == 200
 
-    delete_resp = client.delete(f"/locations/{location['id']}", headers=HEADERS_ADMIN)
+    delete_resp = client.delete(f"/api/locations/{location['id']}", headers=HEADERS_ADMIN)
     assert delete_resp.status_code == 200
 
 
 def test_admin_center_endpoints_are_admin_only():
-    for path in ["/admin/overview", "/admin/audit", "/admin/system"]:
+    for path in ["/api/admin/overview", "/api/admin/audit", "/api/admin/system"]:
         forbidden_user = client.get(path, headers=HEADERS_USER)
         assert forbidden_user.status_code == 403
 
@@ -877,7 +877,7 @@ def test_admin_center_endpoints_are_admin_only():
 
 
 def test_admin_overview_contains_statistics():
-    resp = client.get("/admin/overview", headers=HEADERS_ADMIN)
+    resp = client.get("/api/admin/overview", headers=HEADERS_ADMIN)
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert "tables" in data
@@ -887,7 +887,7 @@ def test_admin_overview_contains_statistics():
 
 def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
     client.post(
-        "/outbound",
+        "/api/outbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_realsense",
@@ -907,7 +907,7 @@ def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
     assert items[0]["return_due_at"] == "2026-07-01"
 
     client.post(
-        "/inbound",
+        "/api/inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_realsense",

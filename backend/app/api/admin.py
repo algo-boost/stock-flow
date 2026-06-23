@@ -274,3 +274,31 @@ async def reset_sqlite_cache(
         if table_id:
             sqlite.clear_table(table_id)
     return success({"reset": True, "message": "SQLite 缓存已清空，下次请求将自动从 Bitable 恢复"})
+
+
+# ── 流水归档管理 ──
+
+@router.post("/transactions/archive")
+async def archive_transactions(
+    before_days: int = Query(default=90, ge=30, le=730, description="归档 N 天前的流水"),
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    """将 N 天前的流水从主缓存移到归档表。"""
+    if not settings.sqlite_cache_enabled:
+        return success({"archived": 0, "message": "SQLite 缓存未启用"})
+    from app.bitable.sqlite_cache import get_sqlite_cache
+    sqlite = get_sqlite_cache()
+    count = sqlite.archive_before(settings.bitable_table_transactions, before_days)
+    return success({"archived": count, "before_days": before_days, "stats": sqlite.archive_stats(settings.bitable_table_transactions)})
+
+
+@router.get("/transactions/archive-stats")
+async def archive_stats(
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    """查看流水归档统计（active / archived 数量）。"""
+    from app.bitable.sqlite_cache import get_sqlite_cache
+    sqlite = get_sqlite_cache()
+    return success(sqlite.archive_stats(settings.bitable_table_transactions))

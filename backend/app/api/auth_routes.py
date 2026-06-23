@@ -125,3 +125,24 @@ async def health(settings: Settings = Depends(get_settings)):
         except Exception as exc:
             result["feishu_im"] = {"ok": False, "reason": str(exc)}
     return result
+
+
+@router.get("/bootstrap")
+async def bootstrap(
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """首页启动包：一次请求返回分类、物料、库位等全部数据，省掉 4-5 次往返。"""
+    from app.services.inventory import InventoryService
+
+    svc = InventoryService(settings)
+    categories, catalog, locs = await asyncio.gather(
+        svc.list_categories(),
+        svc.list_material_catalog(),
+        svc.list_locations(),
+    )
+    return success({
+        "categories": [c.model_dump(mode="json") for c in categories],
+        "materials": [m.model_dump(mode="json") for m in catalog],
+        "locations": [l.model_dump(mode="json") for l in locs],
+    })

@@ -33,6 +33,21 @@ CREATE TABLE IF NOT EXISTS records (
 
 CREATE INDEX IF NOT EXISTS idx_records_table ON records(table_id);
 CREATE INDEX IF NOT EXISTS idx_records_cached ON records(cached_at);
+CREATE INDEX IF NOT EXISTS idx_records_created ON records(table_id, created_time DESC);
+CREATE INDEX IF NOT EXISTS idx_records_material ON records(table_id, json_extract(fields_json, '$.material_id'));
+
+-- 归档表（结构和 records 一致，存旧流水）
+CREATE TABLE IF NOT EXISTS archived_records (
+    table_id TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    fields_json TEXT NOT NULL DEFAULT '{}',
+    created_time TEXT,
+    last_modified_time TEXT,
+    cached_at REAL NOT NULL,
+    archived_at REAL NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (table_id, record_id)
+);
+CREATE INDEX IF NOT EXISTS idx_archived_created ON archived_records(table_id, created_time DESC);
 """
 
 
@@ -148,6 +163,65 @@ class SqliteCache:
         with self._conn() as conn:
             conn.execute("DELETE FROM records WHERE table_id = ?", (table_id,))
             conn.commit()
+
+    # ── 分页查询 ──
+
+    def query_records(
+        self, table_id: str, *, limit: int = 50, offset: int = 0,
+        order_desc: bool = True, material_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """分页查询，返回 (records, total_count)。"""
+        with self._conn() as conn:
+            where = "WHERE table_id = ?"
+            params: list[Any] = [table_id]
+            if material_id:
+                where += " AND json_extract(fields_json, '$.material_id') = ?"
+                params.append(material_id)
+            total = conn.execute(f"SELECT COUNT(*) as cnt FROM records {where}", params).fetchone()["cnt"]
+            order = "ORDER BY created_time DESC" if order_desc else "ORDER BY created_time ASC"
+            rows = conn.execute(
+                f"SELECT record_id, fields_json, created_time, last_modified_time FROM records {where} {order} LIMIT ? OFFSET ?",
+                params + [limit, offset],
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                fields = json.loads(row["fields_json"])
+            except (json.JSONDecodeError, TypeError):
+                fields = {}
+            results.append({
+                "record_id": row["record_id"],
+                "fields": fields,
+                "created_time": row["created_time"],
+                "last_modified_time": row["last_modified_time"],
+            })
+        return results, total
+
+    # ── 归档 ──
+
+    def archive_before(self, table_id: str, before_days: int) -> int:
+        """将 N 天前的记录从 records 移到 archived_records，返回归档条数。"""
+        cutoff = time.time() - before_days * 86400
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO archived_records (table_id, record_id, fields_json, created_time, last_modified_time, cached_at)"
+                " SELECT table_id, record_id, fields_json, created_time, last_modified_time, cached_at FROM records"
+                " WHERE table_id = ? AND cached_at < ?",
+                (table_id, cutoff),
+            )
+            count = conn.total_changes
+            conn.execute("DELETE FROM records WHERE table_id = ? AND cached_at < ?", (table_id, cutoff))
+            conn.commit()
+        if count:
+            logger.info("归档 %s: %d 条移到 archived_records", table_id, count)
+        return count
+
+    def archive_stats(self, table_id: str) -> dict[str, int]:
+        """返回 active_count / archived_count。"""
+        with self._conn() as conn:
+            active = conn.execute("SELECT COUNT(*) as cnt FROM records WHERE table_id = ?", (table_id,)).fetchone()["cnt"]
+            archived = conn.execute("SELECT COUNT(*) as cnt FROM archived_records WHERE table_id = ?", (table_id,)).fetchone()["cnt"]
+        return {"active": active, "archived": archived}
 
     # ── 状态 ──
 

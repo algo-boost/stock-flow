@@ -1,7 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { AuthProvider } from "./components/AuthGate";
 import { UndoToast } from "./components/UndoToast";
-import { PerfBar } from "./components/PerfBar";
 import AdminCenterPage from "./pages/AdminCenter";
 import DetailPage from "./pages/Detail";
 import HistoryPage from "./pages/History";
@@ -39,7 +38,6 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <UndoToast />
-        <PerfBar />
         <Routes>
           <Route path="/" element={<SearchPage />} />
           <Route path="/materials/:id" element={<DetailPage />} />

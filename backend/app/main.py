@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -20,6 +21,7 @@ logger = logging.getLogger("stock-flow")
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     logger.info("启动 stock-flow API env=%s bitable=%s", settings.app_env, settings.bitable_mode)
+    _repo: BitableRepository | None = None
     if (
         settings.bitable_mode == "real"
         and settings.bitable_configured
@@ -27,6 +29,7 @@ async def lifespan(_app: FastAPI):
     ):
         try:
             repo = BitableRepository(settings)
+            _repo = repo
             # 优先从 SQLite 本地缓存预热（毫秒级）
             if settings.sqlite_cache_enabled:
                 from app.bitable.sqlite_cache import get_sqlite_cache
@@ -34,6 +37,15 @@ async def lifespan(_app: FastAPI):
                 snap = sqlite.snapshot()
                 if snap:
                     logger.info("SQLite 缓存命中 %d 表 (%d 条记录)，启动即用", len(snap), sum(snap.values()))
+                    # 从 SQLite 回填内存缓存，避免首次请求回源飞书 API（省 1.5-2.5s）
+                    from app.bitable.repository import _TABLE_CACHE
+                    now = time.monotonic()
+                    for table_id, count in snap.items():
+                        if count > 0:
+                            records = sqlite.get_records(table_id)
+                            if records:
+                                _TABLE_CACHE[(settings.bitable_app_token, table_id)] = (now, records)
+                    logger.info("内存缓存已从 SQLite 预热完成")
                 else:
                     # SQLite 为空 → 自动从 Bitable 全量恢复
                     logger.info("SQLite 缓存为空，正在从 Bitable 自动恢复…")
@@ -67,6 +79,13 @@ async def lifespan(_app: FastAPI):
         except Exception as exc:
             logger.warning("缓存预热失败，将在首次请求时按需拉取: %s", exc)
     yield
+    # 优雅关闭：释放 Bitable 连接池
+    if _repo is not None:
+        try:
+            await _repo.close()
+            logger.info("Bitable 连接池已释放")
+        except Exception as exc:
+            logger.warning("关闭 Bitable 连接池失败: %s", exc)
 
 
 def create_app() -> FastAPI:
@@ -85,14 +104,12 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 浏览器缓存：手机端不再重复下载
+    # 静态文件长期缓存（JS/CSS/PNG 部署后不变）
     @app.middleware("http")
     async def cache_headers(request: Request, call_next):
         response = await call_next(request)
         if request.method == "GET" and response.status_code < 400:
-            if request.url.path.startswith("/api/"):
-                response.headers["Cache-Control"] = "private, max-age=1800"
-            elif "/assets/" in request.url.path or request.url.path.endswith((".js", ".css", ".png")):
+            if "/assets/" in request.url.path or request.url.path.endswith((".js", ".css", ".png")):
                 response.headers["Cache-Control"] = "public, max-age=86400"
         return response
 
