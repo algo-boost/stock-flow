@@ -17,6 +17,7 @@ interface AuthContextValue {
   user: User | null;
   roleMeta: RoleMeta | null;
   loading: boolean;
+  authStep: string;
   error: string | null;
   canInbound: boolean;
   canApprove: boolean;
@@ -56,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [roleMeta, setRoleMeta] = useState<RoleMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authStep, setAuthStep] = useState("");
   const isFeishu = isFeishuClient();
 
   const refresh = async () => {
@@ -63,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       if (isFeishu && !getAuthToken()) {
+        setAuthStep("正在初始化飞书 SDK…");
         const login = await loginWithFeishu();
         setUser(login.user);
         setRoleMeta(login.roleMeta);
@@ -115,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         roleMeta,
         loading,
+        authStep,
         error,
         canInbound,
         canApprove,
@@ -176,12 +180,12 @@ export function AuthGate({
   children: ReactNode;
   fallback?: ReactNode;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading, authStep } = useAuth();
   if (loading) {
     return (
       <div className="page">
         <div className="page-body">
-          <EmptyState icon="⏳" text="正在加载…" hint="验证登录与权限" />
+          <EmptyState icon="⏳" text="正在加载…" hint={authStep || "验证登录与权限"} />
         </div>
       </div>
     );

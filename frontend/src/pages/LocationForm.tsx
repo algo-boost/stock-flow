@@ -1,38 +1,58 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button, Form, Input, Selector, Toast } from "antd-mobile";
 import { useNavigate, useParams } from "react-router-dom";
-import { createLocation, listLocations, updateLocation } from "../api";
+import { createLocation, listLocationTypes, listLocations, updateLocation } from "../api";
+import type { Location } from "../api/types";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, SectionCard } from "../components/ui";
 
-const LOCATION_TYPES = ["货柜", "货架", "专用螺栓架", "工具架", "快递暂存"];
-
 function emptyForm() {
-  return { code: "", name: "", type: "货柜" };
+  return { code: "", name: "", type: "货柜", parent_id: "" };
 }
 
 function LocationFormContent() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isEdit = Boolean(id);
-  const [loading, setLoading] = useState(isEdit);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [allLocations, setAllLocations] = useState<Location[]>([]);
+  const [locationTypes, setLocationTypes] = useState<string[]>(["货柜", "货架", "专用螺栓架", "工具架", "快递暂存"]);
+
+  const loadMeta = useCallback(async () => {
+    try {
+      const [locs, types] = await Promise.all([
+        listLocations(),
+        listLocationTypes().catch(() => [] as string[]),
+      ]);
+      setAllLocations(locs);
+      if (types.length) setLocationTypes(types);
+    } catch { /* 降级使用默认类型 */ }
+  }, []);
+
+  useEffect(() => { void loadMeta(); }, [loadMeta]);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id) { setLoading(false); return; }
     void (async () => {
       setLoading(true);
       try {
-        const locations = await listLocations();
-        const location = locations.find((item) => item.id === id);
+        // loadMeta 已经加载了所有库位数据，从这里找要编辑的库位
+        const locs = allLocations.length > 0 ? allLocations : await listLocations();
+        const location = locs.find((item) => item.id === id);
         if (!location) {
           Toast.show({ icon: "fail", content: "库位不存在或已删除" });
           navigate("/locations", { replace: true });
           return;
         }
-        setForm({ code: location.code, name: location.name, type: location.type || "货柜" });
+        setForm({
+          code: location.code,
+          name: location.name,
+          type: location.type || "货柜",
+          parent_id: location.parent_id ?? "",
+        });
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载库位失败" });
         navigate("/locations", { replace: true });
@@ -40,7 +60,15 @@ function LocationFormContent() {
         setLoading(false);
       }
     })();
-  }, [id, navigate]);
+  }, [id, navigate, allLocations]);
+
+  // 父库位选项（排除自身和子库位，避免循环引用）
+  const parentOptions = [
+    { label: "无（顶层）", value: "" },
+    ...allLocations
+      .filter((l) => l.id !== id)
+      .map((l) => ({ label: `${l.code} ${l.name}`, value: l.id })),
+  ];
 
   const onSubmit = async () => {
     if (!form.code.trim() || !form.name.trim()) {
@@ -49,11 +77,14 @@ function LocationFormContent() {
     }
     setSaving(true);
     try {
-      const payload = {
+      const payload: { code: string; name: string; type: string; parent_id?: string } = {
         code: form.code.trim(),
         name: form.name.trim(),
         type: form.type.trim() || "货柜",
       };
+      if (form.parent_id) {
+        payload.parent_id = form.parent_id;
+      }
       if (isEdit && id) {
         await updateLocation(id, payload);
         Toast.show({ icon: "success", content: "库位已更新" });
@@ -91,14 +122,21 @@ function LocationFormContent() {
           </Form.Item>
           <Form.Item label="库位类型">
             <Selector
-              options={LOCATION_TYPES.map((type) => ({ label: type, value: type }))}
+              options={locationTypes.map((t) => ({ label: t, value: t }))}
               value={form.type ? [form.type] : []}
               onChange={(arr) => setForm((v) => ({ ...v, type: arr[0] ?? "货柜" }))}
             />
           </Form.Item>
+          <Form.Item label="父库位（可选）">
+            <Selector
+              options={parentOptions}
+              value={form.parent_id ? [form.parent_id] : [""]}
+              onChange={(arr) => setForm((v) => ({ ...v, parent_id: arr[0] ?? "" }))}
+            />
+          </Form.Item>
         </Form>
         <div className="actions two">
-          <Button disabled={saving} onClick={() => navigate(-1)}>
+          <Button disabled={saving} onClick={() => navigate("/locations")}>
             取消
           </Button>
           <Button color="primary" loading={saving} onClick={onSubmit}>

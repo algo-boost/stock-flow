@@ -47,6 +47,33 @@ class FeishuClient:
         self._app_token_expires = 0.0
         self._jsapi_ticket: str | None = None
         self._jsapi_ticket_expires = 0.0
+        # 共享连接池，复用 TCP/TLS 连接（省掉每次握手的 200-500ms）
+        self._http: httpx.AsyncClient | None = None
+
+    async def _ensure_http(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(
+                timeout=httpx.Timeout(8.0),
+                limits=httpx.Limits(max_keepalive_connections=4, max_connections=10),
+            )
+        return self._http
+
+    async def close(self) -> None:
+        if self._http:
+            await self._http.aclose()
+            self._http = None
+
+    async def _timed(self, label: str, coro):
+        """执行协程并记录耗时，用于诊断启动慢的瓶颈。"""
+        t0 = time.time()
+        try:
+            return await coro
+        finally:
+            elapsed = time.time() - t0
+            if elapsed > 1.0:
+                logger.warning("⏱ Feishu API 慢调用: %s 耗时 %.1fs", label, elapsed)
+            else:
+                logger.debug("⏱ Feishu API: %s 耗时 %.1fs", label, elapsed)
 
     async def get_app_access_token(self) -> str:
         """网页应用免登换 user_access_token 须用 app_access_token。"""
@@ -55,21 +82,21 @@ class FeishuClient:
         if cached and time.time() < cached[1] - 60:
             return cached[0]
 
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                f"{FEISHU_BASE}/auth/v3/app_access_token/internal",
-                json={
-                    "app_id": self.settings.feishu_app_id,
-                    "app_secret": self.settings.feishu_app_secret,
-                },
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-            if payload.get("code") != 0:
-                raise RuntimeError(payload.get("msg", "获取 app_access_token 失败"))
-            token = payload["app_access_token"]
-            _app_token_cache[cache_key] = (token, time.time() + payload.get("expire", 7200))
-            return token
+        http = await self._ensure_http()
+        resp = await self._timed("get_app_access_token", http.post(
+            f"{FEISHU_BASE}/auth/v3/app_access_token/internal",
+            json={
+                "app_id": self.settings.feishu_app_id,
+                "app_secret": self.settings.feishu_app_secret,
+            },
+        ))
+        resp.raise_for_status()
+        payload = resp.json()
+        if payload.get("code") != 0:
+            raise RuntimeError(payload.get("msg", "获取 app_access_token 失败"))
+        token = payload["app_access_token"]
+        _app_token_cache[cache_key] = (token, time.time() + payload.get("expire", 7200))
+        return token
 
     async def get_tenant_access_token(self) -> str:
         cache_key = self.settings.feishu_app_id
@@ -77,47 +104,54 @@ class FeishuClient:
         if cached and time.time() < cached[1] - 60:
             return cached[0]
 
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                f"{FEISHU_BASE}/auth/v3/tenant_access_token/internal",
-                json={
-                    "app_id": self.settings.feishu_app_id,
-                    "app_secret": self.settings.feishu_app_secret,
-                },
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-            if payload.get("code") != 0:
-                raise RuntimeError(payload.get("msg", "获取 tenant_access_token 失败"))
-            token = payload["tenant_access_token"]
-            _tenant_token_cache[cache_key] = (token, time.time() + payload.get("expire", 7200))
-            return token
+        http = await self._ensure_http()
+        resp = await self._timed("get_tenant_access_token", http.post(
+            f"{FEISHU_BASE}/auth/v3/tenant_access_token/internal",
+            json={
+                "app_id": self.settings.feishu_app_id,
+                "app_secret": self.settings.feishu_app_secret,
+            },
+        ))
+        resp.raise_for_status()
+        payload = resp.json()
+        if payload.get("code") != 0:
+            raise RuntimeError(payload.get("msg", "获取 tenant_access_token 失败"))
+        token = payload["tenant_access_token"]
+        _tenant_token_cache[cache_key] = (token, time.time() + payload.get("expire", 7200))
+        return token
 
     async def exchange_code_for_user(self, code: str) -> tuple[User, dict[str, Any]]:
+        logger.info("免登开始 code=%.6s...", code)
+        t0 = time.time()
+
+        # 预热 app token（通常已缓存；冷启动时并行获取 tenant token 为群组检查做准备）
         app_token = await self.get_app_access_token()
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(
-                f"{FEISHU_BASE}/authen/v1/access_token",
-                headers={"Authorization": f"Bearer {app_token}"},
-                json={"grant_type": "authorization_code", "code": code},
-            )
-            payload = self._parse_feishu_response(resp, "免登 code 换 token 失败")
-            data = payload.get("data") or {}
-            user_access_token = data.get("access_token")
-            if not user_access_token:
-                raise RuntimeError("免登响应缺少 access_token")
+        http = await self._ensure_http()
 
-            info_resp = await client.get(
-                f"{FEISHU_BASE}/authen/v1/user_info",
-                headers={"Authorization": f"Bearer {user_access_token}"},
-            )
-            info_payload = self._parse_feishu_response(info_resp, "获取用户信息失败")
-            user_data = info_payload.get("data") or {}
-            open_id = user_data.get("open_id") or user_data.get("user_id", "")
-            name = user_data.get("name") or user_data.get("en_name") or open_id
+        resp = await self._timed("code换token", http.post(
+            f"{FEISHU_BASE}/authen/v1/access_token",
+            headers={"Authorization": f"Bearer {app_token}"},
+            json={"grant_type": "authorization_code", "code": code},
+        ))
+        payload = self._parse_feishu_response(resp, "免登 code 换 token 失败")
+        data = payload.get("data") or {}
+        user_access_token = data.get("access_token")
+        if not user_access_token:
+            raise RuntimeError("免登响应缺少 access_token")
 
-        role, role_meta = await self.resolve_role_with_meta(open_id, user_access_token)
+        info_resp = await self._timed("获取用户信息", http.get(
+            f"{FEISHU_BASE}/authen/v1/user_info",
+            headers={"Authorization": f"Bearer {user_access_token}"},
+        ))
+        info_payload = self._parse_feishu_response(info_resp, "获取用户信息失败")
+        user_data = info_payload.get("data") or {}
+        open_id = user_data.get("open_id") or user_data.get("user_id", "")
+        name = user_data.get("name") or user_data.get("en_name") or open_id
+
+        role, role_meta = await self._timed("角色判定", self.resolve_role_with_meta(open_id, user_access_token))
         user = User(open_id=open_id, name=name, role=role)
+
+        logger.info("免登完成 open_id=%s role=%s 总耗时 %.1fs", open_id, role.value, time.time() - t0)
         return user, role_meta
 
     @staticmethod
@@ -229,15 +263,15 @@ class FeishuClient:
     async def _check_is_in_chat(
         self, access_token: str, chat_id: str
     ) -> tuple[bool | None, dict[str, Any] | None]:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            try:
-                resp = await client.get(
-                    f"{FEISHU_BASE}/im/v1/chats/{chat_id}/members/is_in_chat",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-            except httpx.HTTPError as exc:
-                logger.warning("is_in_chat 网络异常 chat_id=%s: %s", chat_id, exc)
-                return None, {"message": str(exc)}
+        http = await self._ensure_http()
+        try:
+            resp = await self._timed(f"is_in_chat({chat_id[-8:]})", http.get(
+                f"{FEISHU_BASE}/im/v1/chats/{chat_id}/members/is_in_chat",
+                headers={"Authorization": f"Bearer {access_token}"},
+            ))
+        except httpx.HTTPError as exc:
+            logger.warning("is_in_chat 网络异常 chat_id=%s: %s", chat_id, exc)
+            return None, {"message": str(exc)}
 
             try:
                 payload = resp.json()
@@ -272,13 +306,13 @@ class FeishuClient:
         if not chat_id or not open_id:
             return False
         page_token: str | None = None
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            while True:
+        http = await self._ensure_http()
+        while True:
                 params: dict[str, Any] = {"member_id_type": "open_id", "page_size": 100}
                 if page_token:
                     params["page_token"] = page_token
                 try:
-                    resp = await client.get(
+                    resp = await http.get(
                         f"{FEISHU_BASE}/im/v1/chats/{chat_id}/members",
                         headers={"Authorization": f"Bearer {tenant_token}"},
                         params=params,

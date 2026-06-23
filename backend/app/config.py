@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # SQLite 缓存后台自动全量同步间隔（秒），0=关闭自动同步
     sqlite_cache_sync_interval: int = 3600
 
+    # 飞书审批集成（需在飞书管理后台创建审批定义，填写其 approval_code）
+    feishu_approval_enabled: bool = False
+    feishu_approval_code: str = ""
+
     # Bitable 字段名（与多维表格列名一致，可按模板调整）
     bitable_f_category_name: str = "分类名称"
     bitable_f_category_parent: str = "父分类ID"

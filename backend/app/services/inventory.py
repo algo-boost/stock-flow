@@ -614,8 +614,15 @@ class InventoryService:
     async def create_request(self, payload: StockRequestCreate, user: User) -> StockRequest:
         try:
             if self.repo:
-                return await self.repo.create_request(payload, user.open_id, user.name)
-            return self.store.create_request(payload, user.open_id, user.name)
+                request = await self.repo.create_request(payload, user.open_id, user.name)
+            else:
+                request = self.store.create_request(payload, user.open_id, user.name)
+
+            # 同步创建飞书审批实例（不阻塞主流程）
+            if self.settings.feishu_approval_enabled and self.settings.feishu_approval_code:
+                await self._try_create_feishu_approval(request.id, request, user)
+
+            return request
         except ValueError as exc:
             msg = str(exc)
             if msg == "material_not_found":
@@ -939,3 +946,72 @@ class InventoryService:
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
+
+    # ── 飞书审批集成（内部方法） ──
+
+    async def _try_create_feishu_approval(
+        self,
+        request_id: str,
+        request: StockRequest,
+        user: User,
+    ) -> None:
+        """非阻塞地将出入库申请同步为飞书审批实例。
+
+        失败时不抛异常，降级为现有应用内审批流程。
+        instance_code 使用 request.id，用于回调匹配。
+        """
+        try:
+            from app.services.feishu_approval import FeishuApprovalClient
+
+            client = FeishuApprovalClient(self.settings)
+
+            form_values = client.build_form_values(
+                material_name=request.material_name or request.material_id,
+                quantity=request.quantity,
+                request_type=request.type.value,
+                location_name=request.location_name,
+                reason=request.remark or "",
+            )
+
+            title = f"[{request.type.value}] {request.material_name or request.material_id} x{request.quantity}"
+
+            instance_id = await client.create_instance(
+                approval_code=self.settings.feishu_approval_code,
+                open_id=user.open_id,
+                form_values=form_values,
+                instance_code=request_id,
+                title=title,
+            )
+
+            # 把飞书审批实例 ID 回写到申请记录的 remark 备注中
+            approval_tag = f"飞书审批: {instance_id}"
+            try:
+                await self._append_approval_instance_id(request_id, instance_id)
+            except Exception:
+                logger.warning("回写审批实例 ID 失败 request_id=%s", request_id)
+
+            logger.info(
+                "已创建飞书审批 request_id=%s instance_id=%s",
+                request_id,
+                instance_id,
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "创建飞书审批实例失败（降级为应用内审批）request_id=%s: %s",
+                request_id,
+                exc,
+            )
+
+    async def _append_approval_instance_id(
+        self, request_id: str, instance_id: str
+    ) -> None:
+        """把飞书审批 instance_id 回写到申请记录的备注中（方便运维追溯）。"""
+        try:
+            if self.repo:
+                await self.repo.update_request(
+                    request_id,
+                    StockRequestUpdate(remark=f"飞书审批: {instance_id}"),
+                )
+        except Exception:
+            pass  # 非关键路径，忽略回写失败

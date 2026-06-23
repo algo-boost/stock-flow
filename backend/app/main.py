@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import admin, auth_routes, inventory, materials, returns, transactions
+from app.api import admin, auth_routes, feishu_events, inventory, materials, returns, transactions
 from app.bitable.repository import BitableRepository
 from app.config import get_settings
 from app.utils.response import AppError
@@ -116,6 +116,7 @@ def create_app() -> FastAPI:
     app.include_router(transactions.router)
     app.include_router(returns.router)
     app.include_router(admin.router)
+    app.include_router(feishu_events.router)
 
     return app
 

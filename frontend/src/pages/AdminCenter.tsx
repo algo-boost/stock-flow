@@ -3,7 +3,7 @@ import { Button, Form, Input, Tabs, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getAdminAudit, getAdminOverview, getAdminSystem } from "../api";
 import type { AdminAudit, AdminOverview, AdminSystem } from "../api/types";
-import { ApprovalsPanel } from "../components/ApprovalsPanel";
+import { ApprovalRecords } from "../components/ApprovalRecords";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, InfoRow, PageHero, SectionCard, StatCard, TxBadge } from "../components/ui";
@@ -231,7 +231,7 @@ function AdminCenterContent() {
 
       <Tabs activeKey={activeTab} onChange={onTabChange}>
         <Tabs.Tab title="审批" key="approvals">
-          <ApprovalsPanel onReviewed={() => void load()} />
+          <ApprovalRecords />
         </Tabs.Tab>
 
         <Tabs.Tab title="组织" key="org">

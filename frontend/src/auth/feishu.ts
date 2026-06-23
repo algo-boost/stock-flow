@@ -38,10 +38,14 @@ export function currentFeishuPageUrl(): string {
   return window.location.href.split("#")[0].split("?")[0];
 }
 
-/** 免登必须在已配置的重定向 URL 上发起，子路径先跳首页 */
+/** 免登必须在已配置的重定向 URL 上发起。飞书工作台入口 URL 设为 "/" 可跳过此跳转。 */
 export function redirectToLoginHomeIfNeeded(): boolean {
   const { pathname, search, origin } = window.location;
+  // 已在首页，直接免登
   if (pathname === "/" || pathname === "") return true;
+  // 其他路径：先跳回首屏完成免登，再回到目标页
+  // 仅在首次登录时触发一次（有 post_login_redirect 标记说明已回过首页）
+  if (sessionStorage.getItem("post_login_redirect")) return true;
   sessionStorage.setItem("post_login_redirect", pathname + search);
   window.location.replace(`${origin}/`);
   return false;
@@ -51,6 +55,7 @@ export function consumePostLoginRedirect(): void {
   const back = sessionStorage.getItem("post_login_redirect");
   if (!back) return;
   sessionStorage.removeItem("post_login_redirect");
+  // 用 replace 而非 href，避免多余的浏览器历史记录
   window.location.replace(window.location.origin + back);
 }
 
@@ -124,14 +129,15 @@ function loadH5SdkScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = H5_SDK_URL;
-    script.async = false;
+    // async 加载，不阻塞页面渲染（index.html 已有 preconnect 预热连接）
+    script.async = true;
     script.onload = () => resolve();
     script.onerror = () => reject(new Error("飞书 H5 SDK 加载失败"));
     document.head.appendChild(script);
   });
 }
 
-function waitForLoginApi(timeoutMs = 10000): Promise<void> {
+function waitForLoginApi(timeoutMs = 3000): Promise<void> {
   if (hasLoginApi()) return Promise.resolve();
 
   return new Promise((resolve, reject) => {
@@ -200,10 +206,21 @@ export async function feishuLogin(): Promise<{
   user: User;
   role_meta?: RoleMeta | null;
 }> {
-  await ensureFeishuSdk();
-  const appId = await fetchAppId();
-  const code = await requestLoginCode(appId);
+  console.time("🔐 feishuLogin 总耗时");
 
+  console.time("  └ ensureFeishuSdk");
+  await ensureFeishuSdk();
+  console.timeEnd("  └ ensureFeishuSdk");
+
+  console.time("  └ fetchAppId");
+  const appId = await fetchAppId();
+  console.timeEnd("  └ fetchAppId");
+
+  console.time("  └ requestLoginCode");
+  const code = await requestLoginCode(appId);
+  console.timeEnd("  └ requestLoginCode");
+
+  console.time("  └ POST /auth/feishu/login");
   const data = await fetchApiData<{
     token: string;
     user: User;
@@ -213,6 +230,9 @@ export async function feishuLogin(): Promise<{
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code }),
   });
+  console.timeEnd("  └ POST /auth/feishu/login");
+
   setAuthToken(data.token);
+  console.timeEnd("🔐 feishuLogin 总耗时");
   return data;
 }

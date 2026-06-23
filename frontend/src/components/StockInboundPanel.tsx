@@ -25,6 +25,7 @@ export function StockInboundPanel() {
   const presetMaterialId = params.get("material_id") ?? "";
   const presetQty = Number(params.get("qty") ?? "");
   const presetReturnNote = params.get("return_note") ?? "";
+  const presetCategoryId = params.get("category_id") ?? "";
   const activeTab = params.get("tab");
   const shouldLoadPreset = activeTab === "inbound";
   const navigate = useNavigate();
@@ -100,6 +101,33 @@ export function StockInboundPanel() {
     void loadMeta();
   }, [loadMaterials, loadMeta]);
 
+  // 从分类树"添加物料"跳转过来时，预填分类并自动打开建档表单
+  useEffect(() => {
+    if (!presetCategoryId || categories.length === 0) return;
+    const cat = categories.find((c) => c.id === presetCategoryId);
+    if (!cat) return;
+
+    // 根据选中分类的层级预填 3 级分类
+    const major = cat.major_name || cat.name;
+    const mid = cat.mid_name || undefined;
+    const sub = cat.sub_name || undefined;
+
+    setNewMaterialMajorCategory(major);
+    setNewMaterialMidCategory(mid ?? "");
+    if (sub) {
+      // 已是叶子分类 → 直接设为子类
+      setNewMaterialCategoryId(cat.id);
+    } else if (mid) {
+      // 中类 → 子类留空，等用户选
+      setNewMaterialCategoryId("");
+    } else {
+      // 大类 → 中类和子类留空
+      setNewMaterialCategoryId("");
+    }
+    // 自动打开新增物料表单
+    setShowCreateMaterial(true);
+  }, [presetCategoryId, categories]);
+
   useEffect(() => {
     if (!presetMaterialId || !shouldLoadPreset) return;
     void (async () => {
@@ -138,21 +166,36 @@ export function StockInboundPanel() {
     return values.map((value) => ({ label: value, value }));
   }, [categories]);
   const midCategoryOptions = useMemo(
-    () =>
-      categories
-        .filter((cat) => cat.major_name === newMaterialMajorCategory && cat.mid_name && !cat.sub_name)
-        .map((cat) => ({ label: cat.mid_name || cat.name, value: cat.mid_name || cat.name })),
+    () => {
+      const mids = categories.filter(
+        (cat) => (cat.major_name || cat.name) === newMaterialMajorCategory && cat.mid_name && !cat.sub_name,
+      );
+      // 去重（同一 mid_name 可能有多条 parent_id 不同的记录）
+      const seen = new Set<string>();
+      return mids
+        .filter((cat) => {
+          const key = cat.mid_name || cat.name;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((cat) => ({ label: cat.mid_name || cat.name, value: cat.mid_name || cat.name }));
+    },
     [categories, newMaterialMajorCategory],
   );
   const subCategoryOptions = useMemo(
     () =>
       categories
-        .filter(
-          (cat) =>
-            cat.major_name === newMaterialMajorCategory &&
-            cat.mid_name === newMaterialMidCategory &&
-            cat.sub_name,
-        )
+        .filter((cat) => {
+          // 必须属于当前选中大类
+          if ((cat.major_name || cat.name) !== newMaterialMajorCategory) return false;
+          // 如果已选中类，匹配中类；如果无中类（二级层级），匹配无中类的子类
+          if (newMaterialMidCategory) {
+            if (cat.mid_name !== newMaterialMidCategory) return false;
+          }
+          // 有子类名（三级）或无中类名（二级叶子）
+          return Boolean(cat.sub_name) || (!cat.mid_name && !cat.sub_name);
+        })
         .map((cat) => ({
           label: cat.sub_name || cat.name,
           value: cat.id,
