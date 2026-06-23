@@ -1,6 +1,7 @@
 import { apiConfig } from "../api/config";
 import { setAuthToken } from "./token";
 import type { User, RoleMeta } from "../api/types";
+import { perfStart, perfMark, perfDone } from "../utils/perf";
 
 const H5_SDK_URL = "https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.23.js";
 
@@ -206,9 +207,13 @@ export async function feishuLogin(): Promise<{
   user: User;
   role_meta?: RoleMeta | null;
 }> {
+  perfStart();
   await ensureFeishuSdk();
+  perfMark("SDK初始化");
   const appId = await fetchAppId();
+  perfMark("获取配置");
   const code = await requestLoginCode(appId);
+  perfMark("飞书授权");
 
   const data = await fetchApiData<{
     token: string;
@@ -220,5 +225,7 @@ export async function feishuLogin(): Promise<{
     body: JSON.stringify({ code }),
   });
   setAuthToken(data.token);
+  perfMark("后端验证");
+  perfDone();
   return data;
 }
