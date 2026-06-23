@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from app.bitable.repository import BitableRepository
 from app.bitable.mock_store import get_mock_store
 from app.config import Settings
@@ -38,6 +40,8 @@ from app.utils.categories import attach_category_stats
 from app.utils.inventory_display import format_inventory_summary
 from app.utils.request_remark import format_outbound_remark
 from app.utils.response import AppError
+
+logger = logging.getLogger("stock-flow.inventory")
 
 
 def _wrap_bitable_error(exc: Exception) -> AppError:

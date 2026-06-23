@@ -53,7 +53,7 @@ class FeishuClient:
     async def _ensure_http(self) -> httpx.AsyncClient:
         if self._http is None:
             self._http = httpx.AsyncClient(
-                timeout=httpx.Timeout(8.0),
+                timeout=httpx.Timeout(15.0, connect=8.0),
                 limits=httpx.Limits(max_keepalive_connections=4, max_connections=10),
             )
         return self._http
