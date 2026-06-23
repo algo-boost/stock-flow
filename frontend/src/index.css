@@ -2502,28 +2502,80 @@ button[class*="adm-"],
 }
 
 /* ── 加载提示条（顶部横幅） ── */
-.loading-banner {
+/* ── 冷启动全屏加载画面 ── */
+.cold-start-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  background: #f5f6f7;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  margin-bottom: 4px;
-  border-radius: var(--sf-radius-sm);
-  background: var(--sf-primary-soft);
-  color: var(--sf-primary);
-  font-size: 13px;
-  font-weight: 500;
-  animation: loading-banner-pulse 2s ease-in-out infinite;
+  justify-content: center;
 }
-.loading-banner .loading-dot {
+.cold-start-card {
+  text-align: center;
+  max-width: 280px;
+  width: 100%;
+  padding: 0 24px;
+}
+.cold-start-logo {
+  font-size: 56px;
+  margin-bottom: 12px;
+  animation: cs-bounce 2s ease-in-out infinite;
+}
+.cold-start-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2329;
+  margin-bottom: 20px;
+  letter-spacing: 1px;
+}
+.cold-start-progress {
+  height: 4px;
+  background: #e5e6eb;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.cold-start-bar-fill {
+  height: 100%;
+  background: var(--sf-primary);
+  border-radius: 2px;
+  width: 0%;
+  animation: cs-progress 6s ease-out forwards;
+}
+.cold-start-step {
+  font-size: 14px;
+  color: #646a73;
+  margin-bottom: 12px;
+  min-height: 20px;
+}
+.cold-start-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.cold-start-dots .loading-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--sf-primary);
   animation: loading-dot-bounce 1.4s ease-in-out infinite both;
 }
-.loading-banner .loading-dot:nth-child(2) { animation-delay: 0.16s; }
-.loading-banner .loading-dot:nth-child(3) { animation-delay: 0.32s; }
+.cold-start-dots .loading-dot:nth-child(2) { animation-delay: 0.16s; }
+.cold-start-dots .loading-dot:nth-child(3) { animation-delay: 0.32s; }
+@keyframes cs-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes cs-progress {
+  0% { width: 0%; }
+  60% { width: 70%; }
+  90% { width: 88%; }
+  100% { width: 92%; }
+}
+
+/* ── 加载点动画（冷启动 splash + 旧 loading-banner 共用） ── */
 @keyframes loading-banner-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.8; }

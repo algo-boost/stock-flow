@@ -72,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const login = await loginWithFeishu();
         setUser(login.user);
         setRoleMeta(login.roleMeta);
+        setAuthStep("登录成功");
         return;
       }
 
@@ -80,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await getMe();
         setUser(data.user);
         setRoleMeta(data.role_meta ?? null);
+        setAuthStep("正在加载数据…");
       } catch (e) {
         // 后端重启后内存 session 丢失，localStorage token 仍有效 → 自动重新免登
         if (isFeishu && getAuthToken() && isAuthExpiredError(e)) {
@@ -88,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const login = await loginWithFeishu();
           setUser(login.user);
           setRoleMeta(login.roleMeta);
+          setAuthStep("登录成功");
           return;
         }
         throw e;

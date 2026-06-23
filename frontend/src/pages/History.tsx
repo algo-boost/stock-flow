@@ -23,6 +23,7 @@ import {
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { PendingReturnsPanel } from "../components/PendingReturnsPanel";
+import { ApprovalRecords } from "../components/ApprovalRecords";
 import { EmptyState, SectionCard, TxBadge } from "../components/ui";
 
 interface SearchSuggestion {
@@ -32,18 +33,13 @@ interface SearchSuggestion {
 }
 
 type RequestView = StockRequestStatus | "ALL";
-type StaffHistoryView = "transactions" | "returns";
+type StaffHistoryView = "transactions" | "returns" | "approvals";
 
 const REQUEST_VIEW_OPTIONS: Array<{ label: string; value: RequestView }> = [
   { label: "进行中", value: "待审批" },
   { label: "已拒绝", value: "已拒绝" },
   { label: "已通过", value: "已通过" },
   { label: "全部", value: "ALL" },
-];
-
-const STAFF_HISTORY_VIEW_OPTIONS: Array<{ label: string; value: StaffHistoryView }> = [
-  { label: "流水", value: "transactions" },
-  { label: "待归还", value: "returns" },
 ];
 
 const DATE_PRESET_OPTIONS: Array<{ label: string; value: DateRangePreset }> = [
@@ -107,6 +103,14 @@ export default function HistoryPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { canApprove, canInbound } = useAuth();
+  const staffHistoryOptions = useMemo(() => {
+    const opts: Array<{ label: string; value: StaffHistoryView }> = [
+      { label: "流水", value: "transactions" },
+    ];
+    if (canInbound) opts.push({ label: "待归还", value: "returns" });
+    if (canApprove) opts.push({ label: "审批", value: "approvals" });
+    return opts;
+  }, [canInbound, canApprove]);
   const initialStaffView = searchParams.get("view") === "returns" ? "returns" : "transactions";
   const [staffView, setStaffView] = useState<StaffHistoryView>(initialStaffView);
   const [txs, setTxs] = useState<Transaction[]>([]);
@@ -312,10 +316,10 @@ export default function HistoryPage() {
       )}
 
       {canInbound && (
-        <SectionCard title="历史视图" subtitle="流水追溯与待归还监管">
+        <SectionCard title="历史视图" subtitle="流水追溯、待归还监管与审批记录">
           <Selector
             className="history-request-tabs"
-            options={STAFF_HISTORY_VIEW_OPTIONS}
+            options={staffHistoryOptions}
             value={[staffView]}
             onChange={(arr) =>
               setStaffHistoryView((arr[0] as StaffHistoryView | undefined) ?? "transactions")
@@ -324,7 +328,9 @@ export default function HistoryPage() {
         </SectionCard>
       )}
 
-      {showReturnsView ? (
+      {staffView === "approvals" ? (
+        <ApprovalRecords />
+      ) : showReturnsView ? (
         <PendingReturnsPanel showBorrowerFilter />
       ) : (
         <>

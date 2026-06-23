@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Input, Toast } from "antd-mobile";
 import type { Category } from "../api/types";
 import {
   buildCategorySections,
@@ -13,24 +12,13 @@ interface CategoryCascadeProps {
   categories: Category[];
   selectedId: string | null;
   onSelect: (categoryId: string | null) => void;
-  canManage?: boolean;
-  onCreate?: (payload: { name: string; parent_id: string | null }) => Promise<void>;
-  onDelete?: (categoryId: string) => Promise<void>;
-  onRefresh?: () => Promise<void>;
 }
 
 export function CategoryCascade({
   categories,
   selectedId,
   onSelect,
-  canManage = false,
-  onCreate,
-  onDelete,
-  onRefresh,
 }: CategoryCascadeProps) {
-  const [newName, setNewName] = useState("");
-  const [busy, setBusy] = useState(false);
-
   const roots = useMemo(() => getRootCategories(categories), [categories]);
   const defaultRootId = roots[0]?.id ?? null;
 
@@ -46,56 +34,12 @@ export function CategoryCascade({
   );
 
   const pathLabel = useMemo(() => formatCategoryPath(categories, selectedId), [categories, selectedId]);
-  const childParentId = selectedId ?? activeRootId;
 
   const isSelectedInTree = (categoryId: string) => {
     if (selectedId === categoryId) return true;
     if (!selectedId) return false;
     const path = getCategoryPath(categories, selectedId);
     return path.some((item) => item.id === categoryId);
-  };
-
-  const handleCreate = async (parentId: string | null) => {
-    const name = newName.trim();
-    if (!name) {
-      Toast.show({ content: "请输入分类名称" });
-      return;
-    }
-    if (!onCreate) return;
-    setBusy(true);
-    try {
-      await onCreate({ name, parent_id: parentId });
-      setNewName("");
-      Toast.show({ icon: "success", content: parentId ? "子分类已添加" : "顶层分类已添加" });
-      await onRefresh?.();
-      if (!parentId) {
-        onSelect(null);
-      }
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "添加分类失败" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selectedId || !onDelete) return;
-    const path = formatCategoryPath(categories, selectedId);
-    const confirmed = await Dialog.confirm({
-      content: `确定删除「${path}」？\n\n将同时删除其下所有子分类；关联物料会自动改挂到上一级分类。`,
-    });
-    if (!confirmed) return;
-    setBusy(true);
-    try {
-      await onDelete(selectedId);
-      onSelect(null);
-      Toast.show({ icon: "success", content: "分类已删除" });
-      await onRefresh?.();
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除分类失败" });
-    } finally {
-      setBusy(false);
-    }
   };
 
   if (categories.length === 0) {
@@ -171,40 +115,6 @@ export function CategoryCascade({
       </div>
 
       {pathLabel && <div className="category-picker-path">已选：{pathLabel}</div>}
-
-      {canManage && (
-        <div className="category-picker-admin">
-          <Input placeholder="输入新分类名称，如：机械类、轴承" value={newName} onChange={setNewName} clearable />
-          <div className="category-picker-admin-actions">
-            <Button size="small" color="primary" loading={busy} onClick={() => void handleCreate(null)}>
-              添加顶层
-            </Button>
-            <Button
-              size="small"
-              color="primary"
-              fill="outline"
-              disabled={!childParentId}
-              loading={busy}
-              onClick={() => void handleCreate(childParentId)}
-            >
-              添加子类
-            </Button>
-            <Button
-              size="small"
-              color="danger"
-              fill="outline"
-              disabled={!selectedId}
-              loading={busy}
-              onClick={() => void handleDelete()}
-            >
-              删除选中
-            </Button>
-          </div>
-          <div className="category-picker-admin-hint">
-            「添加顶层」= 与电气类同级；「添加子类」= 在当前选中项（或左侧大类）下新增
-          </div>
-        </div>
-      )}
     </div>
   );
 }

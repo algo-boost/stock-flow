@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Form, Input, Selector, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, Selector, Toast } from "antd-mobile";
 import { useNavigate, useParams } from "react-router-dom";
-import { createLocation, listLocationTypes, listLocations, updateLocation } from "../api";
+import { createLocation, listLocationTypes, listLocations, updateLocation, addLocationType, removeLocationType } from "../api";
 import type { Location } from "../api/types";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
@@ -20,6 +20,8 @@ function LocationFormContent() {
   const [form, setForm] = useState(emptyForm);
   const [allLocations, setAllLocations] = useState<Location[]>([]);
   const [locationTypes, setLocationTypes] = useState<string[]>(["货柜", "货架", "专用螺栓架", "工具架", "快递暂存"]);
+  const [newTypeName, setNewTypeName] = useState("");
+  const [typeBusy, setTypeBusy] = useState(false);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -33,6 +35,25 @@ function LocationFormContent() {
   }, []);
 
   useEffect(() => { void loadMeta(); }, [loadMeta]);
+
+  const refreshTypes = async () => {
+    try { const t = await listLocationTypes(); setLocationTypes(t.length ? t : ["货柜", "货架"]); } catch { /* ok */ }
+  };
+  const handleAddType = async () => {
+    if (!newTypeName.trim()) { Toast.show({ content: "请输入名称" }); return; }
+    setTypeBusy(true);
+    try { await addLocationType(newTypeName.trim()); setNewTypeName(""); Toast.show({ icon: "success", content: "已添加" }); await refreshTypes(); }
+    catch (e) { Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "添加失败" }); }
+    finally { setTypeBusy(false); }
+  };
+  const handleRemoveType = async (name: string) => {
+    const confirmed = await Dialog.confirm({ content: `删除类型「${name}」？` });
+    if (!confirmed) return;
+    setTypeBusy(true);
+    try { await removeLocationType(name); Toast.show({ icon: "success", content: "已删除" }); await refreshTypes(); }
+    catch (e) { Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" }); }
+    finally { setTypeBusy(false); }
+  };
 
   useEffect(() => {
     if (!id) { setLoading(false); return; }
@@ -126,6 +147,19 @@ function LocationFormContent() {
               value={form.type ? [form.type] : []}
               onChange={(arr) => setForm((v) => ({ ...v, type: arr[0] ?? "货柜" }))}
             />
+            <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <Input placeholder="新类型" value={newTypeName} onChange={setNewTypeName} style={{ flex: 1, minWidth: 80 }} />
+              <Button size="mini" color="primary" loading={typeBusy} onClick={handleAddType}>添加</Button>
+            </div>
+            <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {locationTypes.map((t) => (
+                <span key={t} style={{ fontSize: 12, padding: "2px 8px", borderRadius: 10, background: "#f2f3f5", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  {t}
+                  <span style={{ cursor: "pointer", color: "#f53f3f", fontWeight: 700, fontSize: 14 }}
+                    onClick={() => handleRemoveType(t)}>×</span>
+                </span>
+              ))}
+            </div>
           </Form.Item>
           <Form.Item label="父库位（可选）">
             <Selector

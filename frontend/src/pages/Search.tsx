@@ -6,7 +6,7 @@ import type { Category, MaterialSearchItem } from "../api/types";
 import { CategoryTree } from "../components/CategoryTree";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, MaterialCard, PageHero, RolePermissions, SectionCard } from "../components/ui";
+import { EmptyState, MaterialCard, PageHero, SectionCard } from "../components/ui";
 import { formatCategoryPath, canBrowseCategoryMaterials, isSubCategory } from "../utils/categoryTree";
 
 interface SearchSuggestion {
@@ -296,62 +296,6 @@ export default function SearchPage() {
         subtitle="搜索物料、查看库存；其他功能请用底部导航"
       />
 
-      {user && (
-        <SectionCard title="我的权限">
-          <RolePermissions role={user.role} />
-        </SectionCard>
-      )}
-
-      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词，自动组合搜索">
-        <div className="search-card">
-          <SearchBar
-            placeholder="搜索名称、编码、型号、分类…"
-            value={keyword}
-            onChange={setKeyword}
-            onSearch={onSearch}
-            onClear={() => {
-              setKeyword("");
-              setSelectedCategoryId(null);
-              setSuggestions([]);
-              void loadMaterials("", 1, false, null);
-            }}
-          />
-          {/* 最近搜索 */}
-          {!keyword && recentSearches.length > 0 && suggestions.length === 0 && (
-            <div className="search-suggestions">
-              <div style={{ padding: "8px 12px 4px", fontSize: 12, color: "var(--sf-text-muted)", fontWeight: 600 }}>
-                最近搜索
-              </div>
-              {recentSearches.map((term) => (
-                <button
-                  key={term}
-                  type="button"
-                  className="search-suggestion"
-                  onClick={() => { setKeyword(term); onSearch(term); }}
-                >
-                  <span className="search-suggestion-label">🕐 {term}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {suggestions.length > 0 && (
-            <div className="search-suggestions">
-              {suggestions.map((suggestion) => (
-                <button
-                  key={`${suggestion.kind}-${suggestion.hint}-${suggestion.value}`}
-                  type="button"
-                  className="search-suggestion"
-                  onClick={() => chooseSuggestion(suggestion)}
-                >
-                  <span className="search-suggestion-label">{suggestion.label}</span>
-                  <span className="search-suggestion-hint">{suggestion.hint}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </SectionCard>
-
       <SectionCard
         title="分类浏览"
         subtitle="展开大类后，仅有物料的子类可点击查看；数字为库存合计"
@@ -374,19 +318,11 @@ export default function SearchPage() {
               ) : undefined
             }
             canManage={isAdmin}
-            onCreate={async (payload) => {
-              await createCategory(payload);
-            }}
-            onDelete={async (categoryId) => {
-              await deleteCategory(categoryId);
-            }}
-            onUpdate={async (categoryId, payload) => {
-              await updateCategory(categoryId, payload);
-            }}
+            onCreate={async (payload) => { await createCategory(payload); }}
+            onDelete={async (categoryId) => { await deleteCategory(categoryId); }}
+            onUpdate={async (categoryId, payload) => { await updateCategory(categoryId, payload); }}
             onRefresh={loadCategories}
-            onAddMaterial={(categoryId) => {
-              navigate(`/stock?tab=inbound&category_id=${categoryId}`);
-            }}
+            onAddMaterial={(categoryId) => { navigate(`/stock?tab=inbound&category_id=${categoryId}`); }}
           />
         )}
       </SectionCard>
@@ -399,6 +335,43 @@ export default function SearchPage() {
           {materialList({ text: "没有匹配的物料", hint: "换个关键词或分类试试" })}
         </SectionCard>
       )}
+
+      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词，自动组合搜索">
+        <div className="search-card">
+          <SearchBar
+            placeholder="搜索名称、编码、型号、分类…"
+            value={keyword}
+            onChange={setKeyword}
+            onSearch={onSearch}
+            onClear={() => {
+              setKeyword("");
+              setSelectedCategoryId(null);
+              setSuggestions([]);
+              void loadMaterials("", 1, false, null);
+            }}
+          />
+          {!keyword && recentSearches.length > 0 && suggestions.length === 0 && (
+            <div className="search-suggestions">
+              <div style={{ padding: "8px 12px 4px", fontSize: 12, color: "var(--sf-text-muted)", fontWeight: 600 }}>最近搜索</div>
+              {recentSearches.map((term) => (
+                <button key={term} type="button" className="search-suggestion" onClick={() => { setKeyword(term); onSearch(term); }}>
+                  <span className="search-suggestion-label">🕐 {term}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {suggestions.length > 0 && (
+            <div className="search-suggestions">
+              {suggestions.map((suggestion) => (
+                <button key={`${suggestion.kind}-${suggestion.hint}-${suggestion.value}`} type="button" className="search-suggestion" onClick={() => chooseSuggestion(suggestion)}>
+                  <span className="search-suggestion-label">{suggestion.label}</span>
+                  <span className="search-suggestion-hint">{suggestion.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </SectionCard>
     </Layout>
   );
 }

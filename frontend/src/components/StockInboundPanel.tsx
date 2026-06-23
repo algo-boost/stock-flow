@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createStockRequest,
-  createMaterial,
   getMaterial,
-  listCategories,
   listLocations,
   postInbound,
   searchMaterials,
 } from "../api";
-import type { Category, Location, MaterialDetail, MaterialSearchItem } from "../api/types";
+import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import { useAuth } from "./AuthGate";
 import { CacheRefreshButton } from "./CacheRefreshButton";
 import { EmptyState, SectionCard } from "./ui";
@@ -25,7 +23,6 @@ export function StockInboundPanel() {
   const presetMaterialId = params.get("material_id") ?? "";
   const presetQty = Number(params.get("qty") ?? "");
   const presetReturnNote = params.get("return_note") ?? "";
-  const presetCategoryId = params.get("category_id") ?? "";
   const activeTab = params.get("tab");
   const shouldLoadPreset = activeTab === "inbound";
   const navigate = useNavigate();
@@ -35,7 +32,6 @@ export function StockInboundPanel() {
   const [total, setTotal] = useState(0);
   const [locationOptions, setLocationOptions] = useState<{ label: string; value: string }[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
@@ -44,23 +40,10 @@ export function StockInboundPanel() {
   const [note, setNote] = useState("");
   const [inboundSpec, setInboundSpec] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [showCreateMaterial, setShowCreateMaterial] = useState(false);
-  const [creatingMaterial, setCreatingMaterial] = useState(false);
-  const [newMaterialName, setNewMaterialName] = useState("");
-  const [newMaterialCode, setNewMaterialCode] = useState("");
-  const [newMaterialMajorCategory, setNewMaterialMajorCategory] = useState("");
-  const [newMaterialMidCategory, setNewMaterialMidCategory] = useState("");
-  const [newMaterialCategoryId, setNewMaterialCategoryId] = useState("");
-  const [newMaterialUnit, setNewMaterialUnit] = useState("个");
-  const [newMaterialSpec, setNewMaterialSpec] = useState("");
-  const [newMaterialBarcode, setNewMaterialBarcode] = useState("");
-  const [newMaterialSupplier, setNewMaterialSupplier] = useState("");
-  const [newMaterialMinStock, setNewMaterialMinStock] = useState(5);
   const [slotRow, setSlotRow] = useState(1);
   const [slotColumn, setSlotColumn] = useState(1);
   const { canInbound } = useAuth();
   const isDirectInbound = canInbound;
-  const createFormRef = useRef<HTMLDivElement>(null);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -78,7 +61,7 @@ export function StockInboundPanel() {
 
   const loadMeta = useCallback(async () => {
     try {
-      const [locs, cats] = await Promise.all([listLocations(), listCategories()]);
+      const [locs] = await Promise.all([listLocations()]);
       setLocations(locs);
       setLocationOptions(
         locs.map((loc) => ({
@@ -86,11 +69,6 @@ export function StockInboundPanel() {
           value: loc.id,
         })),
       );
-      setCategories(cats);
-      setNewMaterialMajorCategory(
-        (current) => current || cats[0]?.major_name || cats[0]?.name || "",
-      );
-      setNewMaterialCategoryId((current) => current || cats[0]?.id || "");
       setLocationId((current) => current || locs[0]?.id || "");
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载库位/分类失败" });
@@ -101,37 +79,6 @@ export function StockInboundPanel() {
     void loadMaterials("", 1);
     void loadMeta();
   }, [loadMaterials, loadMeta]);
-
-  // 从分类树"添加物料"跳转过来时，预填分类并自动打开建档表单
-  useEffect(() => {
-    if (!presetCategoryId || categories.length === 0) return;
-    const cat = categories.find((c) => c.id === presetCategoryId);
-    if (!cat) return;
-
-    // 根据选中分类的层级预填 3 级分类
-    const major = cat.major_name || cat.name;
-    const mid = cat.mid_name || undefined;
-    const sub = cat.sub_name || undefined;
-
-    setNewMaterialMajorCategory(major);
-    setNewMaterialMidCategory(mid ?? "");
-    if (sub) {
-      // 已是叶子分类 → 直接设为子类
-      setNewMaterialCategoryId(cat.id);
-    } else if (mid) {
-      // 中类 → 子类留空，等用户选
-      setNewMaterialCategoryId("");
-    } else {
-      // 大类 → 中类和子类留空
-      setNewMaterialCategoryId("");
-    }
-    // 自动打开新增物料表单
-    setShowCreateMaterial(true);
-    // 滚动到表单位置
-    setTimeout(() => {
-      createFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 300);
-  }, [presetCategoryId, categories]);
 
   useEffect(() => {
     if (!presetMaterialId || !shouldLoadPreset) return;
@@ -164,53 +111,6 @@ export function StockInboundPanel() {
       (isDirectInbound ? locationId : true),
   );
   const hasMore = items.length < total;
-  const majorCategoryOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(categories.map((category) => category.major_name || category.name).filter(Boolean)),
-    );
-    return values.map((value) => ({ label: value, value }));
-  }, [categories]);
-  const midCategoryOptions = useMemo(
-    () => {
-      const mids = categories.filter(
-        (cat) => (cat.major_name || cat.name) === newMaterialMajorCategory && cat.mid_name && !cat.sub_name,
-      );
-      // 去重（同一 mid_name 可能有多条 parent_id 不同的记录）
-      const seen = new Set<string>();
-      return mids
-        .filter((cat) => {
-          const key = cat.mid_name || cat.name;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        })
-        .map((cat) => ({ label: cat.mid_name || cat.name, value: cat.mid_name || cat.name }));
-    },
-    [categories, newMaterialMajorCategory],
-  );
-  const subCategoryOptions = useMemo(
-    () =>
-      categories
-        .filter((cat) => {
-          // 必须属于当前选中大类
-          if ((cat.major_name || cat.name) !== newMaterialMajorCategory) return false;
-          // 如果已选中类，匹配中类；如果无中类（二级层级），匹配无中类的子类
-          if (newMaterialMidCategory) {
-            if (cat.mid_name !== newMaterialMidCategory) return false;
-          }
-          // 有子类名（三级）或无中类名（二级叶子）
-          return Boolean(cat.sub_name) || (!cat.mid_name && !cat.sub_name);
-        })
-        .map((cat) => ({
-          label: cat.sub_name || cat.name,
-          value: cat.id,
-        })),
-    [categories, newMaterialMajorCategory, newMaterialMidCategory],
-  );
-  const selectedCategory = useMemo(
-    () => categories.find((category) => category.id === newMaterialCategoryId),
-    [categories, newMaterialCategoryId],
-  );
 
   const selectedLocation = useMemo(
     () => locations.find((loc) => loc.id === locationId),
@@ -254,64 +154,6 @@ export function StockInboundPanel() {
 
   const loadMore = () => {
     void loadMaterials(keyword, page + 1, true);
-  };
-
-  const resetCreateForm = () => {
-    setNewMaterialName("");
-    setNewMaterialCode("");
-    setNewMaterialUnit("个");
-    setNewMaterialSpec("");
-    setNewMaterialBarcode("");
-    setNewMaterialSupplier("");
-    setNewMaterialMinStock(5);
-  };
-
-  const onCreateMaterial = async () => {
-    if (!newMaterialName.trim() || !newMaterialMajorCategory || !newMaterialCategoryId) {
-      Toast.show({ content: "请填写物料名称、大类和子类" });
-      return;
-    }
-    setCreatingMaterial(true);
-    try {
-      const material = await createMaterial({
-        name: newMaterialName.trim(),
-        category_id: newMaterialCategoryId,
-        major_category: newMaterialMajorCategory,
-        mid_category: newMaterialMidCategory || undefined,
-        sub_category: selectedCategory?.sub_name || selectedCategory?.name,
-        code: newMaterialCode.trim() || undefined,
-        unit: newMaterialUnit.trim() || "个",
-        spec: newMaterialSpec.trim() || undefined,
-        barcode: newMaterialBarcode.trim() || undefined,
-        default_location_id: locationId || undefined,
-        supplier: newMaterialSupplier.trim() || undefined,
-        min_stock: newMaterialMinStock,
-      });
-      const detail: MaterialDetail = {
-        material,
-        inventory: [],
-        total_quantity: 0,
-      };
-      setSelected(detail);
-      setItems((current) => [
-        {
-          ...material,
-          total_quantity: 0,
-          locations_summary: "暂无库存",
-        },
-        ...current,
-      ]);
-      if (material.default_location_id) {
-        setLocationId(material.default_location_id);
-      }
-      resetCreateForm();
-      setShowCreateMaterial(false);
-      Toast.show({ icon: "success", content: "已新增物料，可继续入库" });
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "新增物料失败" });
-    } finally {
-      setCreatingMaterial(false);
-    }
   };
 
   const onSubmit = async () => {
@@ -487,18 +329,6 @@ export function StockInboundPanel() {
                 </div>
                 <div className="catalog-row-right">
                   <span className="stock-badge">{item.total_quantity}</span>
-                  {isDirectInbound && (
-                    <button
-                      type="button"
-                      className="catalog-manage-link"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/materials/${item.id}`);
-                      }}
-                    >
-                      管理
-                    </button>
-                  )}
                   <span className="material-card-arrow">›</span>
                 </div>
               </button>
@@ -513,101 +343,6 @@ export function StockInboundPanel() {
           </div>
         )}
       </SectionCard>
-
-      {isDirectInbound && !loading && locationOptions.length > 0 && categories.length > 0 && (
-        <div ref={createFormRef}>
-        <SectionCard
-          title="快捷新增物料"
-          subtitle="搜索不到物料时，先建档再入库"
-          className="create-material-card"
-        >
-          {!showCreateMaterial ? (
-            <Button block fill="outline" color="primary" onClick={() => setShowCreateMaterial(true)}>
-              新增数据表中没有的物料
-            </Button>
-          ) : (
-            <Form layout="vertical" className="form-card">
-              <Form.Item label="物料名称">
-                <Input
-                  value={newMaterialName}
-                  onChange={setNewMaterialName}
-                  placeholder="如：力矩传感器 / 新型号电机"
-                />
-              </Form.Item>
-              <Form.Item label="大类">
-                <Selector
-                  options={majorCategoryOptions}
-                  value={newMaterialMajorCategory ? [newMaterialMajorCategory] : []}
-                  onChange={(arr) => {
-                    const nextMajor = arr[0] ?? "";
-                    setNewMaterialMajorCategory(nextMajor);
-                    setNewMaterialMidCategory("");
-                    setNewMaterialCategoryId("");
-                  }}
-                />
-              </Form.Item>
-              {midCategoryOptions.length > 0 && (
-                <Form.Item label="中类">
-                  <Selector
-                    options={midCategoryOptions}
-                    value={newMaterialMidCategory ? [newMaterialMidCategory] : []}
-                    onChange={(arr) => {
-                      const nextMid = arr[0] ?? "";
-                      setNewMaterialMidCategory(nextMid);
-                      setNewMaterialCategoryId("");
-                    }}
-                  />
-                </Form.Item>
-              )}
-              <Form.Item label="子类">
-                <Selector
-                  options={subCategoryOptions}
-                  value={newMaterialCategoryId ? [newMaterialCategoryId] : []}
-                  onChange={(arr) => setNewMaterialCategoryId(arr[0] ?? "")}
-                />
-              </Form.Item>
-              <Form.Item label="默认库位">
-                <Selector
-                  options={locationOptions}
-                  value={locationId ? [locationId] : []}
-                  onChange={(arr) => setLocationId(arr[0] ?? "")}
-                />
-              </Form.Item>
-              <Form.Item label="单位">
-                <Input value={newMaterialUnit} onChange={setNewMaterialUnit} placeholder="个 / 套 / 米" />
-              </Form.Item>
-              <Form.Item label="物料编码（可选）">
-                <Input value={newMaterialCode} onChange={setNewMaterialCode} placeholder="不填则自动生成" />
-              </Form.Item>
-              <Form.Item label="规格型号（可选）">
-                <Input value={newMaterialSpec} onChange={setNewMaterialSpec} placeholder="品牌 / 型号 / 规格" />
-              </Form.Item>
-              <Form.Item label="条码（可选）">
-                <Input value={newMaterialBarcode} onChange={setNewMaterialBarcode} placeholder="扫码编号或外部编码" />
-              </Form.Item>
-              <Form.Item label="供货商（可选）">
-                <Input
-                  value={newMaterialSupplier}
-                  onChange={setNewMaterialSupplier}
-                  placeholder="如：XX 电子 / 官方旗舰店"
-                />
-              </Form.Item>
-              <Form.Item label="安全库存">
-                <Stepper min={0} value={newMaterialMinStock} onChange={setNewMaterialMinStock} />
-              </Form.Item>
-              <div className="actions two">
-                <Button disabled={creatingMaterial} onClick={() => setShowCreateMaterial(false)}>
-                  取消
-                </Button>
-                <Button color="primary" loading={creatingMaterial} onClick={onCreateMaterial}>
-                  保存并选中
-                </Button>
-              </div>
-            </Form>
-          )}
-        </SectionCard>
-        </div>
-      )}
     </>
   );
 }

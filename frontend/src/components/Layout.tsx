@@ -8,15 +8,14 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
   const { user, canApprove, loading, authStep, pendingCount } = useAuth();
 
   const tabs = [
-    { key: "/", title: "搜索", icon: "🔍" },
-    { key: "/stock", title: "出入库", icon: "↕" },
+    { key: "/", title: "搜索", icon: "search" },
+    { key: "/stock", title: "出入库", icon: "swap_vert" },
     ...(user && (user.role === "KEEPER" || user.role === "ADMIN")
-      ? [{ key: "/locations", title: "库位", icon: "📍" }]
+      ? [{ key: "/locations", title: "库位", icon: "location_on" }]
       : []),
-    { key: "/history", title: "历史", icon: "📒" },
-    ...(user?.role === "USER" ? [{ key: "/returns", title: "待还", icon: "↩" }] : []),
-    ...(canApprove ? [{ key: "/purchase", title: "进货", icon: "🛒" }] : []),
-    ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "⚙", badge: pendingCount }] : []),
+    { key: "/history", title: "历史", icon: "history" },
+    ...(user?.role === "USER" ? [{ key: "/returns", title: "待还", icon: "undo" }] : []),
+    ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "admin_panel_settings", badge: pendingCount }] : []),
   ];
 
   const showBack =
@@ -32,15 +31,22 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
 
   return (
     <div className="page">
-      {/* 顶部进度条 — 任何加载状态都显示 */}
+      {/* 顶部进度条 */}
       <div className={`top-loader ${loading ? "active" : ""}`} />
-      {/* 加载提示 — 显示当前在做什么 */}
+      {/* 冷启动全屏加载 — 给用户心理安慰 */}
       {loading && (
-        <div className="loading-banner">
-          <span className="loading-dot" />
-          <span className="loading-dot" />
-          <span className="loading-dot" />
-          <span>{hint || authStep || "正在加载…"}</span>
+        <div className="cold-start-splash">
+          <div className="cold-start-card">
+            <div className="cold-start-logo">📦</div>
+            <div className="cold-start-title">物料管理系统</div>
+            <div className="cold-start-progress">
+              <div className="cold-start-bar"><div className="cold-start-bar-fill" /></div>
+            </div>
+            <div className="cold-start-step">{hint || authStep || "正在启动…"}</div>
+            <div className="cold-start-dots">
+              <span className="loading-dot" /><span className="loading-dot" /><span className="loading-dot" />
+            </div>
+          </div>
         </div>
       )}
       <header className="page-navbar">
@@ -86,7 +92,7 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
                 className={`page-tabbar-item ${active ? "page-tabbar-item-active" : ""}`}
                 onClick={() => navigate(t.key)}
               >
-                <span className="page-tabbar-icon" aria-hidden>
+                <span className="page-tabbar-icon material-symbols-outlined" aria-hidden>
                   {t.icon}
                 </span>
                 <span className="page-tabbar-label">

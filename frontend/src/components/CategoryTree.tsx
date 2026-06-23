@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActionSheet, Button, Dialog, Form, Input, Toast } from "antd-mobile";
+import { ActionSheet, Dialog, Form, Input, Toast } from "antd-mobile";
 import type { Category } from "../api/types";
 import {
   formatCategoryPath,
@@ -45,7 +45,6 @@ export function CategoryTree({
   onRefresh,
   onAddMaterial,
 }: CategoryTreeProps) {
-  const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
@@ -181,48 +180,6 @@ export function CategoryTree({
     );
   };
 
-  const handleCreate = async (parentId: string | null) => {
-    const name = newName.trim();
-    if (!name) {
-      Toast.show({ content: "请输入分类名称" });
-      return;
-    }
-    if (!onCreate) return;
-    setBusy(true);
-    try {
-      await onCreate({ name, parent_id: parentId });
-      setNewName("");
-      Toast.show({ icon: "success", content: parentId ? "子分类已添加" : "顶层分类已添加" });
-      await onRefresh?.();
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "添加分类失败" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!selectedId || !onDelete) return;
-    const path = formatCategoryPath(categories, selectedId);
-    const confirmed = await Dialog.confirm({
-      content: `确定删除「${path}」？\n\n将同时删除其下所有子分类；关联物料会自动改挂到上一级分类。`,
-    });
-    if (!confirmed) return;
-    setBusy(true);
-    try {
-      await onDelete(selectedId);
-      onSelect(null);
-      Toast.show({ icon: "success", content: "分类已删除" });
-      await onRefresh?.();
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除分类失败" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const addParentId = selectedId ?? null;
-
   if (categories.length === 0) {
     return null;
   }
@@ -244,50 +201,6 @@ export function CategoryTree({
 
       {selectedId && (
         <div className="category-tree-path">已选：{formatCategoryPath(categories, selectedId)}</div>
-      )}
-
-      {canManage && (
-        <div className="category-tree-admin">
-          <Input placeholder="输入新分类名称" value={newName} onChange={setNewName} clearable />
-          <div className="category-tree-admin-actions">
-            <Button size="small" color="primary" loading={busy} onClick={() => void handleCreate(null)}>
-              添加顶层
-            </Button>
-            <Button
-              size="small"
-              color="primary"
-              fill="outline"
-              disabled={!addParentId}
-              loading={busy}
-              onClick={() => void handleCreate(addParentId)}
-            >
-              添加子类
-            </Button>
-            <Button
-              size="small"
-              color="danger"
-              fill="outline"
-              disabled={!selectedId}
-              loading={busy}
-              onClick={() => void handleDelete()}
-            >
-              删除选中
-            </Button>
-            <Button
-              size="small"
-              fill="outline"
-              disabled={!selectedId}
-              loading={busy}
-              onClick={() => {
-                const cat = categories.find((c) => c.id === selectedId);
-                setEditName(cat?.name ?? "");
-                setEditing(true);
-              }}
-            >
-              编辑选中
-            </Button>
-          </div>
-        </div>
       )}
 
       <Dialog
