@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -90,8 +91,19 @@ async def jsapi_config(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+# health 探测结果缓存（避免每次请求都探测飞书 API）
+_health_cache: dict = {}
+_health_cache_at: float = 0.0
+_HEALTH_CACHE_TTL = 30  # 秒
+
+
 @router.get("/health")
 async def health(settings: Settings = Depends(get_settings)):
+    global _health_cache, _health_cache_at
+    now = time.monotonic()
+    if _health_cache and (now - _health_cache_at) < _HEALTH_CACHE_TTL:
+        return _health_cache
+
     result: dict = {
         "status": "ok",
         "bitable_mode": settings.bitable_mode,
@@ -116,6 +128,7 @@ async def health(settings: Settings = Depends(get_settings)):
                 )
             else:
                 result["bitable_error"] = err
+
     if settings.feishu_configured:
         try:
             client = FeishuClient(settings)
@@ -124,6 +137,9 @@ async def health(settings: Settings = Depends(get_settings)):
             result["feishu_im"] = {"ok": False, "reason": "IM 权限探测超时（5s），不影响 Bitable 读写"}
         except Exception as exc:
             result["feishu_im"] = {"ok": False, "reason": str(exc)}
+
+    _health_cache = result
+    _health_cache_at = time.monotonic()
     return result
 
 

@@ -74,6 +74,7 @@ def main():
         # ── 2. 认证 & 引导 ──
         print("\n── 2. 认证 & 引导 ──")
         bench("GET  /api/health", client.get, "/api/health")
+        bench("GET  /api/health (缓存命中)", client.get, "/api/health")
         bench("GET  /api/bootstrap", client.get, "/api/bootstrap", headers=AUTH_HEADERS)
         bench("GET  /api/me (需登录)", client.get, "/api/me", headers=AUTH_HEADERS)
 

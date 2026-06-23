@@ -304,14 +304,35 @@ class BitableRepository:
         """预热五表缓存，降低服务重启后的首次页面等待时间。"""
         return await self._refresh_tables_best_effort(self._core_table_ids(), force=False, retries=1)
 
-    async def refresh_core_tables(self) -> dict[str, Any]:
-        """手动刷新五表缓存，用于 Bitable 直接改表后的同步。"""
+    async def refresh_core_tables(self, smart: bool = True) -> dict[str, Any]:
+        """手动刷新缓存，用于 Bitable 直接改表后的同步。
+        
+        smart=True 时自动跳过近 60s 内已刷新的表，避免重复全量拉取。
+        """
         table_ids = self._core_table_ids()
+        skipped: list[str] = []
+        if smart and self.settings.sqlite_cache_enabled:
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            sqlite = get_sqlite_cache()
+            now = time.monotonic()
+            SMART_TTL = 60  # 60s 内刷新过的表跳过
+            active_ids = []
+            for tid in table_ids:
+                age = sqlite.get_cache_age(tid)
+                if age is not None and (now - age) < SMART_TTL:
+                    skipped.append(tid)
+                else:
+                    active_ids.append(tid)
+            if skipped:
+                logger.info("智能刷新：跳过 %d 张近期已同步的表", len(skipped))
+            table_ids = active_ids
+
         results = await self._refresh_tables_best_effort(table_ids, force=True)
         failures = {tid: msg for tid, msg in results.items() if msg}
         return {
             "tables": await self.snapshot(),
             "refreshed": [tid for tid, msg in results.items() if not msg],
+            "skipped": skipped,
             "failed": failures,
         }
 
