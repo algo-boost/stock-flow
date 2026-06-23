@@ -1358,7 +1358,21 @@ class BitableRepository:
         s = self.settings
         materials = await self._load_materials()
         locations = await self._load_locations()
-        records = await self._list_all(s.bitable_table_transactions)
+
+        # SQLite 原生按物料过滤 + 分页（避免全量加载）
+        if self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            sqlite = get_sqlite_cache()
+            records, _total = sqlite.query_records(
+                s.bitable_table_transactions,
+                limit=limit,
+                offset=0,
+                order_desc=True,
+                material_id=material_id,
+            )
+        else:
+            records = await self._list_all(s.bitable_table_transactions)
+
         txs: list[Transaction] = []
         for rec in records:
             fields = rec.get("fields", {})
@@ -1410,7 +1424,23 @@ class BitableRepository:
         s = self.settings
         materials = await self._load_materials()
         locations = await self._load_locations()
-        records = await self._list_all(s.bitable_table_transactions)
+
+        # 优先 SQLite 原生分页（避免全量加载再内存截断）
+        if self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            sqlite = get_sqlite_cache()
+            # 多取一些以应对后续内存过滤（operator/keyword/date）
+            fetch_limit = max(limit * 3, 200)
+            raw_records, _total = sqlite.query_records(
+                s.bitable_table_transactions,
+                limit=fetch_limit,
+                offset=0,
+                order_desc=True,
+            )
+            records = raw_records
+        else:
+            records = await self._list_all(s.bitable_table_transactions)
+
         txs: list[Transaction] = []
         for rec in records:
             fields = rec.get("fields", {})
