@@ -124,10 +124,16 @@ def create_app() -> FastAPI:
     if os.path.isdir(dist_dir):
         from fastapi.responses import FileResponse
 
-        @app.get("/{full_path:path}")
-        async def serve_frontend(full_path: str):
-            # 如果请求匹配 dist 中的文件，直接返回；否则返回 index.html（SPA 路由）
-            path = os.path.join(dist_dir, full_path) if full_path else dist_dir
+        @app.middleware("http")
+        async def frontend_spa_middleware(request: Request, call_next):
+            """API 路由走正常处理；404 的不走 API 前缀的则返回前端 SPA。"""
+            response = await call_next(request)
+            if response.status_code == 404 and not request.url.path.startswith("/api/"):
+                path = os.path.join(dist_dir, request.url.path.lstrip("/"))
+                if os.path.isfile(path):
+                    return FileResponse(path)
+                return FileResponse(os.path.join(dist_dir, "index.html"))
+            return response
             if os.path.isfile(path):
                 return FileResponse(path)
             return FileResponse(os.path.join(dist_dir, "index.html"))
