@@ -7,6 +7,7 @@ import { AuthGate } from "../components/AuthGate";
 import { CacheRefreshButton } from "../components/CacheRefreshButton";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHero, SectionCard } from "../components/ui";
+import { formatCatalogLocationSummary } from "../utils/inventoryDisplay";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
@@ -157,10 +158,7 @@ function PurchaseContent() {
           <div className="material-selected" style={{ marginTop: 12 }}>
             <div>
               <div className="material-selected-name">{m.name}</div>
-              <div className="material-selected-code">
-                {m.code}
-                {m.supplier ? ` · 当前供货商：${m.supplier}` : ""}
-              </div>
+              {m.supplier && <div className="tx-meta">当前供货商：{m.supplier}</div>}
             </div>
             <span className={isLowStock ? "stock-badge stock-badge-warning" : "stock-badge"}>
               总库存 {selected.total_quantity}
@@ -229,13 +227,14 @@ function PurchaseContent() {
                   <div className="catalog-row-main">
                     <div className="catalog-row-name">{item.name}</div>
                     <div className="catalog-row-meta">
-                      <span className="chip">{item.code}</span>
                       {(item.major_category || item.category_name) && (
                         <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
                       )}
                       {item.supplier && <span className="chip chip-muted">{item.supplier}</span>}
                     </div>
-                    <div className="catalog-row-locs">{item.locations_summary ?? "暂无库存"}</div>
+                    <div className="catalog-row-locs">
+                      {formatCatalogLocationSummary(item.locations_summary, "暂无库存")}
+                    </div>
                   </div>
                   <div className="catalog-row-right">
                     <span className={isLowStock ? "stock-badge stock-badge-warning" : "stock-badge"}>

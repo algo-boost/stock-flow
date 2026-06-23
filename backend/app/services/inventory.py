@@ -24,6 +24,7 @@ from app.models import (
     PurchaseInboundCreate,
     RequestApprove,
     RequestReject,
+    Role,
     StockRequest,
     StockRequestCreate,
     StockRequestStatus,
@@ -240,12 +241,13 @@ class InventoryService:
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
 
-    async def delete_material(self, material_id: str) -> None:
+    async def delete_material(self, material_id: str, user: User) -> None:
+        allow_with_history = user.role == Role.ADMIN
         try:
             if self.repo:
-                await self.repo.delete_material(material_id)
+                await self.repo.delete_material(material_id, allow_with_history=allow_with_history)
             else:
-                self.store.delete_material(material_id)
+                self.store.delete_material(material_id, allow_with_history=allow_with_history)
         except ValueError as exc:
             msg = str(exc)
             if msg == "material_not_found":
@@ -256,7 +258,7 @@ class InventoryService:
             if msg == "material_has_transactions":
                 raise AppError(4003, "物料已有出入库流水或申请记录，不能删除", 400) from exc
             if msg == "material_has_requests":
-                raise AppError(4003, "物料仍有出入库申请，不能删除", 400) from exc
+                raise AppError(4003, "物料仍有待审批的出入库申请，不能删除", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc

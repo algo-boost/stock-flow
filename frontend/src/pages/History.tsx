@@ -233,7 +233,7 @@ export default function HistoryPage() {
               value: item.name,
               hint: [item.major_category, item.mid_category, item.sub_category]
                 .filter(Boolean)
-                .join(" / ") || (item.category_name ?? item.code),
+                .join(" / ") || (item.category_name ?? "物料"),
             });
             if (next.length >= 5) break;
           }

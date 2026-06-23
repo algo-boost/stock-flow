@@ -14,6 +14,39 @@ export function formatInventorySummary(items: InventoryItem[], limit = 3): strin
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+/** 去掉摘要里各库位的数量，避免与右侧总库存徽章重复 */
+export function stripQuantitiesFromInventorySummary(summary: string): string {
+  const stripLine = (line: string) => {
+    const parts = line.split(" · ").map((part) => part.trim()).filter(Boolean);
+    const kept: string[] = [];
+    for (let i = 0; i < parts.length; ) {
+      kept.push(parts[i]);
+      i += 1;
+      if (i < parts.length && /^\d+行\d+列$/.test(parts[i])) {
+        kept.push(parts[i]);
+        i += 1;
+      }
+      if (i < parts.length && /^\d+个$/.test(parts[i])) {
+        i += 1;
+      }
+    }
+    return kept.join(" · ");
+  };
+
+  return summary
+    .split("\n")
+    .map(stripLine)
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function formatCatalogLocationSummary(
+  summary: string | null | undefined,
+  fallback: string,
+): string {
+  return summary ? stripQuantitiesFromInventorySummary(summary) : fallback;
+}
+
 /** 前端 Selector 用：区分同库位不同格位 */
 export function inventorySlotKey(item: Pick<InventoryItem, "location_id" | "row" | "column">): string {
   if (item.row != null && item.column != null) {

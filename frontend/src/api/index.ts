@@ -34,7 +34,9 @@ function headers(): HeadersInit {
     "Content-Type": "application/json",
   };
   const token = getAuthToken();
-  if (token) {
+  // 本地浏览器 Mock 调试时优先使用 X-Mock-Role，避免旧 Bearer token 覆盖管理员视角
+  const preferMockAuth = apiConfig.useMockAuth && !isFeishuClient();
+  if (token && !preferMockAuth) {
     h.Authorization = `Bearer ${token}`;
   } else if (apiConfig.useMockAuth) {
     h["X-Mock-Role"] = apiConfig.mockRole;
@@ -525,6 +527,6 @@ export function listLocationsForPicker() {
 
 export function searchMaterialsForPicker(q?: string) {
   return searchMaterials(q ?? "", { page: 1, size: 50 }).then((data) =>
-    data.items.map((m) => ({ value: m.id, label: `${m.name} (${m.code})` })),
+    data.items.map((m) => ({ value: m.id, label: m.name })),
   );
 }

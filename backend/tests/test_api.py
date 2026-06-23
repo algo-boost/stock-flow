@@ -327,6 +327,98 @@ def test_delete_material_forbidden_for_user():
     assert delete_resp.status_code == 403
 
 
+def test_delete_material_with_history_forbidden_for_keeper():
+    create_resp = client.post(
+        "/materials",
+        headers=HEADERS_KEEPER,
+        json={
+            "name": "有流水不可删",
+            "category_id": "cat_motor_module",
+            "unit": "个",
+            "default_location_id": "loc_01",
+        },
+    )
+    material_id = create_resp.json()["data"]["id"]
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": material_id,
+            "location_id": "loc_01",
+            "qty": 2,
+            "idempotency_key": "del-history-in",
+            "note": "测试入库",
+        },
+    )
+    client.post(
+        "/outbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": material_id,
+            "location_id": "loc_01",
+            "qty": 2,
+            "idempotency_key": "del-history-out",
+            "note": "测试出库",
+            "return_required": False,
+        },
+    )
+
+    delete_resp = client.delete(f"/materials/{material_id}", headers=HEADERS_KEEPER)
+    assert delete_resp.status_code == 400
+    assert "流水" in delete_resp.json()["message"] or "申请" in delete_resp.json()["message"]
+
+    txs_resp = client.get(f"/materials/{material_id}/transactions", headers=HEADERS_KEEPER)
+    assert txs_resp.status_code == 200
+    assert len(txs_resp.json()["data"]) >= 2
+
+
+def test_admin_delete_material_with_history_when_zero_stock():
+    create_resp = client.post(
+        "/materials",
+        headers=HEADERS_KEEPER,
+        json={
+            "name": "管理员可删有流水",
+            "category_id": "cat_motor_module",
+            "unit": "个",
+            "default_location_id": "loc_01",
+        },
+    )
+    material_id = create_resp.json()["data"]["id"]
+    client.post(
+        "/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": material_id,
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "admin-del-history-in",
+            "note": "测试入库",
+        },
+    )
+    client.post(
+        "/outbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": material_id,
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "admin-del-history-out",
+            "note": "测试出库",
+            "return_required": False,
+        },
+    )
+
+    delete_resp = client.delete(f"/materials/{material_id}", headers=HEADERS_ADMIN)
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["data"]["deleted"] is True
+
+    detail_resp = client.get(f"/materials/{material_id}", headers=HEADERS_ADMIN)
+    assert detail_resp.status_code == 404
+
+    history_resp = client.get("/transactions", headers=HEADERS_ADMIN)
+    assert any(tx["material_id"] == material_id for tx in history_resp.json()["data"])
+
+
 def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
     forbidden = client.post(
         "/purchase-inbound",

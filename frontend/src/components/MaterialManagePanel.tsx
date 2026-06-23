@@ -7,13 +7,23 @@ import { SectionCard } from "./ui";
 type Props = {
   detail: MaterialDetail;
   hasTransactions: boolean;
+  initialEditing?: boolean;
+  /** 管理员：零库存时可删有流水物料，历史流水保留 */
+  canForceDelete?: boolean;
   onUpdated: (material: Material) => void;
   onDeleted: () => void;
 };
 
-export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDeleted }: Props) {
+export function MaterialManagePanel({
+  detail,
+  hasTransactions,
+  initialEditing = false,
+  canForceDelete = false,
+  onUpdated,
+  onDeleted,
+}: Props) {
   const { material, total_quantity } = detail;
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(initialEditing);
   const [saving, setSaving] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [name, setName] = useState(material.name);
@@ -31,6 +41,10 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
       .then(setCategories)
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (initialEditing) setEditing(true);
+  }, [initialEditing]);
 
   useEffect(() => {
     setName(material.name);
@@ -67,18 +81,24 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
         .filter(
           (cat) =>
             cat.major_name === majorCategory &&
-            cat.mid_name === midCategory &&
+            (cat.mid_name ?? "") === midCategory &&
             cat.sub_name,
         )
         .map((cat) => ({ label: cat.sub_name || cat.name, value: cat.id })),
     [categories, majorCategory, midCategory],
   );
 
-  const canDelete = total_quantity === 0 && !hasTransactions;
+  const effectiveCategoryId = categoryId || material.category_id;
+
+  const canDelete = total_quantity === 0 && (canForceDelete || !hasTransactions);
 
   const onSave = async () => {
     if (!name.trim()) {
       Toast.show({ content: "请填写物料名称" });
+      return;
+    }
+    if (!effectiveCategoryId) {
+      Toast.show({ content: "请选择子类" });
       return;
     }
     setSaving(true);
@@ -86,10 +106,10 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
       const updated = await updateMaterial(material.id, {
         name: name.trim(),
         code: code.trim() || undefined,
-        category_id: categoryId,
+        category_id: effectiveCategoryId,
         major_category: majorCategory || undefined,
         mid_category: midCategory || undefined,
-        sub_category: categories.find((c) => c.id === categoryId)?.sub_name || undefined,
+        sub_category: categories.find((c) => c.id === effectiveCategoryId)?.sub_name || undefined,
         unit: unit.trim() || "个",
         spec: spec.trim() || undefined,
         supplier: supplier.trim() || undefined,
@@ -106,8 +126,12 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
   };
 
   const onDelete = () => {
+    const historyNote =
+      hasTransactions && canForceDelete
+        ? "历史出入库流水将保留，仅删除物料主数据。"
+        : "删除后不可恢复。";
     Dialog.confirm({
-      content: `确认删除物料「${material.name}」？删除后不可恢复。`,
+      content: `确认删除物料「${material.name}」？${historyNote}`,
       confirmText: "删除",
       onConfirm: async () => {
         setSaving(true);
@@ -125,7 +149,14 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
   };
 
   return (
-    <SectionCard title="主数据维护" subtitle="纠错新增错误的物料；有库存或流水时不可删除">
+    <SectionCard
+      title="主数据维护"
+      subtitle={
+        canForceDelete
+          ? "管理员可删除零库存物料（含纠错）；有流水时删除后流水仍保留"
+          : "纠错新增错误的物料；有库存或流水时不可删除"
+      }
+    >
       <div className="material-manage-actions">
         <Button size="small" fill="outline" onClick={() => setEditing(true)} disabled={saving}>
           修改
@@ -144,9 +175,14 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
         <div className="form-hint" style={{ marginTop: 8 }}>
           {total_quantity > 0
             ? `当前仍有库存 ${total_quantity}，请先出库后再删除。`
-            : hasTransactions
+            : hasTransactions && !canForceDelete
               ? "已有出入库流水，不能删除；可修改名称/分类等信息。"
               : null}
+        </div>
+      )}
+      {canDelete && hasTransactions && canForceDelete && (
+        <div className="form-hint" style={{ marginTop: 8 }}>
+          当前无库存；删除后历史流水仍可在「历史」中追溯。
         </div>
       )}
 
@@ -157,9 +193,6 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
           <Form layout="vertical" className="form-card">
             <Form.Item label="物料名称">
               <Input value={name} onChange={setName} />
-            </Form.Item>
-            <Form.Item label="物料编码">
-              <Input value={code} onChange={setCode} />
             </Form.Item>
             <Form.Item label="大类">
               <Selector
@@ -189,8 +222,8 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
             <Form.Item label="子类">
               <Selector
                 options={subOptions}
-                value={categoryId ? [categoryId] : []}
-                onChange={(arr) => setCategoryId(arr[0] ?? categoryId)}
+                value={effectiveCategoryId ? [effectiveCategoryId] : []}
+                onChange={(arr) => setCategoryId(arr[0] ?? effectiveCategoryId)}
               />
             </Form.Item>
             <Form.Item label="单位">

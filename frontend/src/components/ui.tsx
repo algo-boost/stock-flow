@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { ActionSheet } from "antd-mobile";
+import { stripQuantitiesFromInventorySummary } from "../utils/inventoryDisplay";
 import type { Action } from "antd-mobile/es/components/action-sheet";
 import type { Role } from "../api/types";
 
@@ -155,7 +156,11 @@ export function MaterialCard({
           <div className="material-card-name">{name}</div>
           <div className="material-card-meta">
             {category && <span className="chip">{category}</span>}
-            {stockSummary && <span className="material-card-loc">{stockSummary}</span>}
+            {stockSummary && (
+              <span className="material-card-loc">
+                {quantity != null ? stripQuantitiesFromInventorySummary(stockSummary) : stockSummary}
+              </span>
+            )}
           </div>
         </div>
         <div className="material-card-right">

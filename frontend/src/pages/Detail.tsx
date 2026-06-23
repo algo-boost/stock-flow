@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, DotLoading, Toast } from "antd-mobile";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { getMaterial, getMaterialTransactions } from "../api";
 import type { InventoryItem, MaterialDetail, Transaction } from "../api/types";
 import { useAuth } from "../components/AuthGate";
@@ -13,7 +13,9 @@ import { inventorySlotKey } from "../utils/inventoryDisplay";
 
 export default function DetailPage() {
   const { id = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const autoEdit = searchParams.get("edit") === "1";
   const { canInbound, canApprove } = useAuth();
   const [detail, setDetail] = useState<MaterialDetail | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
@@ -78,7 +80,6 @@ export default function DetailPage() {
       )}
 
       <SectionCard title="基本信息">
-        <InfoRow label="物料编码" value={material.code} />
         <InfoRow label="大类" value={material.major_category ?? "-"} />
         <InfoRow label="中类" value={material.mid_category || "-"} />
         <InfoRow label="子类" value={material.sub_category ?? material.category_name ?? "-"} />
@@ -93,6 +94,8 @@ export default function DetailPage() {
         <MaterialManagePanel
           detail={detail}
           hasTransactions={txs.length > 0}
+          initialEditing={autoEdit}
+          canForceDelete={canApprove}
           onUpdated={(updated) =>
             setDetail((current) => (current ? { ...current, material: updated } : current))
           }

@@ -140,6 +140,17 @@ class BitableRepository:
             return matches[0]
         if len(matches) > 1:
             raise ValueError("ambiguous_inventory")
+        if from_row is not None and from_column is not None:
+            location_only: list[tuple[InventoryKey, dict[str, Any]]] = []
+            for key, rec in inv_records.items():
+                if key_material_id(key) != material_id or key_location_id(key) != location_id:
+                    continue
+                qty = field_number(rec.get("fields", {}).get(self.settings.bitable_f_inventory_quantity))
+                if qty <= 0:
+                    continue
+                location_only.append((key, rec))
+            if len(location_only) == 1:
+                return location_only[0]
         raise ValueError("inventory_not_found")
 
     def _inventory_item_from_record(
@@ -295,6 +306,19 @@ class BitableRepository:
             "fields": fields,
             "created_time": now_ms,
             "last_modified_time": now_ms,
+        }
+
+    @staticmethod
+    def _merge_record(existing: dict[str, Any] | None, patch: dict[str, Any]) -> dict[str, Any]:
+        if not existing:
+            return patch
+        return {
+            **existing,
+            **patch,
+            "fields": {
+                **existing.get("fields", {}),
+                **patch.get("fields", {}),
+            },
         }
 
     async def warmup_core_tables(self) -> dict[str, str | None]:
@@ -945,18 +969,43 @@ class BitableRepository:
                     return True
         return False
 
-    async def delete_material(self, material_id: str) -> None:
+    async def _material_has_pending_requests(self, material_id: str) -> bool:
+        s = self.settings
+        if not s.bitable_table_requests:
+            return False
+        for rec in await self._list_all(s.bitable_table_requests):
+            mid = field_link_id(rec.get("fields", {}).get(s.bitable_f_request_material))
+            if mid != material_id:
+                continue
+            status = self._parse_request_status(rec.get("fields", {}).get(s.bitable_f_request_status))
+            if status == StockRequestStatus.PENDING:
+                return True
+        return False
+
+    async def delete_material(self, material_id: str, *, allow_with_history: bool = False) -> None:
         if not await self.get_material(material_id):
             raise ValueError("material_not_found")
         stock = await self._material_stock_total(material_id)
         if stock > 0:
             raise ValueError(f"material_has_stock:{stock}")
-        if await self._material_has_transactions(material_id):
+        if allow_with_history:
+            if await self._material_has_pending_requests(material_id):
+                raise ValueError("material_has_requests")
+        elif await self._material_has_transactions(material_id):
             raise ValueError("material_has_transactions")
         s = self.settings
+        inv_records = await self._load_inventory_records()
+        for key, rec in list(inv_records.items()):
+            if key_material_id(key) != material_id:
+                continue
+            record_id = rec.get("record_id")
+            if record_id:
+                await self.client.delete_record(s.bitable_table_inventory, record_id)
+                self._remove_cached_record(s.bitable_table_inventory, record_id)
         await self.client.delete_record(s.bitable_table_materials, material_id)
         self._materials_cache = None
         self._remove_cached_record(s.bitable_table_materials, material_id)
+        self._invalidate_table_cache(s.bitable_table_inventory)
 
     async def list_material_catalog(
         self,
@@ -1246,22 +1295,41 @@ class BitableRepository:
             await self.client.update_record(s.bitable_table_inventory, old_record_id, inv_fields)
             self._upsert_cached_record(
                 s.bitable_table_inventory,
-                self._cached_record(old_record_id, inv_fields),
+                self._merge_record(old_rec, self._cached_record(old_record_id, inv_fields)),
+            )
+            return self._inventory_item_from_record(
+                new_key,
+                self._merge_record(old_rec, self._cached_record(old_record_id, inv_fields)),
+                locations,
             )
         elif new_key in inv_records:
             target_rec = inv_records[new_key]
             target_id = target_rec.get("record_id", "")
             target_qty = field_number(target_rec.get("fields", {}).get(s.bitable_f_inventory_quantity))
+            merged_qty = target_qty + old_qty
             await self.client.update_record(
                 s.bitable_table_inventory,
                 target_id,
                 {
-                    s.bitable_f_inventory_quantity: target_qty + old_qty,
+                    s.bitable_f_inventory_quantity: merged_qty,
                     s.bitable_f_inventory_updated: updated_at,
                 },
             )
             await self.client.delete_record(s.bitable_table_inventory, old_record_id)
+            self._remove_cached_record(s.bitable_table_inventory, old_record_id)
+            merged_target = self._merge_record(
+                target_rec,
+                self._cached_record(
+                    target_id,
+                    {
+                        s.bitable_f_inventory_quantity: merged_qty,
+                        s.bitable_f_inventory_updated: updated_at,
+                    },
+                ),
+            )
+            self._upsert_cached_record(s.bitable_table_inventory, merged_target)
             self._invalidate_table_cache(s.bitable_table_inventory)
+            return self._inventory_item_from_record(new_key, merged_target, locations)
         else:
             inv_fields = {
                 s.bitable_f_inventory_row: row,
@@ -1269,17 +1337,9 @@ class BitableRepository:
                 s.bitable_f_inventory_updated: updated_at,
             }
             await self.client.update_record(s.bitable_table_inventory, old_record_id, inv_fields)
-            self._upsert_cached_record(
-                s.bitable_table_inventory,
-                self._cached_record(old_record_id, inv_fields),
-            )
-
-        self._invalidate_table_cache(s.bitable_table_inventory)
-        items = await self.get_inventory_for_material(material_id)
-        for item in items:
-            if item.location_id == location_id and item.row == row and item.column == column:
-                return item
-        raise ValueError("inventory_not_found")
+            merged_rec = self._merge_record(old_rec, self._cached_record(old_record_id, inv_fields))
+            self._upsert_cached_record(s.bitable_table_inventory, merged_rec)
+            return self._inventory_item_from_record(new_key, merged_rec, locations)
 
     async def get_inventory_for_material(self, material_id: str) -> list[InventoryItem]:
         locations = await self._load_locations()
@@ -2158,7 +2218,10 @@ class BitableRepository:
             return
         try:
             from app.bitable.sqlite_cache import get_sqlite_cache
-            get_sqlite_cache().upsert_one(table_id, record)
+
+            sqlite = get_sqlite_cache()
+            existing = sqlite.get_record(table_id, record["record_id"])
+            sqlite.upsert_one(table_id, self._merge_record(existing, record))
         except Exception:
             pass
 

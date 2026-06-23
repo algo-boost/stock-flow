@@ -7,6 +7,7 @@ import { ApprovalsPanel } from "../components/ApprovalsPanel";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, InfoRow, PageHero, SectionCard, StatCard, TxBadge } from "../components/ui";
+import { formatCatalogLocationSummary } from "../utils/inventoryDisplay";
 
 const ORG_PRESETS = [
   { department: "机器人实验室", position: "实验室负责人", owner: "管理员" },
@@ -211,11 +212,12 @@ function AdminCenterContent() {
                 <div className="catalog-row-main">
                   <div className="catalog-row-name">{item.name}</div>
                   <div className="catalog-row-meta">
-                    <span className="chip">{item.code}</span>
                     {item.supplier && <span className="chip chip-muted">{item.supplier}</span>}
                     <span className="chip chip-muted">安全库存 {item.threshold}</span>
                   </div>
-                  <div className="catalog-row-locs">{item.locations_summary ?? "暂无库存"}</div>
+                  <div className="catalog-row-locs">
+                    {formatCatalogLocationSummary(item.locations_summary, "暂无库存")}
+                  </div>
                 </div>
                 <div className="catalog-row-right">
                   <span className="stock-badge stock-badge-warning">库存 {item.total_quantity}</span>

@@ -108,10 +108,10 @@ async def update_material(
 @router.delete("/{material_id}")
 async def delete_material(
     material_id: str,
-    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
     service: InventoryService = Depends(get_service),
 ):
-    await service.delete_material(material_id)
+    await service.delete_material(material_id, user)
     return success({"deleted": True})
 
 

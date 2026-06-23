@@ -541,7 +541,7 @@ class MockStore:
         self.materials[material_id] = merged
         return merged
 
-    def delete_material(self, material_id: str) -> None:
+    def delete_material(self, material_id: str, *, allow_with_history: bool = False) -> None:
         if material_id not in self.materials:
             raise ValueError("material_not_found")
         stock = sum(
@@ -551,10 +551,17 @@ class MockStore:
         )
         if stock > 0:
             raise ValueError(f"material_has_stock:{stock}")
-        if any(tx.material_id == material_id for tx in self.transactions.values()):
-            raise ValueError("material_has_transactions")
-        if any(req.material_id == material_id for req in self.requests.values()):
-            raise ValueError("material_has_requests")
+        if allow_with_history:
+            if any(
+                req.material_id == material_id and req.status == StockRequestStatus.PENDING
+                for req in self.requests.values()
+            ):
+                raise ValueError("material_has_requests")
+        else:
+            if any(tx.material_id == material_id for tx in self.transactions.values()):
+                raise ValueError("material_has_transactions")
+            if any(req.material_id == material_id for req in self.requests.values()):
+                raise ValueError("material_has_requests")
         del self.materials[material_id]
         for key in [k for k in self.inventory if k[0] == material_id]:
             del self.inventory[key]

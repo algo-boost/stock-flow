@@ -126,7 +126,7 @@ export default function SearchPage() {
           for (const item of data.items) {
             if (seen.has(item.id)) continue;
             seen.add(item.id);
-            const meta = [item.code, item.spec].filter(Boolean).join(" · ");
+            const meta = item.spec ?? "";
             const category =
               [item.major_category, item.mid_category, item.sub_category]
                 .filter(Boolean)
@@ -207,7 +207,6 @@ export default function SearchPage() {
           <MaterialCard
             key={m.id}
             name={m.name}
-            code={m.code}
             category={
                 [m.major_category, m.mid_category, m.sub_category]
                   .filter(Boolean)
@@ -230,7 +229,7 @@ export default function SearchPage() {
                     { text: "申请入库", key: "req-inbound" },
                   ]),
               ...(isAdmin ? [
-                    { text: "修改物料", key: "edit" },
+                    { text: "修改名称", key: "edit" },
                     { text: "进货", key: "purchase" },
                   ] : []),
             ]}
@@ -256,7 +255,7 @@ export default function SearchPage() {
                   navigate(`/stock?tab=inbound&material_id=${id}`);
                   break;
                 case "edit":
-                  navigate(`/materials/${id}`);
+                  navigate(`/materials/${id}?edit=1`);
                   break;
                 case "purchase":
                   navigate(`/purchase?material_id=${id}`);

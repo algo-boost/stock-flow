@@ -14,6 +14,7 @@ import type { Category, Location, MaterialDetail, MaterialSearchItem } from "../
 import { useAuth } from "./AuthGate";
 import { CacheRefreshButton } from "./CacheRefreshButton";
 import { EmptyState, SectionCard } from "./ui";
+import { formatCatalogLocationSummary } from "../utils/inventoryDisplay";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
@@ -330,7 +331,6 @@ export function StockInboundPanel() {
           <div className="material-selected" style={{ marginTop: 12 }}>
             <div>
               <div className="material-selected-name">{m.name}</div>
-              <div className="material-selected-code">{m.code}</div>
             </div>
             <span className="stock-badge">总库存 {selected.total_quantity}</span>
           </div>
@@ -427,7 +427,6 @@ export function StockInboundPanel() {
                 <div className="catalog-row-main">
                   <div className="catalog-row-name">{item.name}</div>
                   <div className="catalog-row-meta">
-                    <span className="chip">{item.code}</span>
                     {(item.major_category || item.category_name) && (
                       <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
                     )}
@@ -435,7 +434,9 @@ export function StockInboundPanel() {
                     {item.supplier && <span className="chip chip-muted">{item.supplier}</span>}
                     <span className="chip chip-muted">{item.unit}</span>
                   </div>
-                  <div className="catalog-row-locs">{item.locations_summary ?? "暂无库存"}</div>
+                  <div className="catalog-row-locs">
+                    {formatCatalogLocationSummary(item.locations_summary, "暂无库存")}
+                  </div>
                 </div>
                 <div className="catalog-row-right">
                   <span className="stock-badge">{item.total_quantity}</span>
@@ -526,9 +527,6 @@ export function StockInboundPanel() {
               </Form.Item>
               <Form.Item label="单位">
                 <Input value={newMaterialUnit} onChange={setNewMaterialUnit} placeholder="个 / 套 / 米" />
-              </Form.Item>
-              <Form.Item label="物料编码（可选）">
-                <Input value={newMaterialCode} onChange={setNewMaterialCode} placeholder="不填则自动生成" />
               </Form.Item>
               <Form.Item label="规格型号（可选）">
                 <Input value={newMaterialSpec} onChange={setNewMaterialSpec} placeholder="品牌 / 型号 / 规格" />

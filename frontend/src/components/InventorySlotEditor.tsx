@@ -41,7 +41,13 @@ export function InventorySlotEditor({
       onUpdated(updated, fromKey);
       setEditing(false);
     } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "更新格位失败" });
+      const message = e instanceof Error ? e.message : "更新格位失败";
+      Toast.show({
+        icon: "fail",
+        content: message.includes("暂无库存")
+          ? `${message}。请先点上方「刷新缓存」后再试`
+          : message,
+      });
     } finally {
       setSaving(false);
     }

@@ -5,6 +5,7 @@ import { getMaterial, listLocations, postTransfer, searchMaterials } from "../ap
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import {
   findInventoryBySlotKey,
+  formatCatalogLocationSummary,
   formatInventorySlot,
   inventorySlotKey,
   parseInventorySlotKey,
@@ -196,7 +197,6 @@ export function LocationTransferPanel() {
           <div className="material-selected" style={{ marginTop: 12 }}>
             <div>
               <div className="material-selected-name">{selected.material.name}</div>
-              <div className="material-selected-code">{selected.material.code}</div>
             </div>
             <span className="stock-badge">总库存 {selected.total_quantity}</span>
           </div>
@@ -284,14 +284,15 @@ export function LocationTransferPanel() {
               <div className="catalog-row-main">
                 <div className="catalog-row-name">{item.name}</div>
                 <div className="catalog-row-meta">
-                  <span className="chip">{item.code}</span>
                   {(item.major_category || item.category_name) && (
                     <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
                   )}
                   {item.sub_category && <span className="chip chip-muted">{item.sub_category}</span>}
                   <span className="chip chip-muted">{item.unit}</span>
                 </div>
-                <div className="catalog-row-locs">{item.locations_summary ?? "暂无库位库存"}</div>
+                <div className="catalog-row-locs">
+                  {formatCatalogLocationSummary(item.locations_summary, "暂无库位库存")}
+                </div>
               </div>
               <div className="catalog-row-right">
                 <span className="stock-badge">{item.total_quantity}</span>

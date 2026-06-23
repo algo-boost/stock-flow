@@ -432,20 +432,6 @@ body {
   color: var(--sf-text-secondary);
 }
 
-.category-tree-admin {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--sf-border);
-}
-
-.category-tree-admin-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .category-picker {
   display: flex;
   flex-direction: column;
