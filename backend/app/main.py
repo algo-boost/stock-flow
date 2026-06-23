@@ -134,9 +134,6 @@ def create_app() -> FastAPI:
                     return FileResponse(path)
                 return FileResponse(os.path.join(dist_dir, "index.html"))
             return response
-            if os.path.isfile(path):
-                return FileResponse(path)
-            return FileResponse(os.path.join(dist_dir, "index.html"))
 
     return app
 

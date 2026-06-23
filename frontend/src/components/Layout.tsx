@@ -2,10 +2,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthGate";
 import { ROLE_LABEL, RoleBadge } from "./ui";
 
-export function Layout({ title, children }: { title: string; children: React.ReactNode }) {
+export function Layout({ title, children, hint }: { title: string; children: React.ReactNode; hint?: string }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, canApprove } = useAuth();
+  const { user, canApprove, loading, authStep, pendingCount } = useAuth();
 
   const tabs = [
     { key: "/", title: "搜索", icon: "🔍" },
@@ -16,7 +16,7 @@ export function Layout({ title, children }: { title: string; children: React.Rea
     { key: "/history", title: "历史", icon: "📒" },
     ...(user?.role === "USER" ? [{ key: "/returns", title: "待还", icon: "↩" }] : []),
     ...(canApprove ? [{ key: "/purchase", title: "进货", icon: "🛒" }] : []),
-    ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "⚙" }] : []),
+    ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "⚙", badge: pendingCount }] : []),
   ];
 
   const showBack =
@@ -32,6 +32,17 @@ export function Layout({ title, children }: { title: string; children: React.Rea
 
   return (
     <div className="page">
+      {/* 顶部进度条 — 任何加载状态都显示 */}
+      <div className={`top-loader ${loading ? "active" : ""}`} />
+      {/* 加载提示 — 显示当前在做什么 */}
+      {loading && (
+        <div className="loading-banner">
+          <span className="loading-dot" />
+          <span className="loading-dot" />
+          <span className="loading-dot" />
+          <span>{hint || authStep || "正在加载…"}</span>
+        </div>
+      )}
       <header className="page-navbar">
         <div className="page-navbar-main">
           {showBack ? (
@@ -78,7 +89,12 @@ export function Layout({ title, children }: { title: string; children: React.Rea
                 <span className="page-tabbar-icon" aria-hidden>
                   {t.icon}
                 </span>
-                <span className="page-tabbar-label">{t.title}</span>
+                <span className="page-tabbar-label">
+                  {t.title}
+                  {(t as { badge?: number }).badge != null && (t as { badge?: number }).badge! > 0 && (
+                    <span className="tab-badge">{(t as { badge?: number }).badge}</span>
+                  )}
+                </span>
               </button>
             );
           })}

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { ActionSheet } from "antd-mobile";
+import { ActionSheet, Dialog } from "antd-mobile";
 import type { Action } from "antd-mobile/es/components/action-sheet";
 import type { Role } from "../api/types";
 
@@ -147,52 +147,105 @@ export function MaterialCard({
   onAction?: (action: Action) => void;
 }) {
   const [menuVisible, setMenuVisible] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<Action | null>(null);
+
+  const safeActions = actions.filter(a => !a.disabled);
+  const hasActions = safeActions.length > 0;
+
+  const handleAction = (action: Action) => {
+    if (action.danger) {
+      setConfirmAction(action);
+      return;
+    }
+    onAction?.(action);
+  };
 
   return (
     <>
-      <button type="button" className="material-card" onClick={onClick}>
-        <div className="material-card-main">
-          <div className="material-card-name">{name}</div>
-          <div className="material-card-meta">
-            {category && <span className="chip">{category}</span>}
-            {stockSummary && <span className="material-card-loc">{stockSummary}</span>}
+      <div className="material-card-wrap">
+        <button type="button" className="material-card" onClick={onClick}>
+          <div className="material-card-main">
+            <div className="material-card-name">{name}</div>
+            <div className="material-card-meta">
+              {category && <span className="chip">{category}</span>}
+              {stockSummary && <span className="material-card-loc">{stockSummary}</span>}
+            </div>
           </div>
-        </div>
-        <div className="material-card-right">
-          {quantity != null && (
-            <span className={`stock-badge${warning ? " stock-badge-warning" : ""}`}>
-              {quantity}
-            </span>
-          )}
-          {actions.length > 0 && (
-            <span
-              className="material-card-menu-btn"
-              aria-label="更多操作"
-              role="button"
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuVisible(true);
-              }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuVisible(true); } }}
-            >
-              ⋯
-            </span>
-          )}
-        </div>
-      </button>
-      {actions.length > 0 && (
+          <div className="material-card-right">
+            {quantity != null && (
+              <span className={`stock-badge${warning ? " stock-badge-warning" : ""}`}>
+                {quantity}
+              </span>
+            )}
+            {hasActions && (
+              <span
+                className="material-card-menu-btn"
+                aria-label="更多操作"
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuVisible(true);
+                }}
+              >
+                ⋯
+              </span>
+            )}
+          </div>
+        </button>
+        {/* 快捷操作按钮（始终可见，仅在有过 2 个操作时折叠） */}
+        {hasActions && safeActions.length <= 2 && (
+          <div className="material-card-actions">
+            {safeActions.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                className={`material-card-action-btn ${action.danger ? "action-danger" : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAction(action);
+                }}
+              >
+                {action.text}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {hasActions && (safeActions.length > 2 || menuVisible) && (
         <ActionSheet
           visible={menuVisible}
-          actions={actions}
+          actions={safeActions}
           onClose={() => setMenuVisible(false)}
           onAction={(action) => {
             setMenuVisible(false);
-            onAction?.(action);
+            handleAction(action);
           }}
           cancelText="取消"
         />
       )}
+
+      {/* 危险操作二次确认 */}
+      <Dialog
+        visible={confirmAction !== null}
+        title={confirmAction?.text}
+        content={`确定要${confirmAction?.text}吗？此操作不可撤销。`}
+        actions={[
+          { key: "cancel", text: "取消", onClick: () => setConfirmAction(null) },
+          {
+            key: "confirm",
+            text: "确认",
+            bold: true,
+            danger: true,
+            onClick: () => {
+              if (confirmAction) onAction?.(confirmAction);
+              setConfirmAction(null);
+            },
+          },
+        ]}
+        onClose={() => setConfirmAction(null)}
+      />
     </>
   );
 }

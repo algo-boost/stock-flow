@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { AuthProvider } from "./components/AuthGate";
+import { UndoToast } from "./components/UndoToast";
 import AdminCenterPage from "./pages/AdminCenter";
 import DetailPage from "./pages/Detail";
 import HistoryPage from "./pages/History";
@@ -36,6 +37,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <UndoToast />
         <Routes>
           <Route path="/" element={<SearchPage />} />
           <Route path="/materials/:id" element={<DetailPage />} />

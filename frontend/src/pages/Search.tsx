@@ -27,6 +27,9 @@ export default function SearchPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("recent_searches") || "[]"); } catch { return []; }
+  });
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -149,7 +152,17 @@ export default function SearchPage() {
     return () => window.clearTimeout(timer);
   }, [categorySuggestionPool, keyword]);
 
+  const saveSearch = (term: string) => {
+    if (!term.trim()) return;
+    setRecentSearches((prev) => {
+      const next = [term, ...prev.filter((s) => s !== term)].slice(0, 5);
+      localStorage.setItem("recent_searches", JSON.stringify(next));
+      return next;
+    });
+  };
+
   const onSearch = (val: string) => {
+    saveSearch(val);
     setKeyword(val);
     setSelectedCategoryId(null);
     setSuggestions([]);
@@ -303,6 +316,24 @@ export default function SearchPage() {
               void loadMaterials("", 1, false, null);
             }}
           />
+          {/* 最近搜索 */}
+          {!keyword && recentSearches.length > 0 && suggestions.length === 0 && (
+            <div className="search-suggestions">
+              <div style={{ padding: "8px 12px 4px", fontSize: 12, color: "var(--sf-text-muted)", fontWeight: 600 }}>
+                最近搜索
+              </div>
+              {recentSearches.map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  className="search-suggestion"
+                  onClick={() => { setKeyword(term); onSearch(term); }}
+                >
+                  <span className="search-suggestion-label">🕐 {term}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {suggestions.length > 0 && (
             <div className="search-suggestions">
               {suggestions.map((suggestion) => (

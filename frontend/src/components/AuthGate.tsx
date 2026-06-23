@@ -23,6 +23,8 @@ interface AuthContextValue {
   canApprove: boolean;
   isFeishu: boolean;
   refresh: () => Promise<void>;
+  pendingCount: number;
+  setPendingCount: (n: number) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -58,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [authStep, setAuthStep] = useState("");
+  const [pendingCount, setPendingCount] = useState(0);
   const isFeishu = isFeishuClient();
 
   const refresh = async () => {
@@ -65,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       if (isFeishu && !getAuthToken()) {
-        setAuthStep("正在初始化飞书 SDK…");
+        setAuthStep("正在连接飞书…");
         const login = await loginWithFeishu();
         setUser(login.user);
         setRoleMeta(login.roleMeta);
@@ -73,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
+        setAuthStep("正在验证身份…");
         const data = await getMe();
         setUser(data.user);
         setRoleMeta(data.role_meta ?? null);
@@ -80,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // 后端重启后内存 session 丢失，localStorage token 仍有效 → 自动重新免登
         if (isFeishu && getAuthToken() && isAuthExpiredError(e)) {
           clearAuthToken();
+          setAuthStep("正在重新登录…");
           const login = await loginWithFeishu();
           setUser(login.user);
           setRoleMeta(login.roleMeta);
@@ -124,6 +129,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         canApprove,
         isFeishu,
         refresh,
+        pendingCount,
+        setPendingCount,
       }}
     >
       {!loading && roleMeta?.warning && user && (

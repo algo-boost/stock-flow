@@ -63,7 +63,8 @@ function LocationManagePanel() {
   const onDelete = async (loc: Location) => {
     const stock = stockByLocation.get(loc.id) ?? 0;
     if (stock > 0) { Toast.show({ icon: "fail", content: `库存 ${stock}，不能删除` }); return; }
-    if (!window.confirm(`删除「${loc.name}」？其子库位也会被删除。`)) return;
+    const confirmed = await Dialog.confirm({ content: `删除「${loc.name}」？其子库位也会被删除。` });
+    if (!confirmed) return;
     setSaving(true);
     try { await deleteLocation(loc.id); Toast.show({ icon: "success", content: "已删除" }); await loadData(); }
     catch (e) { Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" }); }
@@ -82,7 +83,8 @@ function LocationManagePanel() {
     finally { setTypeBusy(false); }
   };
   const handleRemoveType = async (name: string) => {
-    if (!window.confirm(`删除类型「${name}」？`)) return;
+    const confirmed = await Dialog.confirm({ content: `删除类型「${name}」？` });
+    if (!confirmed) return;
     setTypeBusy(true);
     try { await removeLocationType(name); Toast.show({ icon: "success", content: "已删除" }); await refreshTypes(); }
     catch (e) { Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" }); }

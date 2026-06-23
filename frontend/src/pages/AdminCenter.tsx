@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { getAdminAudit, getAdminOverview, getAdminSystem } from "../api";
 import type { AdminAudit, AdminOverview, AdminSystem } from "../api/types";
 import { ApprovalRecords } from "../components/ApprovalRecords";
-import { AuthGate } from "../components/AuthGate";
+import { AuthGate, useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, InfoRow, PageHero, SectionCard, StatCard, TxBadge } from "../components/ui";
 
@@ -43,6 +43,7 @@ function AdminCenterContent() {
   const [audit, setAudit] = useState<AdminAudit | null>(null);
   const [system, setSystem] = useState<AdminSystem | null>(null);
   const [loading, setLoading] = useState(false);
+  const { setPendingCount } = useAuth();
   const [orgRows, setOrgRows] = useState(ORG_PRESETS);
   const [configRows, setConfigRows] = useState(CONFIG_PRESETS);
 
@@ -57,6 +58,7 @@ function AdminCenterContent() {
       setOverview(overviewData);
       setAudit(auditData);
       setSystem(systemData);
+      setPendingCount(overviewData.totals.pending_requests);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载运营数据失败" });
     } finally {

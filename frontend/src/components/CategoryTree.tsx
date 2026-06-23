@@ -336,7 +336,7 @@ export function CategoryTree({
           { text: "删除", key: "delete", danger: true },
         ]}
         onClose={() => setCtxMenuVisible(false)}
-        onAction={(action) => {
+        onAction={async (action) => {
           setCtxMenuVisible(false);
           if (!ctxCategoryId) return;
           switch (action.key) {
@@ -354,7 +354,10 @@ export function CategoryTree({
               break;
             }
             case "delete":
-              if (onDelete && window.confirm(`确定删除分类「${categories.find((c) => c.id === ctxCategoryId)?.name ?? ctxCategoryId}」？`)) {
+              if (onDelete) {
+                const cat = categories.find((c) => c.id === ctxCategoryId);
+                const confirmed = await Dialog.confirm({ content: `确定删除分类「${cat?.name ?? ctxCategoryId}」？` });
+                if (!confirmed) break;
                 setBusy(true);
                 void onDelete(ctxCategoryId).then(() => {
                   Toast.show({ icon: "success", content: "分类已删除" });
