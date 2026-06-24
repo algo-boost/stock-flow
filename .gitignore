@@ -8,3 +8,5 @@ node_modules/
 .venv/
 dist/
 build/
+backend/data/*.db
+*.tsbuildinfo
