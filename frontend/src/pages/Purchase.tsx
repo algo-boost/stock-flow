@@ -12,7 +12,7 @@ function newIdempotencyKey() {
   return crypto.randomUUID();
 }
 
-function PurchaseContent() {
+export function PurchaseContent() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";

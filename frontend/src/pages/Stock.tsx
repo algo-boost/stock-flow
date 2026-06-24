@@ -5,7 +5,7 @@ import { Layout } from "../components/Layout";
 import { LocationTransferPanel } from "../components/LocationTransferPanel";
 import { StockInboundPanel } from "../components/StockInboundPanel";
 import { StockOutboundPanel } from "../components/StockOutboundPanel";
-import PurchasePage from "./Purchase";
+import { PurchaseContent } from "./Purchase";
 import { PageHero } from "../components/ui";
 
 export default function StockPage() {
@@ -45,7 +45,7 @@ export default function StockPage() {
         )}
         {canApprove && (
           <Tabs.Tab title="进货" key="purchase">
-            <PurchasePage />
+            <PurchaseContent />
           </Tabs.Tab>
         )}
       </Tabs>
