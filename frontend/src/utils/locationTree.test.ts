@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Location } from "../api/types";
-import { formatLocationPath, getDescendantIds, getLocationChildren, getLocationPath } from "./locationTree";
+import { getDescendantIds, getLocationChildren, getLocationPath } from "./locationTree";
 
 const locations: Location[] = [
   { id: "root", code: "WH", name: "仓库", type: "区域" },
@@ -26,9 +26,5 @@ describe("locationTree", () => {
     const ids = getDescendantIds(locations, "root");
     expect(ids.has("loc_01")).toBe(true);
     expect(ids.has("loc_02")).toBe(true);
-  });
-
-  it("formatLocationPath 输出可读路径", () => {
-    expect(formatLocationPath(locations, "loc_01")).toBe("仓库 / A区 / A柜");
   });
 });

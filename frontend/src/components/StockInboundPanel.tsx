@@ -16,10 +16,7 @@ import {
   readStockNavState,
 } from "../utils/detailNavigation";
 import { EmptyState, SectionCard } from "./ui";
-
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
+import { newIdempotencyKey } from "../utils/idempotency";
 
 export function StockInboundPanel() {
   const pageSize = 20;
@@ -333,10 +330,10 @@ export function StockInboundPanel() {
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
       </div>
         {loading && items.length === 0 ? (
-          <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+          <EmptyState loading text="正在从 Bitable 拉取物料…" />
         ) : items.length === 0 ? (
           <EmptyState
-            icon="📦"
+            icon="package"
             text={keyword ? "没有匹配的物料" : "暂无物料"}
             hint={isDirectInbound ? "可在下方快捷新增物料" : "请联系库管先维护物料主数据"}
           />

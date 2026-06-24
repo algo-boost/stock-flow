@@ -13,7 +13,10 @@ interface PendingReturnsPanelProps {
   showBorrowerFilter?: boolean;
 }
 
-export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingReturnsPanelProps) {
+export function PendingReturnsPanel({
+  showBorrowerFilter = false,
+  active = true,
+}: PendingReturnsPanelProps & { active?: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { canInbound } = useAuth();
@@ -36,10 +39,12 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
   }, [borrowerFilter, showBorrowerFilter]);
 
   useEffect(() => {
+    if (!active) return;
     void load();
-  }, [load, location.key]);
+  }, [load, active]);
 
   useEffect(() => {
+    if (!active) return;
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void load();
@@ -47,7 +52,7 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [load]);
+  }, [load, active]);
 
   const goReturn = (item: PendingReturn) => {
     const params = new URLSearchParams({
@@ -98,7 +103,8 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
       <SectionCard title="待归还清单">
         {items.length === 0 ? (
           <EmptyState
-            icon="✅"
+            loading={loading}
+            icon="check-circle"
             text={loading ? "加载中…" : "暂无待归还物料"}
             hint={
               showBorrowerFilter

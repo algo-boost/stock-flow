@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Dialog, Form, Input, Selector, Stepper, Toast, ActionSheet } from "antd-mobile";
-import { listApprovalRequests, updateStockRequest, deleteStockRequest } from "../api";
+import { approveStockRequest, listApprovalRequests, rejectStockRequest, updateStockRequest, deleteStockRequest } from "../api";
 import type { StockRequest, StockRequestStatus } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard, TxBadge } from "./ui";
+import { FeishuIcon } from "./FeishuIcon";
 
 const STATUS_OPTIONS: Array<{ label: string; value: StockRequestStatus | "ALL" }> = [
   { label: "待审批", value: "待审批" },
@@ -25,7 +26,7 @@ function formatRequestLocation(item: StockRequest) {
 }
 
 /** 审批记录列表，管理员可修改/删除。 */
-export function ApprovalRecords() {
+export function ApprovalRecords({ active = true }: { active?: boolean }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
   const [items, setItems] = useState<StockRequest[]>([]);
@@ -90,6 +91,46 @@ export function ApprovalRecords() {
     }
   };
 
+  const [rejectTarget, setRejectTarget] = useState<StockRequest | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const handleApprove = async (item: StockRequest) => {
+    const confirmed = await Dialog.confirm({
+      content: `通过「${item.material_name ?? item.id}」${item.type}申请 ×${item.quantity}？`,
+    });
+    if (!confirmed) return;
+    setEditBusy(true);
+    try {
+      await approveStockRequest(item.id, item.location_id ? { location_id: item.location_id, row: item.row ?? undefined, column: item.column ?? undefined } : undefined);
+      Toast.show({ icon: "success", content: "已通过" });
+      void load();
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "审批失败" });
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const submitReject = async () => {
+    if (!rejectTarget) return;
+    if (!rejectReason.trim()) {
+      Toast.show({ content: "请填写拒绝原因" });
+      return;
+    }
+    setEditBusy(true);
+    try {
+      await rejectStockRequest(rejectTarget.id, rejectReason.trim());
+      Toast.show({ icon: "success", content: "已拒绝" });
+      setRejectTarget(null);
+      setRejectReason("");
+      void load();
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "拒绝失败" });
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -105,8 +146,9 @@ export function ApprovalRecords() {
   }, [status]);
 
   useEffect(() => {
+    if (!active) return;
     void load();
-  }, [load]);
+  }, [load, active]);
 
   const pendingCount = useMemo(
     () => items.filter((i) => i.status === "待审批").length,
@@ -118,8 +160,8 @@ export function ApprovalRecords() {
       title="审批记录"
       subtitle={
         pendingCount > 0
-          ? `${pendingCount} 条待审批`
-          : "管理员可在运营中心审批"
+          ? `${pendingCount} 条待审批 · 可在此直接处理`
+          : "已通过/已拒绝的历史记录"
       }
     >
       <div style={{ marginBottom: 12 }}>
@@ -133,9 +175,9 @@ export function ApprovalRecords() {
       </div>
 
       {loading ? (
-        <EmptyState icon="⏳" text="加载中…" />
+        <EmptyState loading text="加载中…" />
       ) : items.length === 0 ? (
-        <EmptyState icon="📋" text="暂无审批记录" />
+        <EmptyState icon="list" text="暂无审批记录" />
       ) : (
         <div className="tx-list">
           {items.map((item) => (
@@ -167,10 +209,28 @@ export function ApprovalRecords() {
                 {item.approver_name ? `审批人：${item.approver_name} · ` : ""}
                 {new Date(item.created_at).toLocaleString()}
               </div>
-              {isAdmin && (
+              {item.status === "待审批" && isAdmin && (
+                <div className="request-actions">
+                  <Button size="mini" color="primary" disabled={editBusy} onClick={() => void handleApprove(item)}>
+                    通过
+                  </Button>
+                  <Button
+                    size="mini"
+                    fill="outline"
+                    disabled={editBusy}
+                    onClick={() => {
+                      setRejectTarget(item);
+                      setRejectReason("");
+                    }}
+                  >
+                    拒绝
+                  </Button>
+                </div>
+              )}
+              {isAdmin && item.status !== "待审批" && (
                 <div style={{ marginTop: 6 }}>
                   <Button size="mini" fill="none" onClick={() => openMenu(item)}>
-                    <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
+                    <FeishuIcon name="more-vertical" size={18} />
                   </Button>
                 </div>
               )}
@@ -178,6 +238,23 @@ export function ApprovalRecords() {
           ))}
         </div>
       )}
+
+      <Dialog
+        visible={rejectTarget !== null}
+        title="拒绝申请"
+        onClose={() => setRejectTarget(null)}
+        actions={[
+          { key: "cancel", text: "取消", onClick: () => setRejectTarget(null) },
+          { key: "save", text: editBusy ? "提交中…" : "确认拒绝", bold: true, onClick: () => void submitReject() },
+        ]}
+        content={
+          <Form layout="vertical">
+            <Form.Item label="拒绝原因">
+              <Input value={rejectReason} onChange={setRejectReason} placeholder="必填" />
+            </Form.Item>
+          </Form>
+        }
+      />
 
       <Dialog
         visible={editTarget !== null}

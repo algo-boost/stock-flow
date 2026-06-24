@@ -104,7 +104,7 @@ export function WarehouseDashboard({
 
   return (
     <>
-      <SectionCard className="flush-body dash-compact-head">
+      <SectionCard className="flush-body dash-compact-head sticky-subnav sticky-subnav-card">
         <div className="dash-period-switch" role="tablist" aria-label="统计时间范围">
           {PERIOD_OPTIONS.map((opt) => (
             <button
@@ -254,7 +254,7 @@ export function WarehouseDashboard({
             ))}
           </div>
         ) : (
-          <EmptyState icon="📋" text={`${activityLabel}暂无流水`} />
+          <EmptyState icon="list" text={`${activityLabel}暂无流水`} />
         )}
       </SectionCard>
 

@@ -29,79 +29,8 @@ export function getDescendantIds(categories: Category[], categoryId: string): Se
   return ids;
 }
 
-export interface CategorySection {
-  title: string;
-  titleId: string;
-  items: Category[];
-  showTitle: boolean;
-}
-
 export function getRootCategories(categories: Category[]): Category[] {
   return getCategoryChildren(categories, null);
-}
-
-export function getActiveRootId(
-  categories: Category[],
-  selectedId: string | null,
-  fallbackRootId: string | null,
-): string | null {
-  if (selectedId) {
-    const path = getCategoryPath(categories, selectedId);
-    return path[0]?.id ?? fallbackRootId;
-  }
-  return fallbackRootId;
-}
-
-/** Boss 直聘式：左侧大类，右侧按分组标题 + 网格展示子类 */
-export function buildCategorySections(categories: Category[], rootId: string | null): CategorySection[] {
-  if (!rootId) return [];
-  const level2 = getCategoryChildren(categories, rootId);
-  return level2.map((group) => {
-    const level3 = getCategoryChildren(categories, group.id);
-    if (level3.length > 0) {
-      return {
-        title: group.name,
-        titleId: group.id,
-        items: level3,
-        showTitle: true,
-      };
-    }
-    return {
-      title: group.name,
-      titleId: group.id,
-      items: [group],
-      showTitle: false,
-    };
-  });
-}
-
-export function buildCascadeLevels(categories: Category[], selectedId: string | null): Category[][] {
-  const levels: Category[][] = [];
-  const path = getCategoryPath(categories, selectedId);
-  let parentId: string | null = null;
-
-  while (true) {
-    const row = getCategoryChildren(categories, parentId);
-    if (row.length === 0) break;
-    levels.push(row);
-
-    const active =
-      path.find((item) => item.parent_id === parentId) ??
-      (selectedId ? row.find((item) => item.id === selectedId) : undefined);
-
-    if (!active) break;
-    parentId = active.id;
-
-    if (active.id === selectedId) {
-      const children = getCategoryChildren(categories, selectedId);
-      if (children.length > 0) {
-        continue;
-      }
-      break;
-    }
-  }
-
-  return levels;
 }
 
 export function formatCategoryPath(categories: Category[], categoryId: string | null): string {
@@ -109,27 +38,4 @@ export function formatCategoryPath(categories: Category[], categoryId: string | 
   return getCategoryPath(categories, categoryId)
     .map((item) => item.name)
     .join(" / ");
-}
-
-/** 是否为子类（有 parent_id 的非顶层分类，如「电机模组」；顶层大类如「电气类」为 false） */
-export function isSubCategory(categories: Category[], categoryId: string | null): boolean {
-  if (!categoryId) return false;
-  const category = categories.find((item) => item.id === categoryId);
-  return Boolean(category?.parent_id);
-}
-
-/** 子类下是否有物料 SKU（material_count 含下级汇总），且无下级分类 */
-export function canBrowseCategoryMaterials(categories: Category[], categoryId: string | null): boolean {
-  if (!isSubCategory(categories, categoryId)) return false;
-  const category = categories.find((item) => item.id === categoryId);
-  if (!category) return false;
-  // 如果该分类下还有子分类（如中类下有小类），不在此显示物料，应展开子分类
-  const hasChildren = categories.some((c) => c.parent_id === categoryId);
-  if (hasChildren) return false;
-  return (category.material_count ?? 0) > 0;
-}
-
-export function countCategoryMaterials(categories: Category[], categoryId: string, materialCategoryIds: string[]): number {
-  const allowed = getDescendantIds(categories, categoryId);
-  return materialCategoryIds.filter((id) => allowed.has(id)).length;
 }

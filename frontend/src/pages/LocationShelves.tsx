@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Popup, Toast } from "antd-mobile";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { listInventory, listLocations, searchMaterials } from "../api";
+import { fetchShelfMetaCached } from "../utils/cachedApi";
 import type { InventoryItem, Location, MaterialSearchItem } from "../api/types";
 import { useAuth } from "../components/AuthGate";
 import { LocationShelfGrid } from "../components/LocationShelfGrid";
@@ -49,7 +49,7 @@ export default function LocationShelvesPage() {
   const { locationId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const shelfNav = readShelfNavState(location.state);
+  const shelfNav = readShelfNavState(location.state, locationId);
   const [searchParams, setSearchParams] = useSearchParams();
   const { canInbound } = useAuth();
   const [locations, setLocations] = useState<Location[]>([]);
@@ -61,11 +61,7 @@ export default function LocationShelvesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [locs, inv, materials] = await Promise.all([
-        listLocations(),
-        listInventory(),
-        searchMaterials("", { page: 1, size: 100 }),
-      ]);
+      const { locations: locs, inventory: inv, materials } = await fetchShelfMetaCached();
       setLocations(locs);
       setInventory(inv);
       setMaterialMap(new Map(materials.items.map((item) => [item.id, item])));
@@ -156,7 +152,7 @@ export default function LocationShelvesPage() {
   if (loading && locations.length === 0) {
     return (
       <Layout title="货架格位">
-        <EmptyState icon="⏳" text="加载中…" />
+        <EmptyState loading text="加载中…" />
       </Layout>
     );
   }
@@ -164,7 +160,7 @@ export default function LocationShelvesPage() {
   if (!activeLocation) {
     return (
       <Layout title="货架格位">
-        <EmptyState icon="📍" text="库位不存在" hint="请从首页库位分类进入" />
+        <EmptyState icon="location" text="库位不存在" hint="请从首页库位分类进入" />
       </Layout>
     );
   }
@@ -247,7 +243,7 @@ export default function LocationShelvesPage() {
             </div>
             {slotPanel.items.length === 0 ? (
               <>
-                <EmptyState icon="📦" text="此格为空" hint={canInbound ? "可在此格入库上架" : "请联系库管入库"} />
+                <EmptyState icon="package" text="此格为空" hint={canInbound ? "可在此格入库上架" : "请联系库管入库"} />
                 {canInbound && (
                   <div className="popup-panel-actions">
                     <Button color="primary" block onClick={openInboundAtSlot}>

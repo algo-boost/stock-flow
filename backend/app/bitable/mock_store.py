@@ -157,6 +157,7 @@ class MockStore:
             "mat_006": Material(id="mat_006", code="M006", name="Jetson Orin", category_id="cat_compute", category_name="算力设备", major_category="电气类", sub_category="算力设备", unit="个", spec="Orin NX 16GB", supplier="NVIDIA", min_stock=1),
             "mat_007": Material(id="mat_007", code="M007", name="锂电池包", category_id="cat_battery", category_name="电池电源", major_category="电气类", sub_category="电池电源", unit="个", spec="24V 10Ah", supplier="达妙科技", min_stock=2),
             "mat_008": Material(id="mat_008", code="M008", name="铝合金型材", category_id="cat_metal", category_name="金属件", major_category="机械类", sub_category="金属件", unit="根", spec="2020 1m", supplier="铝材市场", min_stock=10),
+            "mat_009": Material(id="mat_009", code="M009", name="测试缺货物料", category_id="cat_cable", category_name="线缆网线", major_category="电气类", sub_category="线缆网线", unit="根", spec="测试", supplier="—", min_stock=5),
         }
         for mid, m in test_materials.items():
             self.materials[mid] = m
@@ -204,6 +205,9 @@ class MockStore:
             ),
         }
 
+    def _material_total_quantity(self, material_id: str) -> int:
+        return sum(item.quantity for item in self.get_inventory_for_material(material_id))
+
     def search_materials(
         self,
         q: str | None = None,
@@ -211,6 +215,8 @@ class MockStore:
         category: str | None = None,
         location: str | None = None,
         stock_only: bool = False,
+        out_of_stock: bool = False,
+        low_stock: bool = False,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[MaterialSearchItem], int]:
@@ -268,6 +274,14 @@ class MockStore:
                 mid for (mid, _, _, _), inv in self.inventory.items() if inv.quantity > 0
             }
             items = [m for m in items if m.id in mat_ids]
+        if out_of_stock:
+            items = [m for m in items if self._material_total_quantity(m.id) <= 0]
+        if low_stock:
+            items = [
+                m
+                for m in items
+                if 0 < self._material_total_quantity(m.id) < (m.min_stock or 5)
+            ]
         total = len(items)
         start = (page - 1) * size
         return [self._to_search_item(m) for m in items[start : start + size]], total
@@ -656,11 +670,19 @@ class MockStore:
         keyword: str | None = None,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
-        limit: int = 100,
-    ) -> list[Transaction]:
+        tx_type: str | None = None,
+        location_id: str | None = None,
+        page: int = 1,
+        size: int = 20,
+        limit: int | None = None,
+    ) -> tuple[list[Transaction], int]:
         txs = list(self.transactions.values())
         if operator:
             txs = [tx for tx in txs if tx.operator == operator]
+        if tx_type:
+            txs = [tx for tx in txs if tx.type.value == tx_type]
+        if location_id:
+            txs = [tx for tx in txs if tx.location_id == location_id]
         if start_at:
             txs = [tx for tx in txs if tx.created_at >= start_at]
         if end_at:
@@ -676,7 +698,10 @@ class MockStore:
                 or text in (tx.remark or "").lower()
             ]
         txs.sort(key=lambda t: t.created_at, reverse=True)
-        return txs[:limit]
+        total = len(txs)
+        effective_size = limit if limit is not None else size
+        start = max(page - 1, 0) * effective_size
+        return txs[start : start + effective_size], total
 
     def create_request(
         self,
@@ -1247,6 +1272,19 @@ def seed_test_materials(store: MockStore) -> None:
             barcode="6900004",
             default_location_id="loc_01",
             supplier="奥比中光",
+            min_stock=5,
+        ),
+        "mat_empty": Material(
+            id="mat_empty",
+            code="M009",
+            name="测试缺货物料",
+            category_id="cat_sensing",
+            category_name="感知设备",
+            major_category="电气类",
+            sub_category="感知设备",
+            unit="根",
+            spec="测试",
+            default_location_id="loc_01",
             min_stock=5,
         ),
     }

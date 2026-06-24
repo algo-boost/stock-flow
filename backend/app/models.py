@@ -232,6 +232,13 @@ class PaginatedMaterials(BaseModel):
     size: int
 
 
+class PaginatedTransactions(BaseModel):
+    items: list[Transaction]
+    total: int
+    page: int
+    size: int
+
+
 class InboundCreate(BaseModel):
     material_id: str
     location_id: str

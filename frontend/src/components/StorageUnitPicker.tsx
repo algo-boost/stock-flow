@@ -5,6 +5,7 @@ import type { InventoryItem, Location } from "../api/types";
 import { LocationShelfGrid } from "./LocationShelfGrid";
 import { getLocationChildren, getLocationPath } from "../utils/locationTree";
 import { buildShelfCells, isGridCapableLocation, resolveGridSize } from "../utils/shelfGrid";
+import { FeishuIcon } from "./FeishuIcon";
 
 interface StorageUnitPickerProps {
   locations: Location[];
@@ -36,12 +37,12 @@ function MiniCabinetPreview({
   columns: number;
   filledKeys: Set<string>;
 }) {
-  const scale = Math.min(1, 52 / Math.max(rows * 7, columns * 5));
+  const scale = Math.min(1, 72 / Math.max(rows * 11 + 14, columns * 8));
 
   return (
     <div
-      className="unit-mini unit-mini-cabinet unit-mini-scaled"
-      style={{ transform: `scale(${scale})`, transformOrigin: "center top" }}
+      className="unit-mini unit-mini-cabinet"
+      style={{ transform: `scale(${scale})`, transformOrigin: "center center" }}
       aria-hidden
     >
       <div className="unit-mini-cabinet-top" />
@@ -69,12 +70,12 @@ function MiniCabinetPreview({
 }
 
 function MiniShelfPreview({ rows, filledRows }: { rows: number; filledRows: Set<number> }) {
-  const scale = Math.min(1, 56 / (rows * 10));
+  const scale = Math.min(1, 72 / (rows * 10 + 8));
 
   return (
     <div
-      className="unit-mini unit-mini-shelf unit-mini-scaled"
-      style={{ transform: `scale(${scale})`, transformOrigin: "center top" }}
+      className="unit-mini unit-mini-shelf"
+      style={{ transform: `scale(${scale})`, transformOrigin: "center center" }}
       aria-hidden
     >
       <div className="unit-mini-shelf-upright unit-mini-shelf-upright-left" />
@@ -187,11 +188,13 @@ function StorageUnitCard({
       }}
     >
       <div className="storage-unit-card-visual">
-        {isCabinet && columns != null ? (
-          <MiniCabinetPreview rows={rows} columns={columns} filledKeys={filledKeys} />
-        ) : (
-          <MiniShelfPreview rows={rows} filledRows={filledRows} />
-        )}
+        <div className="unit-mini-slot">
+          {isCabinet && columns != null ? (
+            <MiniCabinetPreview rows={rows} columns={columns} filledKeys={filledKeys} />
+          ) : (
+            <MiniShelfPreview rows={rows} filledRows={filledRows} />
+          )}
+        </div>
       </div>
       <div className="storage-unit-card-info">
         <span className="storage-unit-card-name">{location.name}</span>
@@ -263,9 +266,9 @@ export function StorageUnitPicker({
                   onClick={() => onNavigate(loc.id)}
                 >
                   <div className="storage-unit-card-visual">
-                    <span className="material-symbols-outlined storage-unit-folder-icon" aria-hidden>
-                      warehouse
-                    </span>
+                    <div className="unit-mini-slot unit-mini-slot-folder">
+                      <FeishuIcon name="warehouse" size={32} className="storage-unit-folder-icon" />
+                    </div>
                   </div>
                   <div className="storage-unit-card-info">
                     <span className="storage-unit-card-name">{loc.name}</span>

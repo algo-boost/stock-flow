@@ -17,10 +17,7 @@ import {
   openMaterialDetail,
   readStockNavState,
 } from "../utils/detailNavigation";
-
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
+import { newIdempotencyKey } from "../utils/idempotency";
 
 function applyLocalOutbound(
   items: MaterialSearchItem[],
@@ -256,7 +253,7 @@ export function StockOutboundPanel() {
           </div>
 
           {locationOptions.length === 0 ? (
-            <EmptyState icon="🏷️" text="该物料暂无库存" hint="请联系库管入库" />
+            <EmptyState icon="tag" text="该物料暂无库存" hint="请联系库管入库" />
           ) : (
             <Form layout="vertical" className="form-card">
               <Form.Item label="出库库位 / 格位">
@@ -342,7 +339,7 @@ export function StockOutboundPanel() {
         <CardSkeleton count={5} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon="📦"
+          icon="package"
           text={keyword ? "没有匹配的物料" : "暂无可出库物料"}
           hint={keyword ? "换个关键词试试" : "请先在 Bitable 维护库存"}
         />

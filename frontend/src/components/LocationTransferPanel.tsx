@@ -16,10 +16,7 @@ import {
   readStockNavState,
 } from "../utils/detailNavigation";
 import { EmptyState, SectionCard } from "./ui";
-
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
+import { newIdempotencyKey } from "../utils/idempotency";
 
 export function LocationTransferPanel() {
   const pageSize = 20;
@@ -313,9 +310,9 @@ export function LocationTransferPanel() {
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
       </div>
       {loading && items.length === 0 ? (
-        <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+        <EmptyState loading text="正在从 Bitable 拉取物料…" />
       ) : items.length === 0 ? (
-        <EmptyState icon="📦" text={keyword ? "没有匹配的物料" : "暂无可移动物料"} />
+        <EmptyState icon="package" text={keyword ? "没有匹配的物料" : "暂无可移动物料"} />
       ) : (
         <div className="catalog-list">
           {items.map((item) => (

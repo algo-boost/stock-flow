@@ -16,7 +16,7 @@ export default function StockPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") ?? "outbound";
   const materialId = searchParams.get("material_id") ?? "";
-  const stockState = readStockNavState(location.state);
+  const stockState = readStockNavState(location.state, materialId || undefined);
   const backTo = materialId ? stockState.materialBackTo : "/";
 
   const [materialName, setMaterialName] = useState("");
@@ -46,7 +46,7 @@ export default function StockPage() {
     <Layout title={materialName || "出入库"} backTo={backTo}>
       <PageHeader title={pageTitle} subtitle={pageSubtitle} />
 
-      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs">
+      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs sticky-page-tabs">
         <Tabs.Tab title={canInbound ? "出库" : "申请出库"} key="outbound">
           <StockOutboundPanel />
         </Tabs.Tab>

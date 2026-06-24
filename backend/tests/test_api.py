@@ -134,6 +134,23 @@ def test_search_materials_stock_only():
     assert all(item["total_quantity"] > 0 for item in items)
 
 
+def test_search_materials_out_of_stock():
+    resp = client.get("/api/materials/search?out_of_stock=true", headers=HEADERS_USER)
+    assert resp.status_code == 200
+    items = resp.json()["data"]["items"]
+    assert len(items) >= 1
+    assert all(item["total_quantity"] <= 0 for item in items)
+    assert any(item["name"] == "测试缺货物料" for item in items)
+
+
+def test_search_materials_low_stock():
+    resp = client.get("/api/materials/search?low_stock=true", headers=HEADERS_USER)
+    assert resp.status_code == 200
+    items = resp.json()["data"]["items"]
+    assert len(items) >= 1
+    assert all(0 < item["total_quantity"] < (item.get("min_stock") or 5) for item in items)
+
+
 def test_list_material_categories():
     resp = client.get("/api/materials/categories", headers=HEADERS_USER)
     assert resp.status_code == 200
@@ -525,7 +542,7 @@ def test_user_request_approved_by_admin_creates_history():
 
     history_resp = client.get("/api/transactions", headers=HEADERS_USER)
     assert history_resp.status_code == 200
-    txs = history_resp.json()["data"]
+    txs = history_resp.json()["data"]["items"]
     assert any(tx["id"] == approved["transaction_id"] and tx["operator"] == "研发用户" for tx in txs)
 
 

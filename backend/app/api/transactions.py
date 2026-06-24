@@ -180,16 +180,24 @@ async def list_transactions(
     operator: str | None = Query(default=None, max_length=100),
     start_at: datetime | None = Query(default=None),
     end_at: datetime | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    tx_type: str | None = Query(default=None, pattern="^(入库|出库|移动)$"),
+    location_id: str | None = Query(default=None, max_length=64),
+    page: int = Query(default=1, ge=1, le=1000),
+    size: int = Query(default=20, ge=1, le=100),
+    limit: int | None = Query(default=None, ge=1, le=500),
     user: User = Depends(get_current_user),
     service: InventoryService = Depends(get_service),
 ):
-    items = await service.search_transactions(
+    data = await service.search_transactions(
         user=user,
         keyword=keyword,
         operator=operator,
         start_at=_ensure_timezone(start_at),
         end_at=_ensure_timezone(end_at),
+        tx_type=tx_type,
+        location_id=location_id,
+        page=page,
+        size=size,
         limit=limit,
     )
-    return success([item.model_dump(mode="json") for item in items])
+    return success(data.model_dump(mode="json"))

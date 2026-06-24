@@ -26,6 +26,9 @@ declare global {
         success: (res: { code: string }) => void;
         fail: (err: unknown) => void;
       }) => void;
+      setNavigationBar?: (opts: Record<string, unknown>) => void;
+      onLeftNavigationBarClick?: (opts: Record<string, unknown>) => void;
+      setNavigationBarColor?: (opts: Record<string, unknown>) => void;
     };
   }
 }
@@ -174,6 +177,44 @@ function runWhenReady(fn: () => void): void {
     window.h5sdk.ready(fn);
   } else {
     fn();
+  }
+}
+
+/** 供导航等 JSAPI 使用 */
+export function runWhenFeishuReady(fn: () => void): void {
+  runWhenReady(fn);
+}
+
+const NAV_JSAPI_LIST = ["setNavigationBar", "onLeftNavigationBarClick", "setNavigationBarColor"];
+
+/** 完成 JSAPI 鉴权，供导航栏等能力调用 */
+export async function configureFeishuJsapi(): Promise<boolean> {
+  if (!isFeishuClient() || !window.h5sdk?.config) return false;
+  try {
+    const pageUrl = currentFeishuPageUrl();
+    const config = await fetchApiData<{
+      appId: string;
+      timestamp: number;
+      nonceStr: string;
+      signature: string;
+      mock?: boolean;
+    }>(`/auth/jsapi-config?url=${encodeURIComponent(pageUrl)}`);
+
+    if (config.mock) return false;
+
+    return await new Promise<boolean>((resolve) => {
+      window.h5sdk!.config({
+        appId: config.appId,
+        timestamp: config.timestamp,
+        nonceStr: config.nonceStr,
+        signature: config.signature,
+        jsApiList: NAV_JSAPI_LIST,
+        onSuccess: () => resolve(true),
+        onFail: () => resolve(false),
+      });
+    });
+  } catch {
+    return false;
   }
 }
 

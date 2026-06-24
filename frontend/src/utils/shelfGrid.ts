@@ -93,15 +93,3 @@ export function buildShelfCells(location: Location, inventory: InventoryItem[]):
 
   return { cells, unslotted, previewDistributed };
 }
-
-export function formatLocationPath(locations: Location[], locationId: string | null): string {
-  if (!locationId) return "";
-  const map = new Map(locations.map((item) => [item.id, item]));
-  const parts: string[] = [];
-  let current = map.get(locationId);
-  while (current) {
-    parts.unshift(current.name);
-    current = current.parent_id ? map.get(current.parent_id) : undefined;
-  }
-  return parts.join(" / ");
-}

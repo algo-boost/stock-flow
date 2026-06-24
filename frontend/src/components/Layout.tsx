@@ -1,6 +1,14 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthGate";
+import { FeishuIcon, type FeishuIconName } from "./FeishuIcon";
+import { useFeishuPageChrome } from "../utils/feishuNavigation";
 import { ROLE_LABEL, RoleBadge } from "./ui";
+
+const TAB_ICONS: Record<string, FeishuIconName> = {
+  home: "home",
+  history: "history",
+  tune: "settings",
+};
 
 export function Layout({
   title,
@@ -24,15 +32,31 @@ export function Layout({
   const canManage = user && (user.role === "KEEPER" || user.role === "ADMIN");
 
   const tabs = [
-    { key: "/", title: "首页", icon: "home" },
-    { key: "/history", title: "历史", icon: "history", badge: canApprove && pendingCount > 0 ? pendingCount : undefined },
+    { key: "/", title: "首页", icon: "home" as const },
+    { key: "/history", title: "历史", icon: "history" as const, badge: canApprove && pendingCount > 0 ? pendingCount : undefined },
     ...(canManage
-      ? [{ key: "/manage", title: "管理", icon: "tune", badge: canApprove ? pendingCount : undefined }]
+      ? [{ key: "/manage", title: "管理", icon: "tune" as const, badge: canApprove ? pendingCount : undefined }]
       : []),
   ];
 
   const rootPaths = ["/", "/history", "/manage"];
   const showBack = location.pathname !== "/" && !rootPaths.includes(location.pathname);
+
+  const handleBack = () => {
+    if (onBack) {
+      onBack();
+    } else if (backTo) {
+      navigate(backTo, backState ? { state: backState } : undefined);
+    } else {
+      navigate(-1);
+    }
+  };
+
+  useFeishuPageChrome({
+    title,
+    showBack,
+    onBack: handleBack,
+  });
 
   return (
     <div className="page">
@@ -40,21 +64,8 @@ export function Layout({
       <header className="page-navbar">
         <div className="page-navbar-main">
           {showBack ? (
-            <button
-              type="button"
-              className="nav-back"
-              aria-label="返回"
-              onClick={() => {
-                if (onBack) {
-                  onBack();
-                } else if (backTo) {
-                  navigate(backTo, backState ? { state: backState } : undefined);
-                } else {
-                  navigate(-1);
-                }
-              }}
-            >
-              <span aria-hidden>‹</span>
+            <button type="button" className="nav-back" aria-label="返回" onClick={handleBack}>
+              <FeishuIcon name="arrow-left" size={22} className="nav-back-icon" />
             </button>
           ) : (
             <button type="button" className="app-brand" onClick={() => navigate("/")} aria-label="返回首页">
@@ -94,9 +105,7 @@ export function Layout({
                 className={`page-tabbar-item ${active ? "page-tabbar-item-active" : ""}`}
                 onClick={() => navigate(t.key)}
               >
-                <span className="page-tabbar-icon material-symbols-outlined" aria-hidden>
-                  {t.icon}
-                </span>
+                <FeishuIcon name={TAB_ICONS[t.icon]} size={22} className="page-tabbar-icon" />
                 <span className="page-tabbar-label">
                   {t.title}
                   {(t as { badge?: number }).badge != null && (t as { badge?: number }).badge! > 0 && (

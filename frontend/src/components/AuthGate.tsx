@@ -3,10 +3,11 @@ import { Toast } from "antd-mobile";
 import { getMe } from "../api";
 import type { User, RoleMeta } from "../api/types";
 import {
+  configureFeishuJsapi,
   consumePostLoginRedirect,
+  currentFeishuPageUrl,
   feishuLogin,
   isFeishuClient,
-  currentFeishuPageUrl,
   redirectToLoginHomeIfNeeded,
 } from "../auth/feishu";
 import { apiConfig } from "../api/config";
@@ -73,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(login.user);
         setRoleMeta(login.roleMeta);
         setAuthStep("登录成功");
+        if (isFeishuClient()) void configureFeishuJsapi();
         return;
       }
 
@@ -82,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(data.user);
         setRoleMeta(data.role_meta ?? null);
         setAuthStep("正在加载数据…");
+        if (isFeishuClient()) void configureFeishuJsapi();
       } catch (e) {
         // 后端重启后内存 session 丢失，localStorage token 仍有效 → 自动重新免登
         if (isFeishu && getAuthToken() && isAuthExpiredError(e)) {
@@ -91,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(login.user);
           setRoleMeta(login.roleMeta);
           setAuthStep("登录成功");
+          if (isFeishuClient()) void configureFeishuJsapi();
           return;
         }
         throw e;
@@ -195,7 +199,7 @@ export function AuthGate({
     return (
       <div className="page">
         <div className="page-body">
-          <EmptyState icon="⏳" text="正在加载…" hint={authStep || "验证登录与权限"} />
+          <EmptyState loading text="正在加载…" hint={authStep || "验证登录与权限"} />
         </div>
       </div>
     );
@@ -203,11 +207,4 @@ export function AuthGate({
   if (!user) return <>{fallback}</>;
   if (roles && !roles.some((role) => roleAllows(user.role, role))) return <>{fallback}</>;
   return <>{children}</>;
-}
-
-export function useLogoutDev() {
-  return () => {
-    clearAuthToken();
-    window.location.reload();
-  };
 }

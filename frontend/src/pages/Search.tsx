@@ -1,34 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Selector, Toast } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
-import {
-  listCategories,
-  listInventory,
-  listLocations,
-  listLowStock,
-  listTransactions,
-  searchMaterials,
-} from "../api";
+import { searchMaterials } from "../api";
 import type { Category, InventoryItem, Location, MaterialSearchItem } from "../api/types";
+import { fetchHomeMetaCached, fetchInboundMaterialIdsCached } from "../utils/cachedApi";
 import { CategoryFolderBrowser } from "../components/CategoryFolderBrowser";
 import { StorageUnitPicker } from "../components/StorageUnitPicker";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { CardSkeleton, EmptyState, MaterialCard, SectionCard, ShelfGridSkeleton } from "../components/ui";
 import type { DateRangePreset } from "../utils/historyDisplay";
-import { resolveDateRange } from "../utils/historyDisplay";
-import { getDescendantIds } from "../utils/categoryTree";
 import { getLocationChildren } from "../utils/locationTree";
 import { isGridCapableLocation } from "../utils/shelfGrid";
 import { openMaterialDetail } from "../utils/detailNavigation";
 
 type BrowseBy = "category" | "location";
-type StockFilter = "all" | "instock" | "low";
+type StockFilter = "all" | "instock" | "out" | "lowstock";
 
 const STOCK_OPTIONS: Array<{ label: string; value: StockFilter }> = [
   { label: "全部", value: "all" },
   { label: "有库存", value: "instock" },
-  { label: "缺货", value: "low" },
+  { label: "缺货", value: "out" },
+  { label: "低库存", value: "lowstock" },
 ];
 
 const INBOUND_TIME_OPTIONS: Array<{ label: string; value: DateRangePreset }> = [
@@ -151,8 +144,11 @@ export default function SearchPage() {
     if (stockFilter === "instock") {
       tags.push({ key: "stock", label: "有库存", onClear: () => setStockFilter("all") });
     }
-    if (stockFilter === "low") {
-      tags.push({ key: "low", label: "缺货", onClear: () => setStockFilter("all") });
+    if (stockFilter === "out") {
+      tags.push({ key: "out", label: "缺货", onClear: () => setStockFilter("all") });
+    }
+    if (stockFilter === "lowstock") {
+      tags.push({ key: "lowstock", label: "低库存", onClear: () => setStockFilter("all") });
     }
     if (inboundPreset === "7d") {
       tags.push({ key: "7d", label: "近7天入库", onClear: () => setInboundPreset("all") });
@@ -210,8 +206,10 @@ export default function SearchPage() {
   };
 
   const loadCategories = useCallback(async () => {
-    const data = await listCategories();
-    setCategories(data);
+    const data = await fetchHomeMetaCached();
+    setCategories(data.categories);
+    setLocationRecords(data.locations);
+    setAllInventory(data.inventory);
   }, []);
 
   const loadSearchResults = useCallback(async () => {
@@ -219,24 +217,25 @@ export default function SearchPage() {
     try {
       const q = keyword.trim();
 
-      if (stockFilter === "low") {
-        let lowItems = await listLowStock();
-        if (filterCategoryId) {
-          lowItems = lowItems.filter((m) => getDescendantIds(categories, filterCategoryId).has(m.category_id));
-        }
-        setItems(lowItems);
+      if (stockFilter === "out" || stockFilter === "lowstock") {
+        const data = await searchMaterials(q, {
+          page: 1,
+          size: pageSize,
+          searchBy: "all",
+          category: filterCategoryId ?? undefined,
+          location: filterLocationId || undefined,
+          outOfStock: stockFilter === "out",
+          lowStock: stockFilter === "lowstock",
+        });
+        setItems(data.items);
         setPage(1);
-        setTotal(lowItems.length);
+        setTotal(data.total);
         return;
       }
 
       let inboundMaterialIds: Set<string> | null = null;
       if (inboundPreset !== "all") {
-        const range = resolveDateRange(inboundPreset, customStart, customEnd);
-        const txs = await listTransactions({ ...range, limit: 500 });
-        inboundMaterialIds = new Set(
-          txs.filter((t) => t.type.includes("入")).map((t) => t.material_id),
-        );
+        inboundMaterialIds = await fetchInboundMaterialIdsCached(inboundPreset, customStart, customEnd);
       }
 
       const data = await searchMaterials(q, {
@@ -293,7 +292,7 @@ export default function SearchPage() {
   }, [folderId]);
 
   const loadMore = useCallback(async () => {
-    if (!hasSearchQuery || stockFilter === "low") return;
+    if (!hasSearchQuery || stockFilter === "out" || stockFilter === "lowstock") return;
     setLoading(true);
     try {
       const data = await searchMaterials(keyword.trim(), {
@@ -332,18 +331,14 @@ export default function SearchPage() {
   useEffect(() => {
     if (location.pathname !== "/") return;
     setMetaLoading(true);
-    void loadCategories();
-    void Promise.all([listLocations(), listInventory()])
-      .then(([locs, inv]) => {
-        setLocationRecords(locs);
-        setAllInventory(inv);
-      })
+    void loadCategories()
       .catch(() => {
+        setCategories([]);
         setLocationRecords([]);
         setAllInventory([]);
       })
       .finally(() => setMetaLoading(false));
-  }, [location.pathname, location.key, loadCategories]);
+  }, [location.pathname, loadCategories]);
 
   useEffect(() => {
     if (location.pathname !== "/") return;
@@ -413,7 +408,7 @@ export default function SearchPage() {
       {loading && items.length === 0 && <CardSkeleton count={4} />}
       {!loading && items.length === 0 && (
         <EmptyState
-          icon={hasSearchQuery ? "📭" : "📁"}
+          icon={hasSearchQuery ? "inbox" : "folder"}
           text={hasSearchQuery ? "没有匹配的物料" : "此分类下暂无物料"}
           hint={hasSearchQuery ? "可改关键词或去库位分类按货架找" : "可返回上级选其他分类"}
           actions={
@@ -439,13 +434,14 @@ export default function SearchPage() {
         />
       )}
       {items.map((m) => {
-        const isLowStock = m.total_quantity < (m.min_stock ?? 5);
+        const isOutOfStock = m.total_quantity <= 0;
+        const isLowStock = !isOutOfStock && m.total_quantity < (m.min_stock ?? 5);
         return (
           <MaterialCard
             key={m.id}
             name={m.name}
             quantity={m.total_quantity}
-            warning={isLowStock ? "low" : undefined}
+            warning={isOutOfStock ? "out" : isLowStock ? "low" : undefined}
             stockSummary={m.locations_summary ?? undefined}
             code={m.code}
             onClick={() => openMaterialDetail(navigate, m.id, detailBackCtx)}
@@ -455,7 +451,7 @@ export default function SearchPage() {
           />
         );
       })}
-      {hasSearchQuery && items.length < total && stockFilter !== "low" && (
+      {hasSearchQuery && items.length < total && stockFilter !== "out" && stockFilter !== "lowstock" && (
         <div className="load-more">
           <Button loading={loading} fill="outline" block onClick={() => void loadMore()}>
             加载更多
@@ -493,10 +489,17 @@ export default function SearchPage() {
         </button>
         <button
           type="button"
-          className={`filter-quick-chip ${stockFilter === "low" ? "filter-quick-chip-active" : ""}`}
-          onClick={() => setStockFilter((v) => (v === "low" ? "all" : "low"))}
+          className={`filter-quick-chip ${stockFilter === "out" ? "filter-quick-chip-active" : ""}`}
+          onClick={() => setStockFilter((v) => (v === "out" ? "all" : "out"))}
         >
           缺货
+        </button>
+        <button
+          type="button"
+          className={`filter-quick-chip ${stockFilter === "lowstock" ? "filter-quick-chip-active" : ""}`}
+          onClick={() => setStockFilter((v) => (v === "lowstock" ? "all" : "lowstock"))}
+        >
+          低库存
         </button>
         <button
           type="button"
@@ -581,7 +584,7 @@ export default function SearchPage() {
   return (
     <Layout title="首页">
       <p className="home-scene-hint">搜名字找物料 · 点货架找位置</p>
-      <SectionCard className="flush-body home-search-card">
+      <SectionCard className="flush-body home-search-card sticky-subnav sticky-subnav-card">
         {searchAndFilters}
         {!hasSearchQuery && (
           <div className="home-mode-switch" role="tablist" aria-label="浏览方式">
@@ -632,7 +635,7 @@ export default function SearchPage() {
           {metaLoading ? (
             <ShelfGridSkeleton />
           ) : locationRecords.length === 0 ? (
-            <EmptyState icon="📍" text="暂无货架/货柜" hint="请先在「管理 → 库位」中维护" />
+            <EmptyState icon="location" text="暂无货架/货柜" hint="请先在「管理 → 库位」中维护" />
           ) : (
             <StorageUnitPicker
               locations={locationRecords}

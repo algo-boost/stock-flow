@@ -27,10 +27,3 @@ export function getDescendantIds(locations: Location[], locationId: string): Set
   }
   return ids;
 }
-
-export function formatLocationPath(locations: Location[], locationId: string | null): string {
-  if (!locationId) return "";
-  return getLocationPath(locations, locationId)
-    .map((item) => item.name)
-    .join(" / ");
-}

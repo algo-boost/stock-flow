@@ -28,7 +28,7 @@ export function CategoryManagePanel() {
   }, [loadCategories]);
 
   if (loading) {
-    return <EmptyState icon="⏳" text="加载中…" />;
+    return <EmptyState loading text="加载中…" />;
   }
 
   return (

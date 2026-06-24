@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NavigateFunction } from "react-router-dom";
 import {
   detailContextAfterStock,
@@ -12,6 +12,10 @@ import {
 } from "./detailNavigation";
 
 describe("detailNavigation", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
   it("readDetailNavState 解析有效 state", () => {
     const state = readDetailNavState({
       backTo: "/shelves/loc_01",
@@ -63,5 +67,23 @@ describe("detailNavigation", () => {
     const fallback = vi.fn();
     resolveShelfBack(navigate, {}, fallback);
     expect(fallback).toHaveBeenCalled();
+  });
+
+  it("刷新后从 sessionStorage 恢复详情导航", () => {
+    openMaterialDetail(vi.fn() as unknown as NavigateFunction, "mat_001", {
+      backTo: "/",
+      fromLabel: "首页",
+    });
+    const restored = readDetailNavState(undefined, "mat_001");
+    expect(restored.backTo).toBe("/");
+    expect(restored.fromLabel).toBe("首页");
+  });
+
+  it("刷新后从 sessionStorage 恢复出入库导航", () => {
+    const navigate = vi.fn() as unknown as NavigateFunction;
+    openStockForMaterial(navigate, "mat_001", "inbound", { backTo: "/history" });
+    const restored = readStockNavState(undefined, "mat_001");
+    expect(restored.materialBackTo).toBe("/materials/mat_001");
+    expect(restored.detailBackTo).toBe("/history");
   });
 });

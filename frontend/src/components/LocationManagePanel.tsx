@@ -67,7 +67,7 @@ export function LocationManagePanel() {
 
       <SectionCard title={loading ? "加载中…" : `库位 ${locations.length} 个`}>
         {locations.length === 0 && !loading ? (
-          <EmptyState icon="📍" text="暂无库位" hint="点击上方按钮新增" />
+          <EmptyState icon="location" text="暂无库位" hint="点击上方按钮新增" />
         ) : (
           <div className="location-list">
             {locations.map((loc) => {
