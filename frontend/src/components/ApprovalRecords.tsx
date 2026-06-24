@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Form, Input, Selector, Stepper, Toast } from "antd-mobile";
-import { listApprovalRequests, updateStockRequest } from "../api";
+import { Button, Dialog, Form, Input, Selector, Stepper, Toast, ActionSheet } from "antd-mobile";
+import { listApprovalRequests, updateStockRequest, deleteStockRequest } from "../api";
 import type { StockRequest, StockRequestStatus } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
 import { useAuth } from "./AuthGate";
@@ -24,10 +24,11 @@ function formatRequestLocation(item: StockRequest) {
   return base;
 }
 
-/** 只读审批记录列表，审批操作统一在飞书原生审批中完成。 */
+/** 审批记录列表，管理员可修改/删除。 */
 export function ApprovalRecords() {
-  const { canApprove } = useAuth();
-  const isAdmin = canApprove;
+  const { user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
+  const isKeeperOrAdmin = isAdmin || user?.role === "KEEPER";
   const [items, setItems] = useState<StockRequest[]>([]);
   const [status, setStatus] = useState<StockRequestStatus | "ALL">("ALL");
   const [loading, setLoading] = useState(false);
@@ -38,11 +39,38 @@ export function ApprovalRecords() {
   const [editRemark, setEditRemark] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
-  const openEdit = (item: StockRequest) => {
-    setEditTarget(item);
-    setEditQty(item.quantity);
-    setEditRemark(item.remark ?? "");
+  // ── 操作菜单（修改/删除，仅 ADMIN） ──
+  const [menuTarget, setMenuTarget] = useState<StockRequest | null>(null);
+
+  const openMenu = (item: StockRequest) => setMenuTarget(item);
+  const closeMenu = () => setMenuTarget(null);
+
+  const handleMenuAction = async (action: string) => {
+    if (!menuTarget) return;
+    const item = menuTarget;
+    setMenuTarget(null);
+
+    if (action === "edit") {
+      setEditTarget(item);
+      setEditQty(item.quantity);
+      setEditRemark(item.remark ?? "");
+    } else if (action === "delete") {
+      const label = item.material_name ?? item.id;
+      const confirmed = await Dialog.confirm({ content: `确定删除申请「${label}」？\n此操作不可恢复。` });
+      if (!confirmed) return;
+      setEditBusy(true);
+      try {
+        await deleteStockRequest(item.id);
+        Toast.show({ icon: "success", content: "已删除" });
+        void load();
+      } catch (e) {
+        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
+      } finally {
+        setEditBusy(false);
+      }
+    }
   };
+
   const closeEdit = () => setEditTarget(null);
 
   const submitEdit = async () => {
@@ -91,8 +119,8 @@ export function ApprovalRecords() {
       title="审批记录"
       subtitle={
         pendingCount > 0
-          ? `${pendingCount} 条待审批 — 请在飞书中审批`
-          : "审批操作请在飞书客户端「审批」中完成"
+          ? `${pendingCount} 条待审批`
+          : "管理员可在运营中心审批"
       }
     >
       <div style={{ marginBottom: 12 }}>
@@ -142,9 +170,8 @@ export function ApprovalRecords() {
               </div>
               {isAdmin && (
                 <div style={{ marginTop: 6 }}>
-                  <Button size="mini" fill="none" onClick={() => openEdit(item)}>
+                  <Button size="mini" fill="none" onClick={() => openMenu(item)}>
                     <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
-                    {" "}纠错
                   </Button>
                 </div>
               )}
@@ -171,6 +198,19 @@ export function ApprovalRecords() {
             </Form.Item>
           </Form>
         }
+      />
+
+      <ActionSheet
+        visible={menuTarget !== null}
+        actions={[
+          { text: "修改数据", key: "edit" },
+          { text: "删除记录", key: "delete", danger: true },
+        ]}
+        onClose={closeMenu}
+        onAction={async (action) => {
+          await handleMenuAction(action.key);
+        }}
+        cancelText="取消"
       />
     </SectionCard>
   );

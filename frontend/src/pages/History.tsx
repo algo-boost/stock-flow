@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Tabs, Toast, ActionSheet } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   listApprovalRequests,
@@ -9,6 +9,8 @@ import {
   searchMaterials,
   updateTransaction,
   updateStockRequest,
+  deleteTransaction,
+  deleteStockRequest,
 } from "../api";
 import type { Category, StockRequest, StockRequestStatus, Transaction } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
@@ -35,7 +37,8 @@ interface SearchSuggestion {
 }
 
 type RequestView = StockRequestStatus | "ALL";
-type StaffHistoryView = "transactions" | "returns" | "approvals";
+type MainView = "history" | "approvals";
+type SubView = "transactions" | "returns";
 
 const REQUEST_VIEW_OPTIONS: Array<{ label: string; value: RequestView }> = [
   { label: "进行中", value: "待审批" },
@@ -113,18 +116,13 @@ function TransactionRow({
 export default function HistoryPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { canApprove, canInbound } = useAuth();
-  const isAdmin = canApprove;
-  const staffHistoryOptions = useMemo(() => {
-    const opts: Array<{ label: string; value: StaffHistoryView }> = [
-      { label: "流水", value: "transactions" },
-    ];
-    if (canInbound) opts.push({ label: "待归还", value: "returns" });
-    if (canApprove) opts.push({ label: "审批", value: "approvals" });
-    return opts;
-  }, [canInbound, canApprove]);
-  const initialStaffView = searchParams.get("view") === "returns" ? "returns" : "transactions";
-  const [staffView, setStaffView] = useState<StaffHistoryView>(initialStaffView);
+  const { canApprove, canInbound, user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
+  const canManageApprovals = isAdmin || user?.role === "KEEPER";
+  const [mainView, setMainView] = useState<MainView>("history");
+  const [subView, setSubView] = useState<SubView>(
+    searchParams.get("view") === "returns" ? "returns" : "transactions",
+  );
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -146,6 +144,44 @@ export default function HistoryPage() {
   const [editQty, setEditQty] = useState(1);
   const [editRemark, setEditRemark] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+
+  // ── 操作菜单（修改/删除） ──
+  const [menuTarget, setMenuTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
+
+  const openMenu = (type: "tx" | "req", item: Transaction | StockRequest) => setMenuTarget({ type, item });
+  const closeMenu = () => setMenuTarget(null);
+
+  const handleMenuAction = async (action: string) => {
+    if (!menuTarget) return;
+    const { type, item } = menuTarget;
+    setMenuTarget(null);
+
+    if (action === "edit") {
+      setEditTarget({ type, item });
+      setEditQty(Math.abs(item.quantity));
+      setEditRemark(item.remark ?? "");
+    } else if (action === "delete") {
+      const label = type === "tx"
+        ? `流水 · ${(item as Transaction).material_name ?? item.id}`
+        : `申请 · ${(item as StockRequest).material_name ?? item.id}`;
+      const confirmed = await Dialog.confirm({ content: `确定删除「${label}」？\n此操作不可恢复。` });
+      if (!confirmed) return;
+      setEditBusy(true);
+      try {
+        if (type === "tx") {
+          await deleteTransaction(item.id);
+        } else {
+          await deleteStockRequest(item.id);
+        }
+        Toast.show({ icon: "success", content: "已删除" });
+        void load();
+      } catch (e) {
+        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
+      } finally {
+        setEditBusy(false);
+      }
+    }
+  };
 
   const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
     setEditTarget({ type, item });
@@ -177,22 +213,7 @@ export default function HistoryPage() {
     }
   };
 
-  useEffect(() => {
-    if (!canInbound) return;
-    const next = searchParams.get("view") === "returns" ? "returns" : "transactions";
-    setStaffView(next);
-  }, [canInbound, searchParams]);
-
-  const setStaffHistoryView = (view: StaffHistoryView) => {
-    setStaffView(view);
-    if (view === "returns") {
-      setSearchParams({ view: "returns" }, { replace: true });
-    } else {
-      setSearchParams({}, { replace: true });
-    }
-  };
-
-  const showReturnsView = canInbound && staffView === "returns";
+  const showReturnsView = canInbound && subView === "returns";
   const trimmedKeyword = keyword.trim();
   const displayedTxs = useMemo(() => filterTransactionsByType(txs, txTypeFilter), [txs, txTypeFilter]);
 
@@ -355,33 +376,33 @@ export default function HistoryPage() {
   return (
     <>
     <Layout title="历史">
-      {canApprove && pendingCount > 0 && (
-        <div className="history-pending-banner">
-          <span>待审批 {pendingCount} 条出入库申请</span>
-          <Button size="small" color="primary" fill="outline" onClick={() => navigate("/admin-center")}>
-            去审批
-          </Button>
-        </div>
-      )}
-
-      {canInbound && (
-        <SectionCard title="历史视图" subtitle="流水追溯、待归还监管与审批记录">
-          <Selector
-            className="history-request-tabs"
-            options={staffHistoryOptions}
-            value={[staffView]}
-            onChange={(arr) =>
-              setStaffHistoryView((arr[0] as StaffHistoryView | undefined) ?? "transactions")
-            }
-          />
-        </SectionCard>
-      )}
-
-      {staffView === "approvals" ? (
-        <ApprovalRecords />
-      ) : showReturnsView ? (
-        <PendingReturnsPanel showBorrowerFilter />
-      ) : (
+      <Tabs
+        activeKey={mainView}
+        onChange={(key) => setMainView(key as MainView)}
+        style={{ marginBottom: 0 }}
+      >
+        <Tabs.Tab title="历史记录" key="history">
+          {canInbound && (
+            <Selector
+              className="history-request-tabs"
+              options={[
+                { label: "流水", value: "transactions" as SubView },
+                { label: "待归还", value: "returns" as SubView },
+              ]}
+              value={[subView]}
+              onChange={(arr) => {
+                const next = (arr[0] as SubView | undefined) ?? "transactions";
+                setSubView(next);
+                setSearchParams(
+                  next === "returns" ? { view: "returns" } : {},
+                  { replace: true },
+                );
+              }}
+            />
+          )}
+          {showReturnsView ? (
+            <PendingReturnsPanel showBorrowerFilter />
+          ) : (
         <>
       <SectionCard
         title={canApprove ? "全部出入库历史" : "我的出入库历史"}
@@ -592,12 +613,19 @@ export default function HistoryPage() {
           />
         ) : (
           displayedTxs.map((tx) => (
-            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} canEdit={isAdmin} onEdit={(t) => openEdit("tx", t)} />
+            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} canEdit={isAdmin} onEdit={(t) => openMenu("tx", t)} />
           ))
         )}
       </SectionCard>
         </>
       )}
+        </Tabs.Tab>
+        {canManageApprovals && (
+          <Tabs.Tab title="审批" key="approvals">
+            <ApprovalRecords />
+          </Tabs.Tab>
+        )}
+      </Tabs>
     </Layout>
 
       <Dialog
@@ -618,6 +646,20 @@ export default function HistoryPage() {
             </Form.Item>
           </Form>
         }
+      />
+
+      <ActionSheet
+        visible={menuTarget !== null}
+        actions={[
+          { text: "修改数据", key: "edit" },
+          { text: "删除记录", key: "delete", danger: true },
+        ]}
+        onClose={closeMenu}
+        onAction={async (action) => {
+          closeMenu();
+          await handleMenuAction(action.key);
+        }}
+        cancelText="取消"
       />
     </>
   );

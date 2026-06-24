@@ -6,7 +6,7 @@ import type { Category, MaterialSearchItem } from "../api/types";
 import { CategoryTree } from "../components/CategoryTree";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, MaterialCard, PageHero, SectionCard } from "../components/ui";
+import { EmptyState, MaterialCard, SectionCard } from "../components/ui";
 import { formatCategoryPath, canBrowseCategoryMaterials, isSubCategory } from "../utils/categoryTree";
 
 interface SearchSuggestion {
@@ -291,11 +291,6 @@ export default function SearchPage() {
 
   return (
     <Layout title="物料管理系统">
-      <PageHero
-        title={`你好，${user?.name ?? "用户"}`}
-        subtitle="搜索物料、查看库存；其他功能请用底部导航"
-      />
-
       <SectionCard
         title="分类浏览"
         subtitle="展开大类后，仅有物料的子类可点击查看；数字为库存合计"

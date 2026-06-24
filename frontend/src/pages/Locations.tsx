@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Tabs, Toast } from "antd-mobile";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Button, Dialog, Toast } from "antd-mobile";
+import { useNavigate } from "react-router-dom";
 import {
   deleteLocation,
   listInventory,
@@ -9,8 +9,7 @@ import {
 import type { InventoryItem, Location } from "../api/types";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { LocationTransferPanel } from "../components/LocationTransferPanel";
-import { EmptyState, PageHero, SectionCard } from "../components/ui";
+import { EmptyState, SectionCard } from "../components/ui";
 
 function LocationManagePanel() {
   const navigate = useNavigate();
@@ -105,32 +104,9 @@ function LocationManagePanel() {
 }
 
 function LocationsManager() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get("tab") === "transfer" ? "transfer" : "manage";
-
-  const onTabChange = (key: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (key === "transfer") {
-      next.set("tab", "transfer");
-    } else {
-      next.delete("tab");
-      next.delete("material_id");
-    }
-    setSearchParams(next, { replace: true });
-  };
-
   return (
     <Layout title="库位管理">
-      <PageHero title="库位管理" subtitle="维护货柜与货架，以及库内移动、暂存上架" />
-
-      <Tabs activeKey={activeTab} onChange={onTabChange}>
-        <Tabs.Tab title="库位维护" key="manage">
-          <LocationManagePanel />
-        </Tabs.Tab>
-        <Tabs.Tab title="库内移动" key="transfer">
-          <LocationTransferPanel />
-        </Tabs.Tab>
-      </Tabs>
+      <LocationManagePanel />
     </Layout>
   );
 }

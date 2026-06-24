@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Dialog, Form, Input, Stepper, Tabs, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, Stepper, Tabs, Toast, ActionSheet } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getAdminAudit, getAdminOverview, updateTransaction, updateStockRequest } from "../api";
+import { getAdminAudit, getAdminOverview, updateTransaction, updateStockRequest, deleteTransaction, deleteStockRequest } from "../api";
 import type { AdminAudit, AdminOverview, StockRequest, Transaction } from "../api/types";
 import { AuthGate, useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, PageHero, RolePermissions, SectionCard, StatCard, TxBadge } from "../components/ui";
+import { EmptyState, SectionCard, StatCard, TxBadge } from "../components/ui";
 
 function formatDate(value?: string | null) {
   if (!value) return "-";
@@ -21,7 +21,7 @@ function AdminCenterContent() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [audit, setAudit] = useState<AdminAudit | null>(null);
   const [loading, setLoading] = useState(false);
-  const { user, setPendingCount } = useAuth();
+  const { setPendingCount } = useAuth();
 
   // ── 纠错弹窗 ──
   const [editTarget, setEditTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
@@ -29,21 +29,51 @@ function AdminCenterContent() {
   const [editRemark, setEditRemark] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
-  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
-    setEditTarget({ type, item });
-    setEditQty(Math.abs(item.quantity));
-    setEditRemark(item.remark ?? "");
+  // ── 操作菜单（修改/删除） ──
+  const [menuTarget, setMenuTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
+
+  const openMenu = (type: "tx" | "req", item: Transaction | StockRequest) => setMenuTarget({ type, item });
+  const closeMenu = () => setMenuTarget(null);
+
+  const handleMenuAction = async (action: string) => {
+    if (!menuTarget) return;
+    const { type, item } = menuTarget;
+    setMenuTarget(null);
+
+    if (action === "edit") {
+      setEditTarget({ type, item });
+      setEditQty(Math.abs(item.quantity));
+      setEditRemark(item.remark ?? "");
+    } else if (action === "delete") {
+      const label = type === "tx"
+        ? `流水 · ${(item as Transaction).material_name ?? item.id}`
+        : `申请 · ${(item as StockRequest).material_name ?? item.id}`;
+      const confirmed = await Dialog.confirm({ content: `确定删除「${label}」？\n此操作不可恢复。` });
+      if (!confirmed) return;
+      setEditBusy(true);
+      try {
+        if (type === "tx") {
+          await deleteTransaction(item.id);
+        } else {
+          await deleteStockRequest(item.id);
+        }
+        Toast.show({ icon: "success", content: "已删除" });
+        void load();
+      } catch (e) {
+        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
+      } finally {
+        setEditBusy(false);
+      }
+    }
   };
+
   const closeEdit = () => setEditTarget(null);
 
   const submitEdit = async () => {
     if (!editTarget) return;
     setEditBusy(true);
     try {
-      const payload = {
-        quantity: editQty,
-        remark: editRemark.trim() || undefined,
-      };
+      const payload = { quantity: editQty, remark: editRemark.trim() || undefined };
       if (editTarget.type === "tx") {
         await updateTransaction(editTarget.item.id, payload);
       } else {
@@ -88,14 +118,6 @@ function AdminCenterContent() {
 
   return (
     <Layout title="运营中心">
-      <PageHero title="运营中心" subtitle="数据看板、运营概览与操作审计" />
-
-      {user && (
-        <SectionCard title="我的权限">
-          <RolePermissions role={user.role} />
-        </SectionCard>
-      )}
-
       <Tabs activeKey={activeTab} onChange={onTabChange}>
         <Tabs.Tab title="数据看板" key="dashboard">
           {overview && (
@@ -181,7 +203,7 @@ function AdminCenterContent() {
                       <div className="tx-meta">{tx.operator} · {tx.location_name ?? tx.location_id} · {formatDate(tx.created_at)}</div>
                     </div>
                     <div className="tx-qty">{tx.quantity>0?`+${tx.quantity}`:tx.quantity}</div>
-                    <Button size="mini" fill="none" onClick={() => openEdit("tx", tx)}>
+                    <Button size="mini" fill="none" onClick={() => openMenu("tx", tx)}>
                       <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
                     </Button>
                   </div>
@@ -210,6 +232,19 @@ function AdminCenterContent() {
             </Form.Item>
           </Form>
         }
+      />
+
+      <ActionSheet
+        visible={menuTarget !== null}
+        actions={[
+          { text: "修改数据", key: "edit" },
+          { text: "删除记录", key: "delete", danger: true },
+        ]}
+        onClose={closeMenu}
+        onAction={async (action) => {
+          await handleMenuAction(action.key);
+        }}
+        cancelText="取消"
       />
     </Layout>
   );

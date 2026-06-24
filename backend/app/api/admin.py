@@ -144,6 +144,26 @@ async def update_inventory_record(
     return success(item.model_dump(mode="json"))
 
 
+@router.delete("/transactions/{transaction_id}")
+async def delete_transaction(
+    transaction_id: str,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    await service.delete_transaction(transaction_id)
+    return success({"deleted": True, "transaction_id": transaction_id})
+
+
+@router.delete("/requests/{request_id}")
+async def delete_request(
+    request_id: str,
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    await service.delete_request(request_id)
+    return success({"deleted": True, "request_id": request_id})
+
+
 # ── 库位类型管理 ──
 
 @router.get("/location-types")

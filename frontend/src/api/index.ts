@@ -413,6 +413,18 @@ export function updateStockRequest(
   });
 }
 
+export function deleteTransaction(transactionId: string) {
+  return request<{ deleted: boolean; transaction_id: string }>(`/admin/transactions/${transactionId}`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteStockRequest(requestId: string) {
+  return request<{ deleted: boolean; request_id: string }>(`/admin/requests/${requestId}`, {
+    method: "DELETE",
+  });
+}
+
 export function getMaterial(id: string) {
   return request<MaterialDetail>(`/materials/${id}`);
 }

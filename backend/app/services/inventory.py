@@ -896,6 +896,32 @@ class InventoryService:
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
 
+    async def delete_transaction(self, transaction_id: str) -> None:
+        try:
+            if self.repo:
+                return await self.repo.delete_transaction(transaction_id)
+            return self.store.delete_transaction(transaction_id)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "transaction_not_found":
+                raise AppError(4004, "流水记录未找到", 404) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
+    async def delete_request(self, request_id: str) -> None:
+        try:
+            if self.repo:
+                return await self.repo.delete_request(request_id)
+            return self.store.delete_request(request_id)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "request_not_found":
+                raise AppError(4004, "申请记录未找到", 404) from exc
+            raise
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
     # ── 库位类型管理 ──
 
     async def list_location_types(self) -> list[str]:

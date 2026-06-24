@@ -47,7 +47,7 @@ function LocationFormContent() {
     finally { setTypeBusy(false); }
   };
   const handleRemoveType = async (name: string) => {
-    const confirmed = await Dialog.confirm({ content: `删除类型「${name}」？` });
+    const confirmed = await Dialog.confirm({ content: `删除库位类型「${name}」？\n已使用该类型的库位不会受影响。` });
     if (!confirmed) return;
     setTypeBusy(true);
     try { await removeLocationType(name); Toast.show({ icon: "success", content: "已删除" }); await refreshTypes(); }

@@ -1125,6 +1125,16 @@ class MockStore:
         self.inventory[key] = updated
         return updated
 
+    def delete_transaction(self, transaction_id: str) -> None:
+        if transaction_id not in self.transactions:
+            raise ValueError("transaction_not_found")
+        del self.transactions[transaction_id]
+
+    def delete_request(self, request_id: str) -> None:
+        if request_id not in self.requests:
+            raise ValueError("request_not_found")
+        del self.requests[request_id]
+
 
 _store: MockStore | None = None
 

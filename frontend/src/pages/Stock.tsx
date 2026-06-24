@@ -6,8 +6,6 @@ import { LocationTransferPanel } from "../components/LocationTransferPanel";
 import { StockInboundPanel } from "../components/StockInboundPanel";
 import { StockOutboundPanel } from "../components/StockOutboundPanel";
 import { PurchaseContent } from "./Purchase";
-import { PageHero } from "../components/ui";
-
 export default function StockPage() {
   const { canInbound, canApprove } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -22,15 +20,6 @@ export default function StockPage() {
 
   return (
     <Layout title="出入库">
-      <PageHero
-        title="出入库"
-        subtitle={
-          canInbound
-            ? "出库领用、入库上架、库内移动、采购进货"
-            : "提交出入库申请，管理员审批通过后变更库存"
-        }
-      />
-
       <Tabs activeKey={activeTab} onChange={onTabChange}>
         <Tabs.Tab title={canInbound ? "出库" : "出库申请"} key="outbound">
           <StockOutboundPanel />

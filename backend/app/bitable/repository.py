@@ -2215,6 +2215,30 @@ class BitableRepository:
             last_updated=datetime.now(timezone.utc),
         )
 
+    async def delete_transaction(self, transaction_id: str) -> None:
+        """管理员删除流水记录（硬删除）。"""
+        s = self.settings
+        # 验证记录存在
+        txs = await self._list_all(s.bitable_table_transactions)
+        found = any(r.get("record_id") == transaction_id for r in txs)
+        if not found:
+            raise ValueError("transaction_not_found")
+        await self.client.delete_record(s.bitable_table_transactions, transaction_id)
+        self._invalidate_table_cache(s.bitable_table_transactions)
+        self._remove_cached_record(s.bitable_table_transactions, transaction_id)
+
+    async def delete_request(self, request_id: str) -> None:
+        """管理员删除申请记录（硬删除）。"""
+        s = self.settings
+        reqs = await self._list_all(s.bitable_table_requests or "")
+        found = any(r.get("record_id") == request_id for r in reqs) if reqs else False
+        if not found:
+            raise ValueError("request_not_found")
+        if s.bitable_table_requests:
+            await self.client.delete_record(s.bitable_table_requests, request_id)
+            self._invalidate_table_cache(s.bitable_table_requests)
+            self._remove_cached_record(s.bitable_table_requests, request_id)
+
     def _invalidate_cache(self, *table_ids: str) -> None:
         s = self.settings
         if not table_ids or s.bitable_table_materials in table_ids:

@@ -85,7 +85,11 @@ export function ApprovalsPanel({ onReviewed }: { onReviewed?: () => void }) {
     })();
   }, []);
 
-  const approveOutbound = async (id: string) => {
+  const approveOutbound = async (id: string, materialName: string, quantity: number) => {
+    const confirmed = await Dialog.confirm({
+      content: `确认通过「${materialName}」出库 ${quantity} 件的申请？\n通过后将立即扣减库存。`,
+    });
+    if (!confirmed) return;
     setReviewingId(id);
     try {
       await approveStockRequest(id);
@@ -220,7 +224,7 @@ export function ApprovalsPanel({ onReviewed }: { onReviewed?: () => void }) {
                       color="primary"
                       loading={reviewingId === item.id}
                       onClick={() =>
-                        item.type === "入库" ? openApproveInbound(item) : void approveOutbound(item.id)
+                        item.type === "入库" ? openApproveInbound(item) : void approveOutbound(item.id, item.material_name ?? item.material_id, item.quantity)
                       }
                     >
                       {item.type === "入库" ? "指定库位并通过" : "通过并执行"}
