@@ -103,7 +103,7 @@ function TransactionRow({
       </div>
       {canEdit && onEdit && (
         <Button size="mini" fill="none" onClick={() => onEdit(tx)}>
-          <span className="material-symbols-outlined" style={{fontSize:18}}>edit</span>
+          <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
         </Button>
       )}
     </div>

@@ -143,7 +143,7 @@ export function ApprovalRecords() {
               {isAdmin && (
                 <div style={{ marginTop: 6 }}>
                   <Button size="mini" fill="none" onClick={() => openEdit(item)}>
-                    <span className="material-symbols-outlined" style={{fontSize:18}}>edit</span>
+                    <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
                     {" "}纠错
                   </Button>
                 </div>

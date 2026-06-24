@@ -182,7 +182,7 @@ function AdminCenterContent() {
                     </div>
                     <div className="tx-qty">{tx.quantity>0?`+${tx.quantity}`:tx.quantity}</div>
                     <Button size="mini" fill="none" onClick={() => openEdit("tx", tx)}>
-                      <span className="material-symbols-outlined" style={{fontSize:18}}>edit</span>
+                      <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
                     </Button>
                   </div>
                 ))}
