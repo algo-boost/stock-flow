@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Tabs, Toast, ActionSheet } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  listApprovalRequests,
   listCategories,
   listMyRequests,
   listTransactions,
@@ -136,7 +135,6 @@ export default function HistoryPage() {
   const [customEndDate, setCustomEndDate] = useState("");
   const [txTypeFilter, setTxTypeFilter] = useState<TxTypeFilter>("ALL");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(false);
 
   // ── 纠错弹窗 ──
@@ -183,11 +181,6 @@ export default function HistoryPage() {
     }
   };
 
-  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
-    setEditTarget({ type, item });
-    setEditQty(Math.abs(item.quantity));
-    setEditRemark(item.remark ?? "");
-  };
   const closeEdit = () => setEditTarget(null);
 
   const submitEdit = async () => {
@@ -249,13 +242,6 @@ export default function HistoryPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (!canApprove) return;
-    void listApprovalRequests({ status: "待审批", limit: 200 })
-      .then((items) => setPendingCount(items.length))
-      .catch(() => setPendingCount(0));
-  }, [canApprove, txs]);
 
   useEffect(() => {
     void listCategories()
@@ -656,8 +642,7 @@ export default function HistoryPage() {
         ]}
         onClose={closeMenu}
         onAction={async (action) => {
-          closeMenu();
-          await handleMenuAction(action.key);
+          await handleMenuAction(String(action.key));
         }}
         cancelText="取消"
       />

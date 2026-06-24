@@ -34,7 +34,7 @@ FORM_LOCATION = "widget_location"
 FORM_REASON = "widget_reason"
 
 
-@router.post("/api/feishu/events")
+@router.post("/feishu/events")
 async def feishu_event_callback(request: Request) -> dict[str, Any]:
     """飞书统一事件回调入口。
 

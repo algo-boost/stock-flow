@@ -242,7 +242,7 @@ function AdminCenterContent() {
         ]}
         onClose={closeMenu}
         onAction={async (action) => {
-          await handleMenuAction(action.key);
+          await handleMenuAction(String(action.key));
         }}
         cancelText="取消"
       />

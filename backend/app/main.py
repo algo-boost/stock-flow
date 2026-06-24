@@ -145,7 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(transactions.router, prefix="/api")
     app.include_router(returns.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
-    app.include_router(feishu_events.router)  # 自带 /api/ 前缀，不加 prefix
+    app.include_router(feishu_events.router, prefix="/api")
 
     # 生产模式：托管前端构建产物（dist/）
     dist_dir = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")

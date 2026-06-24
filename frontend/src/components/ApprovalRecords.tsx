@@ -28,7 +28,6 @@ function formatRequestLocation(item: StockRequest) {
 export function ApprovalRecords() {
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
-  const isKeeperOrAdmin = isAdmin || user?.role === "KEEPER";
   const [items, setItems] = useState<StockRequest[]>([]);
   const [status, setStatus] = useState<StockRequestStatus | "ALL">("ALL");
   const [loading, setLoading] = useState(false);
@@ -208,7 +207,7 @@ export function ApprovalRecords() {
         ]}
         onClose={closeMenu}
         onAction={async (action) => {
-          await handleMenuAction(action.key);
+          await handleMenuAction(String(action.key));
         }}
         cancelText="取消"
       />
