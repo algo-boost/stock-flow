@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Tabs, Toast, ActionSheet } from "antd-mobile";
+import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  listApprovalRequests,
   listCategories,
   listMyRequests,
   listTransactions,
   searchMaterials,
   updateTransaction,
   updateStockRequest,
-  deleteTransaction,
-  deleteStockRequest,
 } from "../api";
 import type { Category, StockRequest, StockRequestStatus, Transaction } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
@@ -36,8 +35,8 @@ interface SearchSuggestion {
 }
 
 type RequestView = StockRequestStatus | "ALL";
-type MainView = "history" | "approvals";
-type SubView = "transactions" | "returns";
+type StaffHistoryView = "transactions" | "returns" | "approvals";
+type UserHistoryView = "requests" | "returns" | "transactions";
 
 const REQUEST_VIEW_OPTIONS: Array<{ label: string; value: RequestView }> = [
   { label: "进行中", value: "待审批" },
@@ -115,13 +114,39 @@ function TransactionRow({
 export default function HistoryPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { canApprove, canInbound, user } = useAuth();
-  const isAdmin = user?.role === "ADMIN";
-  const canManageApprovals = isAdmin || user?.role === "KEEPER";
-  const [mainView, setMainView] = useState<MainView>("history");
-  const [subView, setSubView] = useState<SubView>(
-    searchParams.get("view") === "returns" ? "returns" : "transactions",
-  );
+  const { canApprove, canInbound, pendingCount } = useAuth();
+  const isAdmin = canApprove;
+  const staffHistoryOptions = useMemo(() => {
+    const opts: Array<{ label: string; value: StaffHistoryView }> = [
+      { label: "流水", value: "transactions" },
+    ];
+    if (canInbound) opts.push({ label: "待归还", value: "returns" });
+    if (canApprove) opts.push({ label: "审批", value: "approvals" });
+    return opts;
+  }, [canInbound, canApprove]);
+
+  const userHistoryOptions: Array<{ label: string; value: UserHistoryView }> = [
+    { label: "我的申请", value: "requests" },
+    { label: "待归还", value: "returns" },
+    { label: "流水", value: "transactions" },
+  ];
+
+  const resolveStaffView = (): StaffHistoryView => {
+    const view = searchParams.get("view");
+    if (view === "returns") return "returns";
+    if (view === "approvals" && canApprove) return "approvals";
+    return "transactions";
+  };
+
+  const resolveUserView = (): UserHistoryView => {
+    const view = searchParams.get("view");
+    if (view === "returns") return "returns";
+    if (view === "transactions") return "transactions";
+    return "requests";
+  };
+
+  const [staffView, setStaffView] = useState<StaffHistoryView>(resolveStaffView);
+  const [userView, setUserView] = useState<UserHistoryView>(resolveUserView);
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -143,44 +168,11 @@ export default function HistoryPage() {
   const [editRemark, setEditRemark] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
-  // ── 操作菜单（修改/删除） ──
-  const [menuTarget, setMenuTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
-
-  const openMenu = (type: "tx" | "req", item: Transaction | StockRequest) => setMenuTarget({ type, item });
-  const closeMenu = () => setMenuTarget(null);
-
-  const handleMenuAction = async (action: string) => {
-    if (!menuTarget) return;
-    const { type, item } = menuTarget;
-    setMenuTarget(null);
-
-    if (action === "edit") {
-      setEditTarget({ type, item });
-      setEditQty(Math.abs(item.quantity));
-      setEditRemark(item.remark ?? "");
-    } else if (action === "delete") {
-      const label = type === "tx"
-        ? `流水 · ${(item as Transaction).material_name ?? item.id}`
-        : `申请 · ${(item as StockRequest).material_name ?? item.id}`;
-      const confirmed = await Dialog.confirm({ content: `确定删除「${label}」？\n此操作不可恢复。` });
-      if (!confirmed) return;
-      setEditBusy(true);
-      try {
-        if (type === "tx") {
-          await deleteTransaction(item.id);
-        } else {
-          await deleteStockRequest(item.id);
-        }
-        Toast.show({ icon: "success", content: "已删除" });
-        void load();
-      } catch (e) {
-        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
-      } finally {
-        setEditBusy(false);
-      }
-    }
+  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
+    setEditTarget({ type, item });
+    setEditQty(Math.abs(item.quantity));
+    setEditRemark(item.remark ?? "");
   };
-
   const closeEdit = () => setEditTarget(null);
 
   const submitEdit = async () => {
@@ -206,7 +198,40 @@ export default function HistoryPage() {
     }
   };
 
-  const showReturnsView = canInbound && subView === "returns";
+  useEffect(() => {
+    if (canInbound) {
+      setStaffView(resolveStaffView());
+    } else {
+      setUserView(resolveUserView());
+    }
+  }, [canInbound, canApprove, searchParams]);
+
+  const setStaffHistoryView = (view: StaffHistoryView) => {
+    setStaffView(view);
+    if (view === "returns") {
+      setSearchParams({ view: "returns" }, { replace: true });
+    } else if (view === "approvals") {
+      setSearchParams({ view: "approvals" }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  };
+
+  const setUserHistoryView = (view: UserHistoryView) => {
+    setUserView(view);
+    if (view === "returns") {
+      setSearchParams({ view: "returns" }, { replace: true });
+    } else if (view === "transactions") {
+      setSearchParams({ view: "transactions" }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  };
+
+  const showReturnsView = (canInbound && staffView === "returns") || (!canInbound && userView === "returns");
+  const showUserRequests = !canInbound && userView === "requests";
+  const showUserTransactions = !canInbound && userView === "transactions";
+  const showStaffTransactions = canInbound && staffView === "transactions";
   const trimmedKeyword = keyword.trim();
   const displayedTxs = useMemo(() => filterTransactionsByType(txs, txTypeFilter), [txs, txTypeFilter]);
 
@@ -242,6 +267,16 @@ export default function HistoryPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!canApprove) return;
+    void listApprovalRequests({ status: "待审批", limit: 200 })
+      .then((items) => {
+        /* pendingCount 由 Layout / Manage 通过 useAuth 同步 */
+        void items;
+      })
+      .catch(() => undefined);
+  }, [canApprove, txs]);
 
   useEffect(() => {
     void listCategories()
@@ -362,41 +397,48 @@ export default function HistoryPage() {
   return (
     <>
     <Layout title="历史">
-      <Tabs
-        activeKey={mainView}
-        onChange={(key) => setMainView(key as MainView)}
-        style={{ marginBottom: 0 }}
-      >
-        <Tabs.Tab title="历史记录" key="history">
-          {canInbound && (
-            <Selector
-              className="history-request-tabs"
-              options={[
-                { label: "流水", value: "transactions" as SubView },
-                { label: "待归还", value: "returns" as SubView },
-              ]}
-              value={[subView]}
-              onChange={(arr) => {
-                const next = (arr[0] as SubView | undefined) ?? "transactions";
-                setSubView(next);
-                setSearchParams(
-                  next === "returns" ? { view: "returns" } : {},
-                  { replace: true },
-                );
-              }}
-            />
-          )}
-          {showReturnsView ? (
-            <PendingReturnsPanel showBorrowerFilter />
-          ) : (
+      {canApprove && pendingCount > 0 && (
+        <div className="history-pending-banner">
+          <span>待审批 {pendingCount} 条，请在飞书审批中处理</span>
+          <Button
+            size="small"
+            color="primary"
+            fill="outline"
+            onClick={() => setStaffHistoryView("approvals")}
+          >
+            查看记录
+          </Button>
+        </div>
+      )}
+
+      {canInbound ? (
+        <Selector
+          className="view-tabs"
+          options={staffHistoryOptions}
+          value={[staffView]}
+          onChange={(arr) =>
+            setStaffHistoryView((arr[0] as StaffHistoryView | undefined) ?? "transactions")
+          }
+        />
+      ) : (
+        <Selector
+          className="view-tabs"
+          options={userHistoryOptions}
+          value={[userView]}
+          onChange={(arr) => setUserHistoryView((arr[0] as UserHistoryView | undefined) ?? "requests")}
+        />
+      )}
+
+      {staffView === "approvals" ? (
+        <ApprovalRecords />
+      ) : showReturnsView ? (
+        <PendingReturnsPanel showBorrowerFilter={canInbound} />
+      ) : (
         <>
+      {(showStaffTransactions || showUserTransactions || canApprove) && (
       <SectionCard
-        title={canApprove ? "全部出入库历史" : "我的出入库历史"}
-        subtitle={
-          canApprove
-            ? "快捷筛选时间/类型；更多条件可展开"
-            : "搜索同时作用于申请与流水；默认查看进行中的申请"
-        }
+        title={canApprove ? "出入库流水" : "我的流水"}
+        subtitle={canApprove ? undefined : undefined}
       >
         <SearchBar
           placeholder="搜索物品 / 库位 / 备注"
@@ -527,8 +569,9 @@ export default function HistoryPage() {
           </div>
         )}
       </SectionCard>
+      )}
 
-      {!canApprove && (
+      {!canApprove && showUserRequests && (
         <SectionCard title={`我的申请 ${requests.length} 条`} subtitle={requestViewHint(requestView)}>
           <Selector
             className="history-request-tabs"
@@ -580,6 +623,7 @@ export default function HistoryPage() {
         </SectionCard>
       )}
 
+      {(showStaffTransactions || showUserTransactions) && (
       <SectionCard title={txSectionTitle}>
         {displayedTxs.length === 0 ? (
           <EmptyState
@@ -599,19 +643,13 @@ export default function HistoryPage() {
           />
         ) : (
           displayedTxs.map((tx) => (
-            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} canEdit={isAdmin} onEdit={(t) => openMenu("tx", t)} />
+            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} canEdit={isAdmin} onEdit={(t) => openEdit("tx", t)} />
           ))
         )}
       </SectionCard>
+      )}
         </>
       )}
-        </Tabs.Tab>
-        {canManageApprovals && (
-          <Tabs.Tab title="审批" key="approvals">
-            <ApprovalRecords />
-          </Tabs.Tab>
-        )}
-      </Tabs>
     </Layout>
 
       <Dialog
@@ -632,19 +670,6 @@ export default function HistoryPage() {
             </Form.Item>
           </Form>
         }
-      />
-
-      <ActionSheet
-        visible={menuTarget !== null}
-        actions={[
-          { text: "修改数据", key: "edit" },
-          { text: "删除记录", key: "delete", danger: true },
-        ]}
-        onClose={closeMenu}
-        onAction={async (action) => {
-          await handleMenuAction(String(action.key));
-        }}
-        cancelText="取消"
       />
     </>
   );

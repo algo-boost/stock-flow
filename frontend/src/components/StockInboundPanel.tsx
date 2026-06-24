@@ -182,7 +182,7 @@ export function StockInboundPanel() {
         });
         Toast.show({ icon: "success", content: isReturnInbound ? "归还入库成功" : "入库成功" });
         if (isReturnInbound) {
-          navigate(canInbound ? "/history?view=returns" : "/returns");
+          navigate(canInbound ? "/history?view=returns" : "/history?view=returns");
         } else {
           navigate(`/materials/${selected.material.id}`);
         }

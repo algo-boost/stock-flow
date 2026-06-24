@@ -1,287 +1,353 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, SearchBar, Toast } from "antd-mobile";
+import { Button, Selector, Toast } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
-import { createCategory, deleteCategory, listCategories, searchMaterials, updateCategory } from "../api";
-import type { Category, MaterialSearchItem } from "../api/types";
-import { CategoryTree } from "../components/CategoryTree";
+import {
+  listCategories,
+  listInventory,
+  listLocations,
+  listLowStock,
+  listTransactions,
+  searchMaterials,
+} from "../api";
+import type { Category, InventoryItem, Location, MaterialSearchItem } from "../api/types";
+import { CategoryFolderBrowser } from "../components/CategoryFolderBrowser";
+import { StorageUnitPicker } from "../components/StorageUnitPicker";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, MaterialCard, SectionCard } from "../components/ui";
-import { formatCategoryPath, canBrowseCategoryMaterials, isSubCategory } from "../utils/categoryTree";
+import type { DateRangePreset } from "../utils/historyDisplay";
+import { resolveDateRange } from "../utils/historyDisplay";
+import { getDescendantIds } from "../utils/categoryTree";
+import { getLocationChildren } from "../utils/locationTree";
+import { isGridCapableLocation } from "../utils/shelfGrid";
 
-interface SearchSuggestion {
-  label: string;
-  value: string;
-  hint: string;
-  kind: "category" | "material";
-  categoryId?: string;
+type BrowseBy = "category" | "location";
+type StockFilter = "all" | "instock" | "low";
+
+const STOCK_OPTIONS: Array<{ label: string; value: StockFilter }> = [
+  { label: "全部", value: "all" },
+  { label: "有库存", value: "instock" },
+  { label: "缺货", value: "low" },
+];
+
+const INBOUND_TIME_OPTIONS: Array<{ label: string; value: DateRangePreset }> = [
+  { label: "不限", value: "all" },
+  { label: "近7天", value: "7d" },
+  { label: "近30天", value: "30d" },
+  { label: "自定义", value: "custom" },
+];
+
+function loadBrowseBy(): BrowseBy {
+  try {
+    const saved = localStorage.getItem("home_browse_by") ?? localStorage.getItem("home_view_mode");
+    if (saved === "location") return "location";
+    return "category";
+  } catch {
+    return "category";
+  }
 }
 
 export default function SearchPage() {
-  const pageSize = 20;
-  const [keyword, setKeyword] = useState("");
+  const pageSize = 30;
+  const [browseBy, setBrowseBy] = useState<BrowseBy>(loadBrowseBy);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [locationRecords, setLocationRecords] = useState<Location[]>([]);
+  const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
+  const [folderId, setFolderId] = useState<string | null>(null);
+  const [shelfFolderId, setShelfFolderId] = useState<string | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const [stockFilter, setStockFilter] = useState<StockFilter>("all");
+  const [inboundPreset, setInboundPreset] = useState<DateRangePreset>("all");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
+  const [filterLocationId, setFilterLocationId] = useState<string>("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("recent_searches") || "[]"); } catch { return []; }
-  });
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
+
+  const stockActions =
+    user?.role === "ADMIN" || user?.role === "KEEPER"
+      ? [
+          { text: "出库", key: "outbound" },
+          { text: "入库", key: "inbound" },
+          { text: "移动", key: "transfer" },
+          ...(isAdmin
+            ? [
+                { text: "进货", key: "purchase" },
+                { text: "编辑", key: "edit" },
+              ]
+            : []),
+        ]
+      : [
+          { text: "申请出库", key: "req-outbound" },
+          { text: "申请入库", key: "req-inbound" },
+        ];
+
+  const categoryOptions = useMemo(
+    () => [{ label: "不限", value: "" }, ...categories.map((c) => ({ label: c.name, value: c.id }))],
+    [categories],
+  );
+
+  const locationOptions = useMemo(
+    () => [{ label: "不限", value: "" }, ...locationRecords.map((l) => ({ label: l.name, value: l.id }))],
+    [locationRecords],
+  );
+
+  const hasSearchQuery = useMemo(
+    () =>
+      Boolean(
+        keyword.trim() ||
+          stockFilter !== "all" ||
+          inboundPreset !== "all" ||
+          filterCategoryId ||
+          filterLocationId,
+      ),
+    [keyword, stockFilter, inboundPreset, filterCategoryId, filterLocationId],
+  );
+
+  const activeFilterCount = [
+    stockFilter !== "all",
+    inboundPreset !== "all",
+    filterCategoryId,
+    filterLocationId,
+  ].filter(Boolean).length;
+
+  const onBrowseByChange = (next: BrowseBy) => {
+    setBrowseBy(next);
+    localStorage.setItem("home_browse_by", next);
+    setFolderId(null);
+    setShelfFolderId(null);
+  };
+
+  const openShelfLocation = (loc: Location) => {
+    if (isGridCapableLocation(loc)) {
+      navigate(`/shelves/${loc.id}`);
+      return;
+    }
+    if (getLocationChildren(locationRecords, loc.id).length > 0) {
+      setShelfFolderId(loc.id);
+      return;
+    }
+    navigate(`/shelves/${loc.id}`);
+  };
 
   const loadCategories = useCallback(async () => {
     const data = await listCategories();
     setCategories(data);
   }, []);
 
-  const loadMaterials = useCallback(
-    async (q: string, nextPage = 1, append = false, categoryId: string | null = null) => {
-      setLoading(true);
-      try {
-        const data = await searchMaterials(q.trim(), {
-          page: nextPage,
-          size: pageSize,
-          searchBy: "all",
-          category: categoryId ?? undefined,
-        });
-        setItems((current) => (append ? [...current, ...data.items] : data.items));
-        setPage(data.page);
-        setTotal(data.total);
-      } catch (e) {
-        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "搜索失败" });
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+  const loadSearchResults = useCallback(async () => {
+    setLoading(true);
+    try {
+      const q = keyword.trim();
 
-  const shouldLoadMaterials = useCallback(
-    (categoryId: string | null, q: string) =>
-      Boolean(q.trim()) || canBrowseCategoryMaterials(categories, categoryId),
-    [categories],
-  );
+      if (stockFilter === "low") {
+        let lowItems = await listLowStock();
+        if (filterCategoryId) {
+          lowItems = lowItems.filter((m) => getDescendantIds(categories, filterCategoryId).has(m.category_id));
+        }
+        setItems(lowItems);
+        setPage(1);
+        setTotal(lowItems.length);
+        return;
+      }
+
+      let inboundMaterialIds: Set<string> | null = null;
+      if (inboundPreset !== "all") {
+        const range = resolveDateRange(inboundPreset, customStart, customEnd);
+        const txs = await listTransactions({ ...range, limit: 500 });
+        inboundMaterialIds = new Set(
+          txs.filter((t) => t.type.includes("入")).map((t) => t.material_id),
+        );
+      }
+
+      const data = await searchMaterials(q, {
+        page: 1,
+        size: pageSize,
+        searchBy: "all",
+        category: filterCategoryId ?? undefined,
+        location: filterLocationId || undefined,
+        stockOnly: stockFilter === "instock",
+      });
+
+      let nextItems = data.items;
+      if (inboundMaterialIds) {
+        nextItems = nextItems.filter((m) => inboundMaterialIds!.has(m.id));
+      }
+
+      setItems(nextItems);
+      setPage(1);
+      setTotal(inboundMaterialIds ? nextItems.length : data.total);
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    categories,
+    customEnd,
+    customStart,
+    filterCategoryId,
+    filterLocationId,
+    inboundPreset,
+    keyword,
+    stockFilter,
+  ]);
+
+  const loadCategoryBrowseResults = useCallback(async () => {
+    if (!folderId) return;
+
+    setLoading(true);
+    try {
+      const data = await searchMaterials("", {
+        page: 1,
+        size: pageSize,
+        category: folderId,
+      });
+      setItems(data.items);
+      setPage(1);
+      setTotal(data.total);
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
+    } finally {
+      setLoading(false);
+    }
+  }, [folderId]);
+
+  const loadMore = useCallback(async () => {
+    if (!hasSearchQuery || stockFilter === "low") return;
+    setLoading(true);
+    try {
+      const data = await searchMaterials(keyword.trim(), {
+        page: page + 1,
+        size: pageSize,
+        category: filterCategoryId ?? undefined,
+        location: filterLocationId || undefined,
+        stockOnly: stockFilter === "instock",
+      });
+      setItems((cur) => [...cur, ...data.items]);
+      setPage(data.page);
+      setTotal(data.total);
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
+    } finally {
+      setLoading(false);
+    }
+  }, [filterCategoryId, filterLocationId, hasSearchQuery, keyword, page, stockFilter]);
+
+  useEffect(() => {
+    const state = location.state as { browseBy?: BrowseBy } | null;
+    if (state?.browseBy === "location") {
+      setBrowseBy("location");
+      localStorage.setItem("home_browse_by", "location");
+    }
+  }, [location.state]);
 
   useEffect(() => {
     if (location.pathname !== "/") return;
-    void loadCategories().catch((e) => {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载分类失败" });
-    });
+    void loadCategories();
+    void Promise.all([listLocations(), listInventory()])
+      .then(([locs, inv]) => {
+        setLocationRecords(locs);
+        setAllInventory(inv);
+      })
+      .catch(() => {
+        setLocationRecords([]);
+        setAllInventory([]);
+      });
   }, [location.pathname, location.key, loadCategories]);
 
   useEffect(() => {
     if (location.pathname !== "/") return;
-    if (shouldLoadMaterials(selectedCategoryId, keyword)) {
-      void loadMaterials(keyword, 1, false, selectedCategoryId);
-    } else {
-      setItems([]);
-      setTotal(0);
-      setPage(1);
-      setLoading(false);
+
+    if (hasSearchQuery) {
+      void loadSearchResults();
+      return;
+    }
+
+    if (browseBy === "category") {
+      if (!folderId) {
+        setItems([]);
+        setTotal(0);
+        return;
+      }
+      void loadCategoryBrowseResults();
     }
   }, [
     location.pathname,
     location.key,
+    hasSearchQuery,
+    browseBy,
+    folderId,
     keyword,
-    selectedCategoryId,
-    loadMaterials,
-    shouldLoadMaterials,
+    stockFilter,
+    inboundPreset,
+    customStart,
+    customEnd,
+    filterCategoryId,
+    filterLocationId,
+    loadSearchResults,
+    loadCategoryBrowseResults,
   ]);
 
-  const categorySuggestionPool = useMemo(
-    () =>
-      categories.map((category) => ({
-        label: formatCategoryPath(categories, category.id) || category.name,
-        value: category.name,
-        hint: "分类",
-        kind: "category" as const,
-        categoryId: category.id,
-      })),
-    [categories],
-  );
-
-  useEffect(() => {
-    const text = keyword.trim().toLowerCase();
-    if (!text) {
-      setSuggestions([]);
-      return;
+  const handleMaterialAction = (id: string, key: string) => {
+    switch (key) {
+      case "outbound":
+      case "req-outbound":
+        navigate(`/stock?material_id=${id}`);
+        break;
+      case "inbound":
+      case "req-inbound":
+        navigate(`/stock?tab=inbound&material_id=${id}`);
+        break;
+      case "transfer":
+        navigate(`/stock?tab=transfer&material_id=${id}`);
+        break;
+      case "edit":
+        navigate(`/materials/${id}`);
+        break;
+      case "purchase":
+        navigate(`/purchase?material_id=${id}`);
+        break;
     }
-
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const categoryMatches = categorySuggestionPool
-            .filter(
-              (item) =>
-                item.label.toLowerCase().includes(text) || item.value.toLowerCase().includes(text),
-            )
-            .slice(0, 3);
-
-          const data = await searchMaterials(keyword.trim(), { page: 1, size: 5, searchBy: "all" });
-          const seen = new Set<string>();
-          const materialMatches: SearchSuggestion[] = [];
-          for (const item of data.items) {
-            if (seen.has(item.id)) continue;
-            seen.add(item.id);
-            const meta = [item.code, item.spec].filter(Boolean).join(" · ");
-            const category =
-              [item.major_category, item.mid_category, item.sub_category]
-                .filter(Boolean)
-                .join(" / ") || item.category_name;
-            materialMatches.push({
-              label: item.name,
-              value: item.name,
-              hint: meta || category || "物料",
-              kind: "material",
-            });
-          }
-
-          setSuggestions([...categoryMatches, ...materialMatches].slice(0, 6));
-        } catch {
-          setSuggestions([]);
-        }
-      })();
-    }, 220);
-
-    return () => window.clearTimeout(timer);
-  }, [categorySuggestionPool, keyword]);
-
-  const saveSearch = (term: string) => {
-    if (!term.trim()) return;
-    setRecentSearches((prev) => {
-      const next = [term, ...prev.filter((s) => s !== term)].slice(0, 5);
-      localStorage.setItem("recent_searches", JSON.stringify(next));
-      return next;
-    });
   };
 
-  const onSearch = (val: string) => {
-    saveSearch(val);
-    setKeyword(val);
-    setSelectedCategoryId(null);
-    setSuggestions([]);
-    void loadMaterials(val, 1, false, null);
-  };
-
-  const chooseSuggestion = (suggestion: SearchSuggestion) => {
-    setSuggestions([]);
-    if (suggestion.kind === "category" && suggestion.categoryId) {
-      if (
-        isSubCategory(categories, suggestion.categoryId) &&
-        !canBrowseCategoryMaterials(categories, suggestion.categoryId) &&
-        !isAdmin
-      ) {
-        return;
-      }
-      setKeyword("");
-      setSelectedCategoryId(suggestion.categoryId);
-      return;
-    }
-    setKeyword(suggestion.value);
-    setSelectedCategoryId(null);
-    void loadMaterials(suggestion.value, 1, false, null);
-  };
-
-  const onCategorySelect = (categoryId: string | null) => {
-    if (
-      categoryId &&
-      isSubCategory(categories, categoryId) &&
-      !canBrowseCategoryMaterials(categories, categoryId) &&
-      !isAdmin
-    ) {
-      return;
-    }
-    setSelectedCategoryId(categoryId);
-    setKeyword("");
-    setSuggestions([]);
-  };
-
-  const loadMore = () => {
-    void loadMaterials(keyword, page + 1, true, selectedCategoryId);
-  };
-
-  const hasMore = items.length < total;
-  const showMaterialsInTree =
-    canBrowseCategoryMaterials(categories, selectedCategoryId) && !keyword.trim();
-  const showMaterialsAtBottom = Boolean(keyword.trim());
-
-  const materialList = (empty: { text: string; hint: string }) => (
+  const materialList = (
     <>
-      {!loading && items.length === 0 && <EmptyState icon="📭" text={empty.text} hint={empty.hint} />}
+      {!loading && items.length === 0 && (
+        <EmptyState
+          icon={hasSearchQuery ? "📭" : "📁"}
+          text={hasSearchQuery ? "没有匹配的物料" : "此分类下暂无物料"}
+          hint={hasSearchQuery ? "换个关键词或调整筛选试试" : "可返回上级选其他分类"}
+        />
+      )}
       {items.map((m) => {
         const isLowStock = m.total_quantity < (m.min_stock ?? 5);
         return (
           <MaterialCard
             key={m.id}
             name={m.name}
-            code={m.code}
-            category={
-                [m.major_category, m.mid_category, m.sub_category]
-                  .filter(Boolean)
-                  .join(" / ") || m.category_name
-              }
+            category={[m.major_category, m.sub_category ?? m.category_name].filter(Boolean).join(" / ") || m.category_name}
             quantity={m.total_quantity}
             warning={isLowStock ? "low" : undefined}
             stockSummary={m.locations_summary ?? undefined}
             onClick={() => navigate(`/materials/${m.id}`)}
-            actions={[
-              { text: "查看详情", key: "detail" },
-              ...(user?.role === "ADMIN" || user?.role === "KEEPER"
-                ? [
-                    { text: "出库", key: "outbound" },
-                    { text: "入库", key: "inbound" },
-                    { text: "移动", key: "transfer" },
-                  ]
-                : [
-                    { text: "申请出库", key: "req-outbound" },
-                    { text: "申请入库", key: "req-inbound" },
-                  ]),
-              ...(isAdmin ? [
-                    { text: "修改物料", key: "edit" },
-                    { text: "进货", key: "purchase" },
-                  ] : []),
-            ]}
-            onAction={(action) => {
-              const id = m.id;
-              switch (action.key) {
-                case "detail":
-                  navigate(`/materials/${id}`);
-                  break;
-                case "outbound":
-                  navigate(`/stock?material_id=${id}`);
-                  break;
-                case "inbound":
-                  navigate(`/stock?tab=inbound&material_id=${id}`);
-                  break;
-                case "transfer":
-                  navigate(`/locations?tab=transfer&material_id=${id}`);
-                  break;
-                case "req-outbound":
-                  navigate(`/stock?material_id=${id}`);
-                  break;
-                case "req-inbound":
-                  navigate(`/stock?tab=inbound&material_id=${id}`);
-                  break;
-                case "edit":
-                  navigate(`/materials/${id}`);
-                  break;
-                case "purchase":
-                  navigate(`/purchase?material_id=${id}`);
-                  break;
-              }
-            }}
+            inlineCount={2}
+            actions={stockActions}
+            onAction={(action) => handleMaterialAction(m.id, String(action.key))}
           />
         );
       })}
-      {hasMore && (
+      {hasSearchQuery && items.length < total && stockFilter !== "low" && (
         <div className="load-more">
-          <Button loading={loading} fill="outline" block onClick={loadMore}>
+          <Button loading={loading} fill="outline" block onClick={() => void loadMore()}>
             加载更多
           </Button>
         </div>
@@ -289,84 +355,144 @@ export default function SearchPage() {
     </>
   );
 
+  const searchAndFilters = (
+    <>
+      <div className="search-bar-wrap">
+        <input
+          className="search-input-native"
+          type="search"
+          enterKeyHint="search"
+          placeholder="搜名称 / 编码 / 条码"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+        />
+        {keyword && (
+          <button type="button" className="search-input-clear" onClick={() => setKeyword("")} aria-label="清除">
+            ×
+          </button>
+        )}
+      </div>
+      <button type="button" className="filter-toggle-btn" onClick={() => setFiltersOpen((v) => !v)}>
+        筛选{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""} {filtersOpen ? "▲" : "▼"}
+      </button>
+      {filtersOpen && (
+        <div className="list-filters">
+          <div className="filter-row">
+            <span className="filter-row-label">库存</span>
+            <Selector
+              className="filter-selector"
+              options={STOCK_OPTIONS}
+              value={[stockFilter]}
+              onChange={(arr) => setStockFilter((arr[0] as StockFilter | undefined) ?? "all")}
+            />
+          </div>
+          <div className="filter-row">
+            <span className="filter-row-label">入库时间</span>
+            <Selector
+              className="filter-selector"
+              options={INBOUND_TIME_OPTIONS}
+              value={[inboundPreset]}
+              onChange={(arr) => setInboundPreset((arr[0] as DateRangePreset | undefined) ?? "all")}
+            />
+          </div>
+          {inboundPreset === "custom" && (
+            <div className="history-date-row">
+              <label className="history-date-field">
+                <span>从</span>
+                <input className="native-date-input" type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+              </label>
+              <label className="history-date-field">
+                <span>至</span>
+                <input className="native-date-input" type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+              </label>
+            </div>
+          )}
+          <div className="filter-row">
+            <span className="filter-row-label">分类</span>
+            <Selector
+              className="filter-selector"
+              options={categoryOptions}
+              value={[filterCategoryId ?? ""]}
+              onChange={(arr) => setFilterCategoryId((arr[0] as string) || null)}
+            />
+          </div>
+          <div className="filter-row">
+            <span className="filter-row-label">库位</span>
+            <Selector
+              className="filter-selector"
+              options={locationOptions.length ? locationOptions : [{ label: "不限", value: "" }]}
+              value={[filterLocationId]}
+              onChange={(arr) => setFilterLocationId((arr[0] as string | undefined) ?? "")}
+            />
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <Layout title="物料管理系统">
-      <SectionCard
-        title="分类浏览"
-        subtitle="展开大类后，仅有物料的子类可点击查看；数字为库存合计"
-      >
-        {categories.length === 0 ? (
-          <EmptyState icon="🏷️" text="暂无分类数据" hint="管理员可添加顶层分类，或先在 Bitable 维护 categories 表" />
-        ) : (
-          <CategoryTree
-            categories={categories}
-            selectedId={selectedCategoryId}
-            onSelect={onCategorySelect}
-            renderMaterialsPanel={
-              showMaterialsInTree ? (
-                <>
-                  <div className="category-tree-materials-head">
-                    {loading && items.length === 0 ? "加载中…" : `共 ${total} 种物料`}
-                  </div>
-                  {materialList({ text: "该分类下暂无物料", hint: "可尝试选择上级分类或搜索关键词" })}
-                </>
-              ) : undefined
-            }
-            canManage={isAdmin}
-            onCreate={async (payload) => { await createCategory(payload); }}
-            onDelete={async (categoryId) => { await deleteCategory(categoryId); }}
-            onUpdate={async (categoryId, payload) => { await updateCategory(categoryId, payload); }}
-            onRefresh={loadCategories}
-            onAddMaterial={(categoryId) => { navigate(`/stock?tab=inbound&category_id=${categoryId}`); }}
-          />
+    <Layout title="首页">
+      <SectionCard className="flush-body home-search-card">
+        {searchAndFilters}
+        {!hasSearchQuery && (
+          <div className="home-mode-switch" role="tablist" aria-label="浏览方式">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={browseBy === "category"}
+                className={`home-mode-btn ${browseBy === "category" ? "home-mode-btn-active" : ""}`}
+                onClick={() => onBrowseByChange("category")}
+              >
+                按分类
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={browseBy === "location"}
+                className={`home-mode-btn ${browseBy === "location" ? "home-mode-btn-active" : ""}`}
+                onClick={() => onBrowseByChange("location")}
+              >
+                按货架
+              </button>
+            </div>
         )}
       </SectionCard>
 
-      {showMaterialsAtBottom && (
-        <SectionCard
-          title={loading && items.length === 0 ? "加载中…" : `找到 ${total} 条`}
-          subtitle="红色库存表示低于安全库存"
-        >
-          {materialList({ text: "没有匹配的物料", hint: "换个关键词或分类试试" })}
+      {hasSearchQuery ? (
+        <SectionCard title={loading && items.length === 0 ? "搜索中…" : `搜索结果 · 共 ${total} 种`}>
+          {materialList}
+        </SectionCard>
+      ) : browseBy === "category" ? (
+        <>
+          <SectionCard className="flush-body home-section-card">
+            <CategoryFolderBrowser
+              categories={categories}
+              folderId={folderId}
+              onOpenFolder={setFolderId}
+              onNavigate={setFolderId}
+            />
+          </SectionCard>
+          {folderId && (
+            <SectionCard title={loading ? "加载中…" : `物料 ${total} 种`}>
+              {materialList}
+            </SectionCard>
+          )}
+        </>
+      ) : (
+        <SectionCard className="flush-body home-section-card">
+          {locationRecords.length === 0 ? (
+            <EmptyState icon="📍" text="暂无货架/货柜" hint="请先在「管理 → 库位」中维护" />
+          ) : (
+            <StorageUnitPicker
+                locations={locationRecords}
+                inventory={allInventory}
+                folderId={shelfFolderId}
+                onSelect={openShelfLocation}
+                onNavigate={setShelfFolderId}
+              />
+          )}
         </SectionCard>
       )}
-
-      <SectionCard title="搜索物料" subtitle="输入名称、编码、型号、分类等关键词，自动组合搜索">
-        <div className="search-card">
-          <SearchBar
-            placeholder="搜索名称、编码、型号、分类…"
-            value={keyword}
-            onChange={setKeyword}
-            onSearch={onSearch}
-            onClear={() => {
-              setKeyword("");
-              setSelectedCategoryId(null);
-              setSuggestions([]);
-              void loadMaterials("", 1, false, null);
-            }}
-          />
-          {!keyword && recentSearches.length > 0 && suggestions.length === 0 && (
-            <div className="search-suggestions">
-              <div style={{ padding: "8px 12px 4px", fontSize: 12, color: "var(--sf-text-muted)", fontWeight: 600 }}>最近搜索</div>
-              {recentSearches.map((term) => (
-                <button key={term} type="button" className="search-suggestion" onClick={() => { setKeyword(term); onSearch(term); }}>
-                  <span className="search-suggestion-label">🕐 {term}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {suggestions.length > 0 && (
-            <div className="search-suggestions">
-              {suggestions.map((suggestion) => (
-                <button key={`${suggestion.kind}-${suggestion.hint}-${suggestion.value}`} type="button" className="search-suggestion" onClick={() => chooseSuggestion(suggestion)}>
-                  <span className="search-suggestion-label">{suggestion.label}</span>
-                  <span className="search-suggestion-hint">{suggestion.hint}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </SectionCard>
     </Layout>
   );
 }

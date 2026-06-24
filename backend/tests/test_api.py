@@ -883,6 +883,10 @@ def test_admin_overview_contains_statistics():
     assert "tables" in data
     assert data["totals"]["inventory_quantity"] >= 0
     assert "pending_requests" in data["totals"]
+    assert "material_count" in data["totals"]
+    assert "location_distribution" in data
+    assert "category_distribution" in data
+    assert "pending_requests_list" in data
 
 
 def test_pending_returns_lists_borrow_and_clears_after_return_inbound():

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Dialog, Form, Input, Selector, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, Selector, Stepper, Switch, Toast } from "antd-mobile";
 import { useNavigate, useParams } from "react-router-dom";
 import { createLocation, listLocationTypes, listLocations, updateLocation, addLocationType, removeLocationType } from "../api";
 import type { Location } from "../api/types";
@@ -8,7 +8,7 @@ import { Layout } from "../components/Layout";
 import { EmptyState, SectionCard } from "../components/ui";
 
 function emptyForm() {
-  return { code: "", name: "", type: "货柜", parent_id: "" };
+  return { code: "", name: "", type: "货柜", parent_id: "", grid_rows: 4, grid_columns: 6, use_columns: true };
 }
 
 function LocationFormContent() {
@@ -65,7 +65,7 @@ function LocationFormContent() {
         const location = locs.find((item) => item.id === id);
         if (!location) {
           Toast.show({ icon: "fail", content: "库位不存在或已删除" });
-          navigate("/locations", { replace: true });
+          navigate("/manage?tab=locations", { replace: true });
           return;
         }
         setForm({
@@ -73,10 +73,13 @@ function LocationFormContent() {
           name: location.name,
           type: location.type || "货柜",
           parent_id: location.parent_id ?? "",
+          grid_rows: location.grid_rows ?? 4,
+          grid_columns: location.grid_columns ?? 6,
+          use_columns: location.grid_columns != null,
         });
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载库位失败" });
-        navigate("/locations", { replace: true });
+        navigate("/manage?tab=locations", { replace: true });
       } finally {
         setLoading(false);
       }
@@ -98,10 +101,19 @@ function LocationFormContent() {
     }
     setSaving(true);
     try {
-      const payload: { code: string; name: string; type: string; parent_id?: string } = {
+      const payload: {
+        code: string;
+        name: string;
+        type: string;
+        parent_id?: string;
+        grid_rows?: number | null;
+        grid_columns?: number | null;
+      } = {
         code: form.code.trim(),
         name: form.name.trim(),
         type: form.type.trim() || "货柜",
+        grid_rows: form.grid_rows,
+        grid_columns: form.use_columns ? form.grid_columns : null,
       };
       if (form.parent_id) {
         payload.parent_id = form.parent_id;
@@ -113,7 +125,7 @@ function LocationFormContent() {
         await createLocation(payload);
         Toast.show({ icon: "success", content: "库位已新增" });
       }
-      navigate("/locations", { replace: true });
+      navigate("/manage?tab=locations", { replace: true });
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "保存库位失败" });
     } finally {
@@ -168,9 +180,35 @@ function LocationFormContent() {
               onChange={(arr) => setForm((v) => ({ ...v, parent_id: arr[0] ?? "" }))}
             />
           </Form.Item>
+          <Form.Item label="格位布局">
+            <div className="shelf-form-grid">
+              <div className="shelf-form-row">
+                <span>层数</span>
+                <Stepper min={1} max={20} value={form.grid_rows} onChange={(v) => setForm((s) => ({ ...s, grid_rows: v }))} />
+              </div>
+              <div className="shelf-form-row">
+                <span>有列格位</span>
+                <Switch
+                  checked={form.use_columns}
+                  onChange={(checked) => setForm((s) => ({ ...s, use_columns: checked }))}
+                />
+              </div>
+              {form.use_columns && (
+                <div className="shelf-form-row">
+                  <span>列数</span>
+                  <Stepper min={1} max={20} value={form.grid_columns} onChange={(v) => setForm((s) => ({ ...s, grid_columns: v }))} />
+                </div>
+              )}
+              <p className="shelf-form-hint">
+                {form.use_columns
+                  ? `共 ${form.grid_rows * form.grid_columns} 个格位（${form.grid_rows} 层 × ${form.grid_columns} 列）`
+                  : `共 ${form.grid_rows} 层，每层一个汇总格位`}
+              </p>
+            </div>
+          </Form.Item>
         </Form>
         <div className="actions two">
-          <Button disabled={saving} onClick={() => navigate("/locations")}>
+          <Button disabled={saving} onClick={() => navigate("/manage?tab=locations")}>
             取消
           </Button>
           <Button color="primary" loading={saving} onClick={onSubmit}>

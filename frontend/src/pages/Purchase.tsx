@@ -6,13 +6,14 @@ import type { MaterialDetail, MaterialSearchItem } from "../api/types";
 import { AuthGate } from "../components/AuthGate";
 import { CacheRefreshButton } from "../components/CacheRefreshButton";
 import { Layout } from "../components/Layout";
-import { EmptyState, PageHero, SectionCard } from "../components/ui";
+import { EmptyState, PageHeader, SectionCard } from "../components/ui";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
 }
 
-export function PurchaseContent() {
+/** 纯内容，不含 Layout，可嵌入其他页面 */
+export function PurchaseForm() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
@@ -139,33 +140,17 @@ export function PurchaseContent() {
     const m = selected.material;
     const isLowStock = selected.total_quantity < (m.min_stock ?? 5);
     return (
-      <Layout title="进货">
-        <PageHero
-          title="管理员进货"
-          subtitle={`${m.name} · 当前总库存 ${selected.total_quantity} ${m.unit}`}
+      <>
+        <PageHeader
+          title={m.name}
+          subtitle={`库存 ${selected.total_quantity} ${m.unit}`}
           extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
         />
-        {isLowStock && (
-          <div className="low-stock-alert">
-            当前库存低于安全库存 {m.min_stock ?? 5}，建议优先补货。
-          </div>
-        )}
-        <SectionCard title="进货单" subtitle="仅记录补货入库和供货商，不管理采购价格或付款">
+        {isLowStock && <div className="low-stock-alert">低于安全库存 {m.min_stock ?? 5}</div>}
+        <SectionCard title="进货单">
           <button type="button" className="back-link" onClick={backToList}>
-            ← 返回物料列表
+            ← 返回列表
           </button>
-          <div className="material-selected" style={{ marginTop: 12 }}>
-            <div>
-              <div className="material-selected-name">{m.name}</div>
-              <div className="material-selected-code">
-                {m.code}
-                {m.supplier ? ` · 当前供货商：${m.supplier}` : ""}
-              </div>
-            </div>
-            <span className={isLowStock ? "stock-badge stock-badge-warning" : "stock-badge"}>
-              总库存 {selected.total_quantity}
-            </span>
-          </div>
           <Form layout="vertical" className="form-card">
             <Form.Item label="目标库位">
               <Selector
@@ -174,37 +159,38 @@ export function PurchaseContent() {
                 onChange={(arr) => setLocationId(arr[0] ?? "")}
               />
             </Form.Item>
-            {locationId && selectedStock !== null && <div className="stock-hint">该库位当前库存：{selectedStock}</div>}
-            <Form.Item label="进货数量">
+            {locationId && selectedStock !== null && (
+              <div className="stock-hint">该库位库存：{selectedStock}</div>
+            )}
+            <Form.Item label="数量">
               <Stepper min={1} value={qty} onChange={setQty} />
             </Form.Item>
             <Form.Item label="供货商">
-              <Input value={supplier} onChange={setSupplier} placeholder="如：XX 电子 / 官方旗舰店" />
+              <Input value={supplier} onChange={setSupplier} placeholder="供货商（可选）" />
             </Form.Item>
             <Form.Item label="备注">
-              <TextArea value={note} onChange={setNote} placeholder="采购单号 / 到货说明（可选）" rows={3} />
+              <TextArea value={note} onChange={setNote} placeholder="采购单号等（可选）" rows={2} />
             </Form.Item>
           </Form>
         </SectionCard>
         <div className="actions single">
           <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
-            确认进货入库
+            确认进货
           </Button>
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout title="进货">
-      <PageHero
-        title="管理员进货"
-        subtitle="选择物料后填写库位、数量和供货商，提交后库存自动增加"
+    <>
+      <PageHeader
+        title="进货补货"
         extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
       />
-      <SectionCard title="选择物料" subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种物料`}>
+      <SectionCard title={loading && items.length === 0 ? "加载中…" : `物料 ${total} 种`}>
         <SearchBar
-          placeholder="搜索名称 / 编码 / 条码 / 分类 / 供货商"
+          placeholder="搜索物料"
           value={keyword}
           onChange={setKeyword}
           onSearch={onSearch}
@@ -213,13 +199,10 @@ export function PurchaseContent() {
             void loadMaterials("", 1);
           }}
         />
-        <div className="catalog-meta">
-          {loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}
-        </div>
         {loading && items.length === 0 ? (
-          <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+          <EmptyState icon="⏳" text="加载中…" />
         ) : items.length === 0 ? (
-          <EmptyState icon="📦" text={keyword ? "没有匹配的物料" : "暂无物料"} hint="请先在入库页或 Bitable 维护物料主数据" />
+          <EmptyState icon="📦" text={keyword ? "无匹配" : "暂无物料"} />
         ) : (
           <div className="catalog-list">
             {items.map((item) => {
@@ -230,19 +213,11 @@ export function PurchaseContent() {
                     <div className="catalog-row-name">{item.name}</div>
                     <div className="catalog-row-meta">
                       <span className="chip">{item.code}</span>
-                      {(item.major_category || item.category_name) && (
-                        <span className="chip chip-muted">{item.major_category ?? item.category_name}</span>
-                      )}
-                      {item.supplier && <span className="chip chip-muted">{item.supplier}</span>}
                     </div>
-                    <div className="catalog-row-locs">{item.locations_summary ?? "暂无库存"}</div>
                   </div>
-                  <div className="catalog-row-right">
-                    <span className={isLowStock ? "stock-badge stock-badge-warning" : "stock-badge"}>
-                      {isLowStock ? `缺货 ${item.total_quantity}` : item.total_quantity}
-                    </span>
-                    <span className="material-card-arrow">›</span>
-                  </div>
+                  <span className={isLowStock ? "stock-badge stock-badge-warning" : "stock-badge"}>
+                    {item.total_quantity}
+                  </span>
                 </button>
               );
             })}
@@ -256,7 +231,7 @@ export function PurchaseContent() {
           </div>
         )}
       </SectionCard>
-    </Layout>
+    </>
   );
 }
 
@@ -266,11 +241,13 @@ export default function PurchasePage() {
       roles={["ADMIN"]}
       fallback={
         <Layout title="进货">
-          <EmptyState icon="🔒" text="权限不足" hint="仅管理员可访问进货功能" />
+          <EmptyState icon="🔒" text="权限不足" hint="仅管理员可进货" />
         </Layout>
       }
     >
-      <PurchaseContent />
+      <Layout title="进货">
+        <PurchaseForm />
+      </Layout>
     </AuthGate>
   );
 }

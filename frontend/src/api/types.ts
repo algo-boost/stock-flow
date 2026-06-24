@@ -16,6 +16,8 @@ export interface Location {
   major_name?: string | null;
   mid_name?: string | null;
   sub_name?: string | null;
+  grid_rows?: number | null;
+  grid_columns?: number | null;
 }
 
 export interface Category {
@@ -146,22 +148,34 @@ export interface PaginatedMaterials {
   size: number;
 }
 
+export interface OverviewDistribution {
+  location_id?: string;
+  location_name?: string;
+  category_name?: string;
+  kind_count: number;
+  stock_qty: number;
+}
+
 export interface AdminOverview {
   period: { start_at?: string | null; end_at?: string | null };
   tables: Record<string, number>;
   totals: {
+    material_count: number;
+    in_stock_count: number;
+    zero_stock_count: number;
     inventory_quantity: number;
     inventory_records: number;
     transaction_count: number;
     inbound_quantity: number;
     outbound_quantity: number;
     pending_requests: number;
-    approved_requests: number;
-    rejected_requests: number;
     low_stock_count: number;
+    empty_location_count: number;
   };
+  location_distribution: OverviewDistribution[];
+  category_distribution: OverviewDistribution[];
   recent_transactions: Transaction[];
-  recent_requests: StockRequest[];
+  pending_requests_list: StockRequest[];
   low_stock_items: LowStockItem[];
 }
 

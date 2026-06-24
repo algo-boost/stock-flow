@@ -5,9 +5,10 @@ import { Layout } from "../components/Layout";
 import { LocationTransferPanel } from "../components/LocationTransferPanel";
 import { StockInboundPanel } from "../components/StockInboundPanel";
 import { StockOutboundPanel } from "../components/StockOutboundPanel";
-import { PurchaseContent } from "./Purchase";
+import { PageHeader } from "../components/ui";
+
 export default function StockPage() {
-  const { canInbound, canApprove } = useAuth();
+  const { canInbound } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") ?? "outbound";
 
@@ -20,21 +21,18 @@ export default function StockPage() {
 
   return (
     <Layout title="出入库">
-      <Tabs activeKey={activeTab} onChange={onTabChange}>
-        <Tabs.Tab title={canInbound ? "出库" : "出库申请"} key="outbound">
+      <PageHeader title={canInbound ? "出入库" : "申请"} subtitle="完成后返回首页继续操作" />
+
+      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs">
+        <Tabs.Tab title={canInbound ? "出库" : "申请出库"} key="outbound">
           <StockOutboundPanel />
         </Tabs.Tab>
-        <Tabs.Tab title={canInbound ? "入库" : "入库申请"} key="inbound">
+        <Tabs.Tab title={canInbound ? "入库" : "申请入库"} key="inbound">
           <StockInboundPanel />
         </Tabs.Tab>
         {canInbound && (
-          <Tabs.Tab title="库内移动" key="transfer">
+          <Tabs.Tab title="移动" key="transfer">
             <LocationTransferPanel />
-          </Tabs.Tab>
-        )}
-        {canApprove && (
-          <Tabs.Tab title="进货" key="purchase">
-            <PurchaseContent />
           </Tabs.Tab>
         )}
       </Tabs>

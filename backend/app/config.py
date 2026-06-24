@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     bitable_f_location_major: str = "库位大类"
     bitable_f_location_mid: str = "库位中类"
     bitable_f_location_sub: str = "库位小类"
+    bitable_f_location_grid_rows: str = ""
+    bitable_f_location_grid_columns: str = ""
     bitable_f_material_name: str = "物料名称"
     bitable_f_material_code: str = "物料编码"
     bitable_f_material_major_category: str = "大类"

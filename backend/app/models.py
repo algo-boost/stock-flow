@@ -63,6 +63,8 @@ class Location(BaseModel):
     major_name: str | None = None
     mid_name: str | None = None
     sub_name: str | None = None
+    grid_rows: int | None = Field(default=None, ge=1, le=99)
+    grid_columns: int | None = Field(default=None, ge=1, le=99)
 
 
 class LocationCreate(BaseModel):
@@ -70,6 +72,8 @@ class LocationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     type: str = Field(default="货柜", min_length=1, max_length=50)
     parent_id: str | None = Field(default=None, max_length=128)
+    grid_rows: int | None = Field(default=None, ge=1, le=99)
+    grid_columns: int | None = Field(default=None, ge=1, le=99)
 
 
 class LocationUpdate(BaseModel):
@@ -77,6 +81,8 @@ class LocationUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     type: str | None = Field(default=None, min_length=1, max_length=50)
     parent_id: str | None = Field(default=None, max_length=128)
+    grid_rows: int | None = Field(default=None, ge=1, le=99)
+    grid_columns: int | None = Field(default=None, ge=1, le=99)
 
 
 class Material(BaseModel):
