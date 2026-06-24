@@ -148,3 +148,20 @@ export function filterTransactionsByType<T extends { type: string }>(items: T[],
   if (filter === "ALL") return items;
   return items.filter((item) => item.type === filter);
 }
+
+export function filterTransactions<T extends { type: string; operator: string; location_id: string }>(
+  items: T[],
+  typeFilter: TxTypeFilter,
+  operatorFilter: string,
+  locationIdFilter: string,
+): T[] {
+  let result = filterTransactionsByType(items, typeFilter);
+  const operator = operatorFilter.trim();
+  if (operator) {
+    result = result.filter((item) => item.operator.includes(operator));
+  }
+  if (locationIdFilter) {
+    result = result.filter((item) => item.location_id === locationIdFilter);
+  }
+  return result;
+}

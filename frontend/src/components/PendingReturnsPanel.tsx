@@ -5,6 +5,7 @@ import { listPendingReturns } from "../api";
 import type { PendingReturn } from "../api/types";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard } from "./ui";
+import { openMaterialDetail } from "../utils/detailNavigation";
 import { formatHistoryDate } from "../utils/historyDisplay";
 
 interface PendingReturnsPanelProps {
@@ -117,7 +118,11 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
               <button
                 type="button"
                 className="history-link-title request-title"
-                onClick={() => navigate(`/materials/${item.material_id}`)}
+                onClick={() =>
+                  openMaterialDetail(navigate, item.material_id, {
+                    backTo: `${location.pathname}${location.search}`,
+                  })
+                }
               >
                 {item.material_name ?? item.material_id}
               </button>

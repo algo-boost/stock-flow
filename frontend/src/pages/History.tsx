@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Toast } from "antd-mobile";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { ActionSheet, Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Toast } from "antd-mobile";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import {
   listApprovalRequests,
   listCategories,
   listMyRequests,
+  deleteTransaction,
   listTransactions,
   searchMaterials,
   updateTransaction,
@@ -15,13 +16,14 @@ import { formatReturnPlan } from "../utils/requestDisplay";
 import {
   DateRangePreset,
   TxTypeFilter,
-  filterTransactionsByType,
+  filterTransactions,
   formatHistoryDate,
   formatTxQuantity,
   parsePipeRemark,
   resolveDateRange,
   sortRequestsByPriority,
 } from "../utils/historyDisplay";
+import { openMaterialDetail } from "../utils/detailNavigation";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { PendingReturnsPanel } from "../components/PendingReturnsPanel";
@@ -71,12 +73,15 @@ function TransactionRow({
   onOpenMaterial,
   canEdit,
   onEdit,
+  onDelete,
 }: {
   tx: Transaction;
   onOpenMaterial: (materialId: string) => void;
   canEdit?: boolean;
   onEdit?: (tx: Transaction) => void;
+  onDelete?: (tx: Transaction) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const parsed = parsePipeRemark(tx.remark);
   return (
     <div className="tx-item">
@@ -102,28 +107,47 @@ function TransactionRow({
       <div className={`tx-qty ${tx.type === "出库" ? "tx-qty-out" : tx.type === "入库" ? "tx-qty-in" : ""}`}>
         {formatTxQuantity(tx.type, tx.quantity)}
       </div>
-      {canEdit && onEdit && (
-        <Button size="mini" fill="none" onClick={() => onEdit(tx)}>
+      {canEdit && (onEdit || onDelete) && (
+        <Button size="mini" fill="none" onClick={() => setMenuOpen(true)}>
           <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
         </Button>
       )}
+      <ActionSheet
+        visible={menuOpen}
+        actions={[
+          ...(onEdit ? [{ text: "纠错", key: "edit" }] : []),
+          ...(onDelete && tx.type !== "移动" ? [{ text: "删除流水", key: "delete", danger: true }] : []),
+        ]}
+        cancelText="取消"
+        onClose={() => setMenuOpen(false)}
+        onAction={(action) => {
+          setMenuOpen(false);
+          if (action.key === "edit") onEdit?.(tx);
+          if (action.key === "delete") onDelete?.(tx);
+        }}
+      />
     </div>
   );
 }
 
 export default function HistoryPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { canApprove, canInbound, pendingCount } = useAuth();
   const isAdmin = canApprove;
   const staffHistoryOptions = useMemo(() => {
-    const opts: Array<{ label: string; value: StaffHistoryView }> = [
-      { label: "流水", value: "transactions" },
-    ];
+    const opts: Array<{ label: string; value: StaffHistoryView }> = [];
+    if (canApprove) {
+      opts.push({
+        label: pendingCount > 0 ? `审批 (${pendingCount})` : "审批",
+        value: "approvals",
+      });
+    }
+    opts.push({ label: "流水", value: "transactions" });
     if (canInbound) opts.push({ label: "待归还", value: "returns" });
-    if (canApprove) opts.push({ label: "审批", value: "approvals" });
     return opts;
-  }, [canInbound, canApprove]);
+  }, [canInbound, canApprove, pendingCount]);
 
   const userHistoryOptions: Array<{ label: string; value: UserHistoryView }> = [
     { label: "我的申请", value: "requests" },
@@ -135,6 +159,8 @@ export default function HistoryPage() {
     const view = searchParams.get("view");
     if (view === "returns") return "returns";
     if (view === "approvals" && canApprove) return "approvals";
+    if (view === "transactions") return "transactions";
+    if (canApprove && pendingCount > 0) return "approvals";
     return "transactions";
   };
 
@@ -149,7 +175,7 @@ export default function HistoryPage() {
   const [userView, setUserView] = useState<UserHistoryView>(resolveUserView);
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [requests, setRequests] = useState<StockRequest[]>([]);
-  const [keyword, setKeyword] = useState("");
+  const [keyword, setKeyword] = useState(() => searchParams.get("q") ?? "");
   const [requestView, setRequestView] = useState<RequestView>("待审批");
   const [categories, setCategories] = useState<Category[]>([]);
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
@@ -159,6 +185,8 @@ export default function HistoryPage() {
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [txTypeFilter, setTxTypeFilter] = useState<TxTypeFilter>("ALL");
+  const [quickLocationId, setQuickLocationId] = useState("");
+  const [quickOperator, setQuickOperator] = useState("");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -204,7 +232,14 @@ export default function HistoryPage() {
     } else {
       setUserView(resolveUserView());
     }
-  }, [canInbound, canApprove, searchParams]);
+  }, [canInbound, canApprove, pendingCount, searchParams]);
+
+  useEffect(() => {
+    if (!canApprove || searchParams.get("view")) return;
+    if (pendingCount > 0) {
+      setStaffView("approvals");
+    }
+  }, [canApprove, pendingCount, searchParams]);
 
   const setStaffHistoryView = (view: StaffHistoryView) => {
     setStaffView(view);
@@ -233,7 +268,63 @@ export default function HistoryPage() {
   const showUserTransactions = !canInbound && userView === "transactions";
   const showStaffTransactions = canInbound && staffView === "transactions";
   const trimmedKeyword = keyword.trim();
-  const displayedTxs = useMemo(() => filterTransactionsByType(txs, txTypeFilter), [txs, txTypeFilter]);
+  const displayedTxs = useMemo(
+    () => filterTransactions(txs, txTypeFilter, quickOperator, quickLocationId),
+    [txs, txTypeFilter, quickOperator, quickLocationId],
+  );
+
+  const locationChips = useMemo(() => {
+    const map = new Map<string, { name: string; count: number }>();
+    for (const tx of txs) {
+      const entry = map.get(tx.location_id) ?? { name: tx.location_name ?? tx.location_id, count: 0 };
+      entry.count += 1;
+      map.set(tx.location_id, entry);
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 6)
+      .map(([id, meta]) => ({ id, name: meta.name, count: meta.count }));
+  }, [txs]);
+
+  const operatorChips = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const tx of txs) {
+      if (!tx.operator) continue;
+      map.set(tx.operator, (map.get(tx.operator) ?? 0) + 1);
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name, count]) => ({ name, count }));
+  }, [txs]);
+
+  const confirmDeleteTx = async (tx: Transaction) => {
+    if (tx.type === "移动") {
+      Toast.show({ icon: "fail", content: "移动流水请用反向移动冲正，不可直接删除" });
+      return;
+    }
+    const summary = `${tx.material_name ?? tx.material_id}\n${tx.location_name ?? tx.location_id}\n${formatTxQuantity(tx.type, tx.quantity)} · ${tx.operator}`;
+    const revertHint =
+      tx.type === "入库"
+        ? "删除后将扣减对应库存。"
+        : tx.type === "出库"
+          ? "删除后将加回对应库存。"
+          : "";
+    const confirmed = await Dialog.confirm({
+      title: "确认删除流水",
+      content: `${summary}\n\n${revertHint}删除后不可恢复。`,
+      confirmText: "删除",
+      cancelText: "取消",
+    });
+    if (!confirmed) return;
+    try {
+      await deleteTransaction(tx.id);
+      Toast.show({ icon: "success", content: "流水已删除" });
+      void load();
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
+    }
+  };
 
   const load = useCallback(async (nextKeyword = keyword) => {
     setLoading(true);
@@ -385,7 +476,8 @@ export default function HistoryPage() {
 
   const openMaterial = (materialId: string) => {
     if (!materialId) return;
-    navigate(`/materials/${materialId}`);
+    const backTo = `${location.pathname}${location.search}`;
+    openMaterialDetail(navigate, materialId, { backTo });
   };
 
   const txSectionTitle = loading
@@ -464,6 +556,68 @@ export default function HistoryPage() {
                 <span className="search-suggestion-hint">{suggestion.hint}</span>
               </button>
             ))}
+          </div>
+        )}
+
+        {(showStaffTransactions || showUserTransactions) && (
+          <div className="filter-quick-row history-tx-quick">
+            {TX_TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`filter-quick-chip ${txTypeFilter === opt.value ? "filter-quick-chip-active" : ""}`}
+                onClick={() => setTxTypeFilter(opt.value)}
+              >
+                {opt.value === "ALL" ? "全部" : opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {canInbound && (showStaffTransactions || showUserTransactions) && operatorChips.length > 0 && (
+          <div className="filter-quick-row history-tx-quick">
+            <span className="filter-quick-label">操作人</span>
+            {operatorChips.map((chip) => (
+              <button
+                key={chip.name}
+                type="button"
+                className={`filter-quick-chip ${quickOperator === chip.name ? "filter-quick-chip-active" : ""}`}
+                onClick={() => setQuickOperator((v) => (v === chip.name ? "" : chip.name))}
+              >
+                {chip.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {canInbound && (showStaffTransactions || showUserTransactions) && locationChips.length > 0 && (
+          <div className="filter-quick-row history-tx-quick">
+            <span className="filter-quick-label">库位</span>
+            {locationChips.map((chip) => (
+              <button
+                key={chip.id}
+                type="button"
+                className={`filter-quick-chip ${quickLocationId === chip.id ? "filter-quick-chip-active" : ""}`}
+                onClick={() => setQuickLocationId((v) => (v === chip.id ? "" : chip.id))}
+              >
+                {chip.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {canInbound && (quickOperator || quickLocationId) && (
+          <div className="history-active-filters">
+            {quickOperator && (
+              <button type="button" className="history-filter-tag" onClick={() => setQuickOperator("")}>
+                操作人：{quickOperator} ×
+              </button>
+            )}
+            {quickLocationId && (
+              <button type="button" className="history-filter-tag" onClick={() => setQuickLocationId("")}>
+                库位：{locationChips.find((c) => c.id === quickLocationId)?.name ?? quickLocationId} ×
+              </button>
+            )}
           </div>
         )}
 
@@ -643,7 +797,14 @@ export default function HistoryPage() {
           />
         ) : (
           displayedTxs.map((tx) => (
-            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} canEdit={isAdmin} onEdit={(t) => openEdit("tx", t)} />
+            <TransactionRow
+              key={tx.id}
+              tx={tx}
+              onOpenMaterial={openMaterial}
+              canEdit={isAdmin}
+              onEdit={(t) => openEdit("tx", t)}
+              onDelete={isAdmin ? confirmDeleteTx : undefined}
+            />
           ))
         )}
       </SectionCard>

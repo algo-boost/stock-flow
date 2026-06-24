@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
-import { useSearchParams } from "react-router-dom";
+import { Button, Dialog, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { getMaterial, listLocations, postTransfer, searchMaterials } from "../api";
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import {
@@ -9,7 +9,12 @@ import {
   inventorySlotKey,
   parseInventorySlotKey,
 } from "../utils/inventoryDisplay";
-import { CacheRefreshButton } from "./CacheRefreshButton";
+import { showUndo } from "./UndoToast";
+import {
+  detailContextAfterStock,
+  openMaterialDetail,
+  readStockNavState,
+} from "../utils/detailNavigation";
 import { EmptyState, SectionCard } from "./ui";
 
 function newIdempotencyKey() {
@@ -18,6 +23,9 @@ function newIdempotencyKey() {
 
 export function LocationTransferPanel() {
   const pageSize = 20;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const stockState = readStockNavState(location.state);
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
@@ -159,9 +167,20 @@ export function LocationTransferPanel() {
       Toast.show({ content: "请填写完整移动信息" });
       return;
     }
+
+    const fromLabel = selectedSource ? formatInventorySlot(selectedSource, false) : fromParsed.location_id;
+    const toLabel = selectedToLocation?.name ?? toLocationId;
+    const confirmed = await Dialog.confirm({
+      title: qty >= 10 ? "确认大批量移动" : "确认移动",
+      content: `${selected.material.name}\n从：${fromLabel}\n至：${toLabel}\n数量：${qty} ${selected.material.unit}`,
+      confirmText: "确认移动",
+      cancelText: "取消",
+    });
+    if (!confirmed) return;
+
     setSubmitting(true);
     try {
-      await postTransfer({
+      const payload = {
         material_id: selected.material.id,
         from_location_id: fromParsed.location_id,
         to_location_id: toLocationId,
@@ -172,10 +191,31 @@ export function LocationTransferPanel() {
         from_column: fromParsed.column,
         to_row: showTargetCabinetSlot ? toSlotRow : undefined,
         to_column: showTargetCabinetSlot ? toSlotColumn : undefined,
+      };
+      await postTransfer(payload);
+      const materialName = selected.material.name;
+      const undoQty = qty;
+      showUndo(`${materialName} 已移动 ${undoQty} 件`, async () => {
+        await postTransfer({
+          material_id: payload.material_id,
+          from_location_id: payload.to_location_id,
+          to_location_id: payload.from_location_id,
+          qty: undoQty,
+          idempotency_key: newIdempotencyKey(),
+          note: `撤销移动：${note.trim() || ""}`,
+          from_row: payload.to_row,
+          from_column: payload.to_column,
+          to_row: payload.from_row,
+          to_column: payload.from_column,
+        });
+        Toast.show({ icon: "success", content: "已撤销移动" });
+        void loadMaterials(keyword, 1);
       });
-      Toast.show({ icon: "success", content: "库内移动成功" });
       backToList();
       void loadMaterials(keyword, 1);
+      if (stockState.materialBackTo.startsWith("/materials/")) {
+        openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
+      }
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "移动失败" });
     } finally {
@@ -269,9 +309,8 @@ export function LocationTransferPanel() {
           void loadMaterials("", 1);
         }}
       />
-      <div className="catalog-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="catalog-meta">
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
-        <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />
       </div>
       {loading && items.length === 0 ? (
         <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />

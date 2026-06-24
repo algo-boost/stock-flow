@@ -177,19 +177,23 @@ export function MaterialCard({
     onAction?.(action);
   };
 
+  const primaryLocation = stockSummary
+    ? stockSummary.split(/[,，;；\n]/)[0]?.trim() || stockSummary
+    : undefined;
+
   return (
     <>
-      <div className="material-row">
+      <div className={`material-row${warning ? " material-row-warning" : ""}`}>
         <button type="button" className="material-row-body" onClick={onClick}>
           <div className="material-row-name">{name}</div>
           <div className="material-row-meta">
             {category && <span className="material-row-cat">{category}</span>}
-            {stockSummary && <span className="material-row-loc">{stockSummary}</span>}
+            {primaryLocation && <span className="material-row-loc">{primaryLocation}</span>}
           </div>
         </button>
         {quantity != null && (
           <span className={`stock-badge stock-badge-sm${warning ? " stock-badge-warning" : ""}`}>
-            {quantity}
+            {warning && quantity <= 0 ? "缺货" : quantity}
           </span>
         )}
         {inlineActions.map((action) => (
@@ -269,7 +273,17 @@ export function TxBadge({ type }: { type: string }) {
   return <span className={`tx-badge ${isTransfer ? "tx-transfer" : isIn ? "tx-in" : "tx-out"}`}>{type}</span>;
 }
 
-export function EmptyState({ icon, text, hint }: { icon: string; text: string; hint?: string }) {
+export function EmptyState({
+  icon,
+  text,
+  hint,
+  actions,
+}: {
+  icon: string;
+  text: string;
+  hint?: string;
+  actions?: Array<{ label: string; onClick: () => void }>;
+}) {
   return (
     <div className="empty-state">
       <div className="empty-state-illustration" aria-hidden>
@@ -289,6 +303,35 @@ export function EmptyState({ icon, text, hint }: { icon: string; text: string; h
       <div className="empty-state-icon">{icon}</div>
       <div className="empty-state-text">{text}</div>
       {hint && <div className="empty-state-hint">{hint}</div>}
+      {actions && actions.length > 0 && (
+        <div className="empty-state-actions">
+          {actions.map((action) => (
+            <button key={action.label} type="button" className="empty-state-action" onClick={action.onClick}>
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function CardSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="skeleton-list" aria-hidden>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="skeleton-card" />
+      ))}
+    </div>
+  );
+}
+
+export function ShelfGridSkeleton() {
+  return (
+    <div className="skeleton-shelf-grid" aria-hidden>
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="skeleton-shelf-card" />
+      ))}
     </div>
   );
 }

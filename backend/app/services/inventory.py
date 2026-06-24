@@ -975,6 +975,11 @@ class InventoryService:
             msg = str(exc)
             if msg == "transaction_not_found":
                 raise AppError(4004, "流水记录未找到", 404) from exc
+            if msg == "transfer_tx_cannot_delete":
+                raise AppError(4001, "移动流水请用反向移动冲正，不可直接删除", 400) from exc
+            if msg.startswith("insufficient_stock_to_revert"):
+                available = msg.split(":", 1)[-1] if ":" in msg else "0"
+                raise AppError(4001, f"库存不足，无法冲正删除（当前 {available}）", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc

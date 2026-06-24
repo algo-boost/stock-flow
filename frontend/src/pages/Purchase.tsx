@@ -4,9 +4,9 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { getMaterial, listLocations, postPurchaseInbound, searchMaterials } from "../api";
 import type { MaterialDetail, MaterialSearchItem } from "../api/types";
 import { AuthGate } from "../components/AuthGate";
-import { CacheRefreshButton } from "../components/CacheRefreshButton";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHeader, SectionCard } from "../components/ui";
+import { openMaterialDetail } from "../utils/detailNavigation";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
@@ -128,7 +128,9 @@ export function PurchaseForm() {
         note: note.trim() || undefined,
       });
       Toast.show({ icon: "success", content: "进货已入库" });
-      navigate(`/materials/${selected.material.id}`);
+      openMaterialDetail(navigate, selected.material.id, {
+        backTo: `/purchase?material_id=${selected.material.id}`,
+      });
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "进货失败" });
     } finally {
@@ -144,7 +146,6 @@ export function PurchaseForm() {
         <PageHeader
           title={m.name}
           subtitle={`库存 ${selected.total_quantity} ${m.unit}`}
-          extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
         />
         {isLowStock && <div className="low-stock-alert">低于安全库存 {m.min_stock ?? 5}</div>}
         <SectionCard title="进货单">
@@ -184,10 +185,7 @@ export function PurchaseForm() {
 
   return (
     <>
-      <PageHeader
-        title="进货补货"
-        extra={<CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} />}
-      />
+      <PageHeader title="进货补货" subtitle="采购到货后直接增加库存" />
       <SectionCard title={loading && items.length === 0 ? "加载中…" : `物料 ${total} 种`}>
         <SearchBar
           placeholder="搜索物料"

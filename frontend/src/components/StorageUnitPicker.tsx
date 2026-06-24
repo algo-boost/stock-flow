@@ -1,5 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
+import { Popup } from "antd-mobile";
+import { useNavigate } from "react-router-dom";
 import type { InventoryItem, Location } from "../api/types";
+import { LocationShelfGrid } from "./LocationShelfGrid";
 import { getLocationChildren, getLocationPath } from "../utils/locationTree";
 import { buildShelfCells, isGridCapableLocation, resolveGridSize } from "../utils/shelfGrid";
 
@@ -7,6 +10,7 @@ interface StorageUnitPickerProps {
   locations: Location[];
   inventory: InventoryItem[];
   folderId: string | null;
+  canInbound?: boolean;
   onSelect: (location: Location) => void;
   onNavigate: (locationId: string | null) => void;
 }
@@ -32,22 +36,25 @@ function MiniCabinetPreview({
   columns: number;
   filledKeys: Set<string>;
 }) {
-  const displayRows = Math.min(rows, 4);
-  const displayCols = Math.min(columns, 6);
+  const scale = Math.min(1, 52 / Math.max(rows * 7, columns * 5));
 
   return (
-    <div className="unit-mini unit-mini-cabinet" aria-hidden>
+    <div
+      className="unit-mini unit-mini-cabinet unit-mini-scaled"
+      style={{ transform: `scale(${scale})`, transformOrigin: "center top" }}
+      aria-hidden
+    >
       <div className="unit-mini-cabinet-top" />
       <div className="unit-mini-cabinet-body">
-        {Array.from({ length: displayRows }, (_, rowIdx) => {
+        {Array.from({ length: rows }, (_, rowIdx) => {
           const row = rowIdx + 1;
           return (
             <div
               key={row}
               className="unit-mini-cabinet-tier"
-              style={{ gridTemplateColumns: `repeat(${displayCols}, 1fr)` }}
+              style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}
             >
-              {Array.from({ length: displayCols }, (_, colIdx) => {
+              {Array.from({ length: columns }, (_, colIdx) => {
                 const col = colIdx + 1;
                 const filled = filledKeys.has(`r${row}c${col}`);
                 return <div key={col} className={`unit-mini-cell ${filled ? "unit-mini-cell-filled" : ""}`} />;
@@ -62,15 +69,19 @@ function MiniCabinetPreview({
 }
 
 function MiniShelfPreview({ rows, filledRows }: { rows: number; filledRows: Set<number> }) {
-  const displayRows = Math.min(rows, 5);
+  const scale = Math.min(1, 56 / (rows * 10));
 
   return (
-    <div className="unit-mini unit-mini-shelf" aria-hidden>
+    <div
+      className="unit-mini unit-mini-shelf unit-mini-scaled"
+      style={{ transform: `scale(${scale})`, transformOrigin: "center top" }}
+      aria-hidden
+    >
       <div className="unit-mini-shelf-upright unit-mini-shelf-upright-left" />
       <div className="unit-mini-shelf-upright unit-mini-shelf-upright-right" />
       <div className="unit-mini-shelf-levels">
-        {Array.from({ length: displayRows }, (_, idx) => {
-          const row = displayRows - idx;
+        {Array.from({ length: rows }, (_, idx) => {
+          const row = rows - idx;
           const filled = filledRows.has(row);
           return (
             <div key={row} className="unit-mini-shelf-level">
@@ -84,19 +95,55 @@ function MiniShelfPreview({ rows, filledRows }: { rows: number; filledRows: Set<
   );
 }
 
+function useLongPress(onLongPress: () => void, delayMs = 480) {
+  const timerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+
+  const clear = () => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const start = () => {
+    longPressedRef.current = false;
+    clear();
+    timerRef.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      onLongPress();
+    }, delayMs);
+  };
+
+  const consumeLongPress = () => {
+    const was = longPressedRef.current;
+    longPressedRef.current = false;
+    return was;
+  };
+
+  return { start, clear, consumeLongPress };
+}
+
 function StorageUnitCard({
   location,
   inventory,
+  canInbound,
   onSelect,
+  onPreview,
 }: {
   location: Location;
   inventory: InventoryItem[];
+  canInbound?: boolean;
   onSelect: () => void;
+  onPreview: () => void;
 }) {
   const stats = locationStats(inventory, location.id);
   const { cells } = buildShelfCells(location, inventory);
   const { rows, columns } = resolveGridSize(location, inventory);
   const isCabinet = columns != null || isCabinetType(location.type);
+  const isEmpty = stats.kindCount === 0;
+
+  const longPress = useLongPress(onPreview);
 
   const filledKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -118,8 +165,27 @@ function StorageUnitCard({
     return set;
   }, [cells]);
 
+  const emptyLabel = isEmpty ? (canInbound ? "空 · 点击入库" : "空") : `${stats.kindCount} 种 · ${stats.stockQty} 件`;
+
   return (
-    <button type="button" className="storage-unit-card" onClick={onSelect}>
+    <button
+      type="button"
+      className={`storage-unit-card${isEmpty ? " storage-unit-card-empty" : ""}`}
+      onClick={() => {
+        if (longPress.consumeLongPress()) return;
+        onSelect();
+      }}
+      onTouchStart={longPress.start}
+      onTouchEnd={longPress.clear}
+      onTouchCancel={longPress.clear}
+      onMouseDown={longPress.start}
+      onMouseUp={longPress.clear}
+      onMouseLeave={longPress.clear}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onPreview();
+      }}
+    >
       <div className="storage-unit-card-visual">
         {isCabinet && columns != null ? (
           <MiniCabinetPreview rows={rows} columns={columns} filledKeys={filledKeys} />
@@ -130,9 +196,7 @@ function StorageUnitCard({
       <div className="storage-unit-card-info">
         <span className="storage-unit-card-name">{location.name}</span>
         <div className="storage-unit-card-footer">
-          <span className="storage-unit-card-meta">
-            {stats.kindCount > 0 ? `${stats.kindCount} 种 · ${stats.stockQty} 件` : "空"}
-          </span>
+          <span className={`storage-unit-card-meta${isEmpty ? " storage-unit-card-meta-empty" : ""}`}>{emptyLabel}</span>
           <span className="storage-unit-card-type">{location.type}</span>
         </div>
       </div>
@@ -144,11 +208,16 @@ export function StorageUnitPicker({
   locations,
   inventory,
   folderId,
+  canInbound,
   onSelect,
   onNavigate,
 }: StorageUnitPickerProps) {
+  const navigate = useNavigate();
+  const [previewLocation, setPreviewLocation] = useState<Location | null>(null);
   const path = useMemo(() => getLocationPath(locations, folderId), [locations, folderId]);
   const children = useMemo(() => getLocationChildren(locations, folderId), [locations, folderId]);
+
+  const previewMaterialNames = useMemo(() => new Map<string, string>(), []);
 
   const units = useMemo(
     () => children.filter((loc) => isGridCapableLocation(loc) || getLocationChildren(locations, loc.id).length > 0),
@@ -214,12 +283,55 @@ export function StorageUnitPicker({
                 key={loc.id}
                 location={loc}
                 inventory={inventory}
+                canInbound={canInbound}
                 onSelect={() => onSelect(loc)}
+                onPreview={() => setPreviewLocation(loc)}
               />
             );
           })}
         </div>
       )}
+
+      <Popup
+        visible={previewLocation !== null}
+        onMaskClick={() => setPreviewLocation(null)}
+        bodyStyle={{ borderTopLeftRadius: 12, borderTopRightRadius: 12, maxHeight: "78vh", overflow: "auto" }}
+      >
+        {previewLocation && (
+          <div className="popup-panel shelf-preview-popup">
+            <div className="popup-panel-head">
+              <strong>{previewLocation.name}</strong>
+              <button type="button" className="popup-close" onClick={() => setPreviewLocation(null)}>
+                关闭
+              </button>
+            </div>
+            <p className="shelf-preview-popup-hint">长按预览 · 点击格子查看详情</p>
+            <LocationShelfGrid
+              location={previewLocation}
+              inventory={inventory}
+              materialNames={previewMaterialNames}
+              onCellClick={(cell) => {
+                setPreviewLocation(null);
+                const params = new URLSearchParams();
+                if (cell.row > 0) params.set("row", String(cell.row));
+                if (cell.column != null) params.set("column", String(cell.column));
+                const qs = params.toString();
+                navigate(`/shelves/${previewLocation.id}${qs ? `?${qs}` : ""}`);
+              }}
+            />
+            <button
+              type="button"
+              className="shelf-preview-open-full"
+              onClick={() => {
+                setPreviewLocation(null);
+                onSelect(previewLocation);
+              }}
+            >
+              打开完整格位图
+            </button>
+          </div>
+        )}
+      </Popup>
     </div>
   );
 }

@@ -33,6 +33,7 @@ export interface ShelfCell {
   label: string;
   quantity: number;
   items: InventoryItem[];
+  previewOnly?: boolean;
 }
 
 export function buildShelfCells(location: Location, inventory: InventoryItem[]): {
@@ -83,6 +84,7 @@ export function buildShelfCells(location: Location, inventory: InventoryItem[]):
       if (idx >= unslotted.length) break;
       cell.items = [unslotted[idx]];
       cell.quantity = unslotted[idx].quantity;
+      cell.previewOnly = true;
       idx += 1;
     }
     unslotted = unslotted.slice(idx);

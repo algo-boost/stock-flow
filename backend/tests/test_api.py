@@ -226,7 +226,7 @@ def test_location_delete_blocked_when_inventory_exists():
 
 def test_create_material_forbidden_for_user():
     resp = client.post(
-        "/materials",
+        "/api/materials",
         headers=HEADERS_USER,
         json={
             "name": "测试新物料-无权限",
@@ -239,7 +239,7 @@ def test_create_material_forbidden_for_user():
 
 def test_create_material_success_for_keeper():
     resp = client.post(
-        "/materials",
+        "/api/materials",
         headers=HEADERS_KEEPER,
         json={
             "name": "测试新物料",
@@ -270,7 +270,7 @@ def test_create_material_success_for_keeper():
 
 def test_update_material_success_for_keeper():
     create_resp = client.post(
-        "/materials",
+        "/api/materials",
         headers=HEADERS_KEEPER,
         json={
             "name": "待修改物料",
@@ -293,7 +293,7 @@ def test_update_material_success_for_keeper():
 
 def test_delete_material_success_when_no_stock_or_transactions():
     create_resp = client.post(
-        "/materials",
+        "/api/materials",
         headers=HEADERS_KEEPER,
         json={
             "name": "待删除物料",
@@ -313,7 +313,7 @@ def test_delete_material_success_when_no_stock_or_transactions():
 
 def test_delete_material_forbidden_for_user():
     create_resp = client.post(
-        "/materials",
+        "/api/materials",
         headers=HEADERS_KEEPER,
         json={
             "name": "普通用户不可删",
@@ -329,7 +329,7 @@ def test_delete_material_forbidden_for_user():
 
 def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
     forbidden = client.post(
-        "/purchase-inbound",
+        "/api/purchase-inbound",
         headers=HEADERS_KEEPER,
         json={
             "material_id": "mat_001",
@@ -345,7 +345,7 @@ def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
     before = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
     before_total = before["total_quantity"]
     resp = client.post(
-        "/purchase-inbound",
+        "/api/purchase-inbound",
         headers=HEADERS_ADMIN,
         json={
             "material_id": "mat_001",
@@ -376,7 +376,7 @@ def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
 
 def test_low_stock_alerts_less_than_threshold_only():
     create_resp = client.post(
-        "/materials",
+        "/api/materials",
         headers=HEADERS_KEEPER,
         json={
             "name": "低库存边界测试物料",
@@ -399,7 +399,7 @@ def test_low_stock_alerts_less_than_threshold_only():
     assert forbidden.status_code == 403
 
     purchase_resp = client.post(
-        "/purchase-inbound",
+        "/api/purchase-inbound",
         headers=HEADERS_ADMIN,
         json={
             "material_id": material["id"],
@@ -832,6 +832,87 @@ def test_transfer_success_for_keeper():
     assert "移动至" in movement[0]["remark"]
 
 
+def test_delete_outbound_transaction_reverts_inventory():
+    before = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    qty_before = sum(i["quantity"] for i in before["inventory"])
+
+    outbound = client.post(
+        "/api/outbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "test-delete-outbound-setup",
+            "note": "删除冲正测试",
+            "return_required": False,
+        },
+    )
+    assert outbound.status_code == 200
+    tx_id = outbound.json()["data"]["transaction_id"]
+
+    after_out = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    qty_after_out = sum(i["quantity"] for i in after_out["inventory"])
+    assert qty_after_out == qty_before - 1
+
+    del_resp = client.delete(f"/api/admin/transactions/{tx_id}", headers=HEADERS_ADMIN)
+    assert del_resp.status_code == 200
+
+    after_del = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    qty_after_del = sum(i["quantity"] for i in after_del["inventory"])
+    assert qty_after_del == qty_before
+
+    txs = client.get("/api/materials/mat_001/transactions", headers=HEADERS_ADMIN).json()["data"]
+    assert not any(tx["id"] == tx_id for tx in txs)
+
+
+def test_delete_inbound_transaction_reverts_inventory():
+    inbound = client.post(
+        "/api/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 2,
+            "idempotency_key": "test-delete-inbound-setup",
+            "note": "删除冲正测试",
+        },
+    )
+    assert inbound.status_code == 200
+    tx_id = inbound.json()["data"]["transaction_id"]
+
+    before_del = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    qty_before_del = sum(i["quantity"] for i in before_del["inventory"])
+
+    del_resp = client.delete(f"/api/admin/transactions/{tx_id}", headers=HEADERS_ADMIN)
+    assert del_resp.status_code == 200
+
+    after_del = client.get("/api/materials/mat_001", headers=HEADERS_ADMIN).json()["data"]
+    qty_after_del = sum(i["quantity"] for i in after_del["inventory"])
+    assert qty_after_del == qty_before_del - 2
+
+
+def test_delete_transfer_transaction_forbidden():
+    resp = client.post(
+        "/api/transfer",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_realsense",
+            "from_location_id": "loc_01",
+            "to_location_id": "loc_staging",
+            "qty": 1,
+            "idempotency_key": "test-delete-transfer-deny",
+            "note": "删除禁止测试",
+        },
+    )
+    assert resp.status_code == 200
+    tx_id = resp.json()["data"]["transaction_ids"][0]
+
+    del_resp = client.delete(f"/api/admin/transactions/{tx_id}", headers=HEADERS_ADMIN)
+    assert del_resp.status_code == 400
+    assert "移动" in del_resp.json()["message"]
+
+
 def test_refresh_cache_forbidden_for_user():
     resp = client.post("/api/admin/cache/refresh", headers=HEADERS_USER)
     assert resp.status_code == 403
@@ -903,7 +984,7 @@ def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
             "return_due_at": "2026-07-01",
         },
     )
-    pending_keeper = client.get("/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
+    pending_keeper = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
     assert pending_keeper.status_code == 200
     items = pending_keeper.json()["data"]
     assert len(items) == 1
@@ -921,6 +1002,6 @@ def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
             "note": "项目结束归还",
         },
     )
-    cleared = client.get("/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
+    cleared = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
     assert cleared.status_code == 200
     assert cleared.json()["data"] == []

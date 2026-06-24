@@ -2,7 +2,21 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthGate";
 import { ROLE_LABEL, RoleBadge } from "./ui";
 
-export function Layout({ title, children, hint }: { title: string; children: React.ReactNode; hint?: string }) {
+export function Layout({
+  title,
+  children,
+  hint,
+  backTo,
+  backState,
+  onBack,
+}: {
+  title: string;
+  children: React.ReactNode;
+  hint?: string;
+  backTo?: string;
+  backState?: unknown;
+  onBack?: () => void;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, canApprove, loading, authStep, pendingCount } = useAuth();
@@ -11,7 +25,7 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
 
   const tabs = [
     { key: "/", title: "首页", icon: "home" },
-    { key: "/history", title: "历史", icon: "history" },
+    { key: "/history", title: "历史", icon: "history", badge: canApprove && pendingCount > 0 ? pendingCount : undefined },
     ...(canManage
       ? [{ key: "/manage", title: "管理", icon: "tune", badge: canApprove ? pendingCount : undefined }]
       : []),
@@ -26,7 +40,20 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
       <header className="page-navbar">
         <div className="page-navbar-main">
           {showBack ? (
-            <button type="button" className="nav-back" aria-label="返回" onClick={() => navigate(-1)}>
+            <button
+              type="button"
+              className="nav-back"
+              aria-label="返回"
+              onClick={() => {
+                if (onBack) {
+                  onBack();
+                } else if (backTo) {
+                  navigate(backTo, backState ? { state: backState } : undefined);
+                } else {
+                  navigate(-1);
+                }
+              }}
+            >
               <span aria-hidden>‹</span>
             </button>
           ) : (

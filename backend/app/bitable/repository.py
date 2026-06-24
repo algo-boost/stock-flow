@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 import time
 from typing import Any
@@ -2275,16 +2276,86 @@ class BitableRepository:
         )
 
     async def delete_transaction(self, transaction_id: str) -> None:
-        """管理员删除流水记录（硬删除）。"""
+        """管理员删除流水：先冲正库存影响，再删除记录。"""
         s = self.settings
-        # 验证记录存在
         txs = await self._list_all(s.bitable_table_transactions)
-        found = any(r.get("record_id") == transaction_id for r in txs)
-        if not found:
+        rec = next((r for r in txs if r.get("record_id") == transaction_id), None)
+        if not rec:
             raise ValueError("transaction_not_found")
+
+        tx = self._record_to_transaction(rec)
+        await self._revert_inventory_for_transaction(tx)
+
         await self.client.delete_record(s.bitable_table_transactions, transaction_id)
         self._invalidate_table_cache(s.bitable_table_transactions)
         self._remove_cached_record(s.bitable_table_transactions, transaction_id)
+
+    def _record_to_transaction(self, rec: dict[str, Any]) -> Transaction:
+        s = self.settings
+        fields = rec.get("fields", {})
+        mid = field_link_id(fields.get(s.bitable_f_tx_material)) or ""
+        lid = field_link_id(fields.get(s.bitable_f_tx_location)) or ""
+        tx_type_raw = field_text(fields.get(s.bitable_f_tx_type)) or "out"
+        normalized = normalize_tx_type(tx_type_raw)
+        if normalized == "入库":
+            tx_enum = TransactionType.INBOUND
+        elif normalized == "移动":
+            tx_enum = TransactionType.TRANSFER
+        else:
+            tx_enum = TransactionType.OUTBOUND
+        return Transaction(
+            id=rec["record_id"],
+            type=tx_enum,
+            material_id=mid,
+            location_id=lid,
+            location_name=field_text(fields.get(s.bitable_f_tx_location)),
+            material_name=field_text(fields.get(s.bitable_f_tx_material)),
+            quantity=field_number(fields.get(s.bitable_f_tx_quantity)),
+            operator=field_text(fields.get(s.bitable_f_tx_operator)) or "",
+            remark=field_text(fields.get(s.bitable_f_tx_remark)),
+            created_at=self._parse_transaction_created_at(rec, fields),
+        )
+
+    def _parse_slot_from_remark(self, remark: str | None) -> tuple[int | None, int | None]:
+        if not remark:
+            return None, None
+        match = re.search(r"(\d+)行(\d+)列", remark)
+        if not match:
+            return None, None
+        return int(match.group(1)), int(match.group(2))
+
+    async def _revert_inventory_for_transaction(self, tx: Transaction) -> None:
+        if tx.type == TransactionType.TRANSFER:
+            raise ValueError("transfer_tx_cannot_delete")
+
+        row, column = self._parse_slot_from_remark(tx.remark)
+        inv_records = await self._load_inventory_records()
+        key = self._inv_key(tx.material_id, tx.location_id, row, column)
+        s = self.settings
+        current = field_number(
+            inv_records.get(key, {}).get("fields", {}).get(s.bitable_f_inventory_quantity)
+        )
+        updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        qty = abs(tx.quantity)
+
+        if tx.type == TransactionType.INBOUND:
+            if current < qty:
+                raise ValueError(f"insufficient_stock_to_revert:{current}")
+            new_qty = current - qty
+        elif tx.type == TransactionType.OUTBOUND:
+            new_qty = current + qty
+        else:
+            raise ValueError("unsupported_tx_type")
+
+        await self._write_inventory_quantity(
+            inv_records,
+            tx.material_id,
+            tx.location_id,
+            new_qty,
+            updated_at,
+            row=row,
+            column=column,
+        )
 
     async def delete_request(self, request_id: str) -> None:
         """管理员删除申请记录（硬删除）。"""

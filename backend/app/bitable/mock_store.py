@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -1134,7 +1135,61 @@ class MockStore:
     def delete_transaction(self, transaction_id: str) -> None:
         if transaction_id not in self.transactions:
             raise ValueError("transaction_not_found")
+        tx = self.transactions[transaction_id]
+        self._revert_inventory_for_transaction(tx)
         del self.transactions[transaction_id]
+
+    def _parse_slot_from_remark(self, remark: str | None) -> tuple[int | None, int | None]:
+        if not remark:
+            return None, None
+        match = re.search(r"(\d+)行(\d+)列", remark)
+        if not match:
+            return None, None
+        return int(match.group(1)), int(match.group(2))
+
+    def _revert_inventory_for_transaction(self, tx: Transaction) -> None:
+        if tx.type == TransactionType.TRANSFER:
+            raise ValueError("transfer_tx_cannot_delete")
+
+        row, column = self._parse_slot_from_remark(tx.remark)
+        key = inv_key(tx.material_id, tx.location_id, row, column)
+        now = _utcnow()
+        loc = self.locations.get(tx.location_id)
+
+        if tx.type == TransactionType.INBOUND:
+            qty = abs(tx.quantity)
+            if key not in self.inventory or self.inventory[key].quantity < qty:
+                available = self.inventory[key].quantity if key in self.inventory else 0
+                raise ValueError(f"insufficient_stock_to_revert:{available}")
+            item = self.inventory[key]
+            if item.quantity == qty:
+                del self.inventory[key]
+            else:
+                self.inventory[key] = item.model_copy(
+                    update={"quantity": item.quantity - qty, "last_updated": now}
+                )
+            return
+
+        if tx.type == TransactionType.OUTBOUND:
+            qty = abs(tx.quantity)
+            if key in self.inventory:
+                item = self.inventory[key]
+                self.inventory[key] = item.model_copy(
+                    update={"quantity": item.quantity + qty, "last_updated": now}
+                )
+            else:
+                self.inventory[key] = InventoryItem(
+                    material_id=tx.material_id,
+                    location_id=tx.location_id,
+                    location_name=loc.name if loc else tx.location_name,
+                    quantity=qty,
+                    last_updated=now,
+                    row=row,
+                    column=column,
+                )
+            return
+
+        raise ValueError("unsupported_tx_type")
 
     def delete_request(self, request_id: str) -> None:
         if request_id not in self.requests:

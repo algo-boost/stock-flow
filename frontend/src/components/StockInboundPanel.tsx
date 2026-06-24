@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import {
   createStockRequest,
   getMaterial,
@@ -10,7 +10,11 @@ import {
 } from "../api";
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import { useAuth } from "./AuthGate";
-import { CacheRefreshButton } from "./CacheRefreshButton";
+import {
+  detailContextAfterStock,
+  openMaterialDetail,
+  readStockNavState,
+} from "../utils/detailNavigation";
 import { EmptyState, SectionCard } from "./ui";
 
 function newIdempotencyKey() {
@@ -21,11 +25,16 @@ export function StockInboundPanel() {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
+  const presetLocationId = params.get("location_id") ?? "";
+  const presetRow = Number(params.get("row") ?? "");
+  const presetColumn = Number(params.get("column") ?? "");
   const presetQty = Number(params.get("qty") ?? "");
   const presetReturnNote = params.get("return_note") ?? "";
   const activeTab = params.get("tab");
   const shouldLoadPreset = activeTab === "inbound";
   const navigate = useNavigate();
+  const location = useLocation();
+  const stockState = readStockNavState(location.state);
 
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
@@ -81,14 +90,21 @@ export function StockInboundPanel() {
   }, [loadMaterials, loadMeta]);
 
   useEffect(() => {
-    if (!presetMaterialId || !shouldLoadPreset) return;
+    if (!shouldLoadPreset) return;
+    if (presetLocationId) setLocationId(presetLocationId);
+    if (Number.isFinite(presetRow) && presetRow > 0) setSlotRow(presetRow);
+    if (Number.isFinite(presetColumn) && presetColumn > 0) setSlotColumn(presetColumn);
+    if (!presetMaterialId) return;
     void (async () => {
       try {
         const detail = await getMaterial(presetMaterialId);
         setSelected(detail);
         setInboundSpec(detail.material.spec ?? "");
         const defaultLoc =
-          detail.material.default_location_id ?? detail.inventory[0]?.location_id ?? locationId;
+          presetLocationId ||
+          detail.material.default_location_id ||
+          detail.inventory[0]?.location_id ||
+          locationId;
         if (defaultLoc) setLocationId(defaultLoc);
         if (Number.isFinite(presetQty) && presetQty > 0) setQty(presetQty);
         if (presetReturnNote.trim()) setNote(presetReturnNote.trim());
@@ -96,7 +112,16 @@ export function StockInboundPanel() {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
-  }, [locationId, presetMaterialId, presetQty, presetReturnNote, shouldLoadPreset]);
+  }, [
+    locationId,
+    presetColumn,
+    presetLocationId,
+    presetMaterialId,
+    presetQty,
+    presetReturnNote,
+    presetRow,
+    shouldLoadPreset,
+  ]);
 
   const selectedStock = useMemo(() => {
     if (!selected || !locationId) return null;
@@ -183,8 +208,10 @@ export function StockInboundPanel() {
         Toast.show({ icon: "success", content: isReturnInbound ? "归还入库成功" : "入库成功" });
         if (isReturnInbound) {
           navigate(canInbound ? "/history?view=returns" : "/history?view=returns");
+        } else if (stockState.materialBackTo.startsWith("/materials/")) {
+          openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
         } else {
-          navigate(`/materials/${selected.material.id}`);
+          openMaterialDetail(navigate, selected.material.id, { backTo: "/" });
         }
       } else {
         await createStockRequest({
@@ -195,7 +222,11 @@ export function StockInboundPanel() {
           note: note.trim(),
         });
         Toast.show({ icon: "success", content: "已提交入库申请" });
-        navigate("/history");
+        if (stockState.materialBackTo.startsWith("/materials/")) {
+          openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
+        } else {
+          navigate("/history");
+        }
       }
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "入库失败" });
@@ -298,10 +329,9 @@ export function StockInboundPanel() {
             void loadMaterials("", 1);
           }}
         />
-        <div className="catalog-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
-          {isDirectInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : null}
-        </div>
+      <div className="catalog-meta">
+        <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
+      </div>
         {loading && items.length === 0 ? (
           <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
         ) : items.length === 0 ? (

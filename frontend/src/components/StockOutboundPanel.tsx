@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
-import { useSearchParams } from "react-router-dom";
-import { createStockRequest, getMaterial, postOutbound, searchMaterials } from "../api";
+import { Button, Dialog, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { createStockRequest, getMaterial, postOutbound, postInbound, searchMaterials } from "../api";
 import type { MaterialDetail, MaterialSearchItem } from "../api/types";
 import {
   findInventoryBySlotKey,
@@ -9,9 +9,14 @@ import {
   inventorySlotKey,
   parseInventorySlotKey,
 } from "../utils/inventoryDisplay";
-import { CacheRefreshButton } from "./CacheRefreshButton";
+import { showUndo } from "./UndoToast";
 import { useAuth } from "./AuthGate";
-import { EmptyState, SectionCard } from "./ui";
+import { EmptyState, SectionCard, CardSkeleton } from "./ui";
+import {
+  detailContextAfterStock,
+  openMaterialDetail,
+  readStockNavState,
+} from "../utils/detailNavigation";
 
 function newIdempotencyKey() {
   return crypto.randomUUID();
@@ -32,6 +37,9 @@ function applyLocalOutbound(
 
 export function StockOutboundPanel() {
   const pageSize = 20;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const stockState = readStockNavState(location.state);
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
   const activeTab = params.get("tab");
@@ -151,10 +159,27 @@ export function StockOutboundPanel() {
       Toast.show({ content: "请填写完整出库信息" });
       return;
     }
+
+    const slotLabel = selectedInventory
+      ? formatInventorySlot(selectedInventory, false)
+      : slotParsed.location_id;
+    const materialName = selected.material.name;
+    const confirmSummary = `${materialName}\n库位：${slotLabel}\n数量：${qty} ${selected.material.unit}`;
+
+    if (isDirectOutbound) {
+      const confirmed = await Dialog.confirm({
+        title: qty >= 10 ? "确认大批量出库" : "确认出库",
+        content: confirmSummary,
+        confirmText: "确认出库",
+        cancelText: "取消",
+      });
+      if (!confirmed) return;
+    }
+
     setSubmitting(true);
     try {
       if (isDirectOutbound) {
-        await postOutbound({
+        const outboundPayload = {
           material_id: selected.material.id,
           location_id: slotParsed.location_id,
           qty,
@@ -164,8 +189,23 @@ export function StockOutboundPanel() {
           return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
           row: slotParsed.row,
           column: slotParsed.column,
+        };
+        await postOutbound(outboundPayload);
+        const materialName = selected.material.name;
+        const undoQty = qty;
+        showUndo(`${materialName} 已出库 ${undoQty} 件`, async () => {
+          await postInbound({
+            material_id: outboundPayload.material_id,
+            location_id: outboundPayload.location_id,
+            qty: undoQty,
+            idempotency_key: newIdempotencyKey(),
+            note: `撤销出库：${note.trim()}`,
+            row: outboundPayload.row,
+            column: outboundPayload.column,
+          });
+          Toast.show({ icon: "success", content: "已撤销出库" });
+          void loadMaterials(keyword, 1);
         });
-        Toast.show({ icon: "success", content: "出库成功" });
         setItems((current) => applyLocalOutbound(current, selected.material.id, qty));
       } else {
         await createStockRequest({
@@ -182,7 +222,11 @@ export function StockOutboundPanel() {
         });
         Toast.show({ icon: "success", content: "已提交出库申请" });
       }
-      backToList();
+      if (stockState.materialBackTo.startsWith("/materials/")) {
+        openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
+      } else {
+        backToList();
+      }
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "出库失败" });
     } finally {
@@ -290,13 +334,12 @@ export function StockOutboundPanel() {
           void loadMaterials("", 1);
         }}
       />
-      <div className="catalog-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="catalog-meta">
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
-        {canInbound ? <CacheRefreshButton onRefreshed={() => loadMaterials(keyword, 1)} /> : null}
       </div>
 
       {loading && items.length === 0 ? (
-        <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+        <CardSkeleton count={5} />
       ) : items.length === 0 ? (
         <EmptyState
           icon="📦"

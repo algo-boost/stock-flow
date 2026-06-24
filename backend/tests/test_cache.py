@@ -44,6 +44,7 @@ class FakeBitableClient:
 async def test_refresh_tables_best_effort_keeps_partial_failures(monkeypatch):
     settings = Settings(
         bitable_mode="real",
+        sqlite_cache_enabled=False,
         bitable_app_token="app_test",
         bitable_table_materials="tbl_ok",
         bitable_table_inventory="tbl_failed",
@@ -67,6 +68,7 @@ async def test_refresh_tables_best_effort_keeps_partial_failures(monkeypatch):
 async def test_bitable_categories_read_parent_and_create_child():
     settings = Settings(
         bitable_mode="real",
+        sqlite_cache_enabled=False,
         bitable_app_token="app_test",
         bitable_table_categories="tbl_categories",
     )
@@ -110,6 +112,7 @@ async def test_bitable_categories_read_parent_and_create_child():
 async def test_bitable_delete_child_category_reassigns_material_to_parent():
     settings = Settings(
         bitable_mode="real",
+        sqlite_cache_enabled=False,
         bitable_app_token="app_test_delete",
         bitable_table_categories="tbl_categories",
         bitable_table_materials="tbl_materials",

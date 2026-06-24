@@ -14,12 +14,13 @@ import { CategoryFolderBrowser } from "../components/CategoryFolderBrowser";
 import { StorageUnitPicker } from "../components/StorageUnitPicker";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
-import { EmptyState, MaterialCard, SectionCard } from "../components/ui";
+import { CardSkeleton, EmptyState, MaterialCard, SectionCard, ShelfGridSkeleton } from "../components/ui";
 import type { DateRangePreset } from "../utils/historyDisplay";
 import { resolveDateRange } from "../utils/historyDisplay";
 import { getDescendantIds } from "../utils/categoryTree";
 import { getLocationChildren } from "../utils/locationTree";
 import { isGridCapableLocation } from "../utils/shelfGrid";
+import { openMaterialDetail } from "../utils/detailNavigation";
 
 type BrowseBy = "category" | "location";
 type StockFilter = "all" | "instock" | "low";
@@ -37,13 +38,34 @@ const INBOUND_TIME_OPTIONS: Array<{ label: string; value: DateRangePreset }> = [
   { label: "自定义", value: "custom" },
 ];
 
+const SESSION_KEY = "sf_home_session";
+
 function loadBrowseBy(): BrowseBy {
   try {
     const saved = localStorage.getItem("home_browse_by") ?? localStorage.getItem("home_view_mode");
-    if (saved === "location") return "location";
-    return "category";
+    if (saved === "category") return "category";
+    return "location";
   } catch {
-    return "category";
+    return "location";
+  }
+}
+
+function loadShelfFolderId(): string | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { shelfFolderId?: string | null };
+    return data.shelfFolderId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function saveHomeSession(shelfFolderId: string | null) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ shelfFolderId }));
+  } catch {
+    /* ignore */
   }
 }
 
@@ -54,7 +76,8 @@ export default function SearchPage() {
   const [locationRecords, setLocationRecords] = useState<Location[]>([]);
   const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
   const [folderId, setFolderId] = useState<string | null>(null);
-  const [shelfFolderId, setShelfFolderId] = useState<string | null>(null);
+  const [shelfFolderId, setShelfFolderId] = useState<string | null>(loadShelfFolderId);
+  const [metaLoading, setMetaLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
   const [inboundPreset, setInboundPreset] = useState<DateRangePreset>("all");
@@ -71,9 +94,10 @@ export default function SearchPage() {
   const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === "ADMIN";
+  const canInbound = user?.role === "KEEPER" || user?.role === "ADMIN";
 
   const stockActions =
-    user?.role === "ADMIN" || user?.role === "KEEPER"
+    canInbound
       ? [
           { text: "出库", key: "outbound" },
           { text: "入库", key: "inbound" },
@@ -119,11 +143,58 @@ export default function SearchPage() {
     filterLocationId,
   ].filter(Boolean).length;
 
+  const activeFilterTags = useMemo(() => {
+    const tags: Array<{ key: string; label: string; onClear: () => void }> = [];
+    if (keyword.trim()) {
+      tags.push({ key: "kw", label: `「${keyword.trim()}」`, onClear: () => setKeyword("") });
+    }
+    if (stockFilter === "instock") {
+      tags.push({ key: "stock", label: "有库存", onClear: () => setStockFilter("all") });
+    }
+    if (stockFilter === "low") {
+      tags.push({ key: "low", label: "缺货", onClear: () => setStockFilter("all") });
+    }
+    if (inboundPreset === "7d") {
+      tags.push({ key: "7d", label: "近7天入库", onClear: () => setInboundPreset("all") });
+    }
+    if (inboundPreset === "30d") {
+      tags.push({ key: "30d", label: "近30天入库", onClear: () => setInboundPreset("all") });
+    }
+    if (inboundPreset === "custom") {
+      tags.push({ key: "custom", label: "自定义时间", onClear: () => setInboundPreset("all") });
+    }
+    if (filterCategoryId) {
+      const name = categories.find((c) => c.id === filterCategoryId)?.name ?? "分类";
+      tags.push({ key: "cat", label: name, onClear: () => setFilterCategoryId(null) });
+    }
+    if (filterLocationId) {
+      const name = locationRecords.find((l) => l.id === filterLocationId)?.name ?? "库位";
+      tags.push({ key: "loc", label: name, onClear: () => setFilterLocationId("") });
+    }
+    return tags;
+  }, [categories, filterCategoryId, filterLocationId, inboundPreset, keyword, locationRecords, stockFilter]);
+
+  const clearAllFilters = () => {
+    setKeyword("");
+    setStockFilter("all");
+    setInboundPreset("all");
+    setCustomStart("");
+    setCustomEnd("");
+    setFilterCategoryId(null);
+    setFilterLocationId("");
+  };
+
   const onBrowseByChange = (next: BrowseBy) => {
     setBrowseBy(next);
     localStorage.setItem("home_browse_by", next);
     setFolderId(null);
     setShelfFolderId(null);
+    saveHomeSession(null);
+  };
+
+  const onShelfFolderNavigate = (id: string | null) => {
+    setShelfFolderId(id);
+    saveHomeSession(id);
   };
 
   const openShelfLocation = (loc: Location) => {
@@ -132,7 +203,7 @@ export default function SearchPage() {
       return;
     }
     if (getLocationChildren(locationRecords, loc.id).length > 0) {
-      setShelfFolderId(loc.id);
+      onShelfFolderNavigate(loc.id);
       return;
     }
     navigate(`/shelves/${loc.id}`);
@@ -243,15 +314,24 @@ export default function SearchPage() {
   }, [filterCategoryId, filterLocationId, hasSearchQuery, keyword, page, stockFilter]);
 
   useEffect(() => {
-    const state = location.state as { browseBy?: BrowseBy } | null;
+    const state = location.state as { browseBy?: BrowseBy; shelfFolderId?: string | null } | null;
     if (state?.browseBy === "location") {
       setBrowseBy("location");
       localStorage.setItem("home_browse_by", "location");
+    }
+    if (state?.shelfFolderId !== undefined) {
+      setShelfFolderId(state.shelfFolderId);
+      saveHomeSession(state.shelfFolderId);
+    }
+    const backFolderId = (state as { folderId?: string | null } | null)?.folderId;
+    if (backFolderId !== undefined && state?.browseBy === "category") {
+      setFolderId(backFolderId);
     }
   }, [location.state]);
 
   useEffect(() => {
     if (location.pathname !== "/") return;
+    setMetaLoading(true);
     void loadCategories();
     void Promise.all([listLocations(), listInventory()])
       .then(([locs, inv]) => {
@@ -261,7 +341,8 @@ export default function SearchPage() {
       .catch(() => {
         setLocationRecords([]);
         setAllInventory([]);
-      });
+      })
+      .finally(() => setMetaLoading(false));
   }, [location.pathname, location.key, loadCategories]);
 
   useEffect(() => {
@@ -297,6 +378,14 @@ export default function SearchPage() {
     loadCategoryBrowseResults,
   ]);
 
+  const detailBackCtx = useMemo(
+    () => ({
+      backTo: "/",
+      backState: { browseBy, shelfFolderId, folderId: browseBy === "category" ? folderId : null },
+    }),
+    [browseBy, shelfFolderId, folderId],
+  );
+
   const handleMaterialAction = (id: string, key: string) => {
     switch (key) {
       case "outbound":
@@ -311,7 +400,7 @@ export default function SearchPage() {
         navigate(`/stock?tab=transfer&material_id=${id}`);
         break;
       case "edit":
-        navigate(`/materials/${id}`);
+        openMaterialDetail(navigate, id, detailBackCtx);
         break;
       case "purchase":
         navigate(`/purchase?material_id=${id}`);
@@ -321,11 +410,32 @@ export default function SearchPage() {
 
   const materialList = (
     <>
+      {loading && items.length === 0 && <CardSkeleton count={4} />}
       {!loading && items.length === 0 && (
         <EmptyState
           icon={hasSearchQuery ? "📭" : "📁"}
           text={hasSearchQuery ? "没有匹配的物料" : "此分类下暂无物料"}
-          hint={hasSearchQuery ? "换个关键词或调整筛选试试" : "可返回上级选其他分类"}
+          hint={hasSearchQuery ? "可改关键词或去库位分类按货架找" : "可返回上级选其他分类"}
+          actions={
+            hasSearchQuery
+              ? [
+                  {
+                    label: "清除筛选",
+                    onClick: () => {
+                      setKeyword("");
+                      clearAllFilters();
+                    },
+                  },
+                  {
+                    label: "去按货架找",
+                    onClick: () => {
+                      setKeyword("");
+                      onBrowseByChange("location");
+                    },
+                  },
+                ]
+              : undefined
+          }
         />
       )}
       {items.map((m) => {
@@ -334,12 +444,12 @@ export default function SearchPage() {
           <MaterialCard
             key={m.id}
             name={m.name}
-            category={[m.major_category, m.sub_category ?? m.category_name].filter(Boolean).join(" / ") || m.category_name}
             quantity={m.total_quantity}
             warning={isLowStock ? "low" : undefined}
             stockSummary={m.locations_summary ?? undefined}
-            onClick={() => navigate(`/materials/${m.id}`)}
-            inlineCount={2}
+            code={m.code}
+            onClick={() => openMaterialDetail(navigate, m.id, detailBackCtx)}
+            inlineCount={1}
             actions={stockActions}
             onAction={(action) => handleMaterialAction(m.id, String(action.key))}
           />
@@ -372,11 +482,49 @@ export default function SearchPage() {
           </button>
         )}
       </div>
-      <button type="button" className="filter-toggle-btn" onClick={() => setFiltersOpen((v) => !v)}>
-        筛选{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""} {filtersOpen ? "▲" : "▼"}
-      </button>
+
+      <div className="filter-quick-row">
+        <button
+          type="button"
+          className={`filter-quick-chip ${stockFilter === "instock" ? "filter-quick-chip-active" : ""}`}
+          onClick={() => setStockFilter((v) => (v === "instock" ? "all" : "instock"))}
+        >
+          有库存
+        </button>
+        <button
+          type="button"
+          className={`filter-quick-chip ${stockFilter === "low" ? "filter-quick-chip-active" : ""}`}
+          onClick={() => setStockFilter((v) => (v === "low" ? "all" : "low"))}
+        >
+          缺货
+        </button>
+        <button
+          type="button"
+          className={`filter-quick-chip ${inboundPreset === "7d" ? "filter-quick-chip-active" : ""}`}
+          onClick={() => setInboundPreset((v) => (v === "7d" ? "all" : "7d"))}
+        >
+          近7天入库
+        </button>
+        <button type="button" className="filter-more-btn" onClick={() => setFiltersOpen((v) => !v)}>
+          更多{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+        </button>
+      </div>
+
+      {activeFilterTags.length > 0 && (
+        <div className="active-filters-bar">
+          {activeFilterTags.map((tag) => (
+            <button key={tag.key} type="button" className="active-filter-tag" onClick={tag.onClear}>
+              {tag.label} ×
+            </button>
+          ))}
+          <button type="button" className="active-filter-clear" onClick={clearAllFilters}>
+            清除全部
+          </button>
+        </div>
+      )}
+
       {filtersOpen && (
-        <div className="list-filters">
+        <div className="list-filters list-filters-advanced">
           <div className="filter-row">
             <span className="filter-row-label">库存</span>
             <Selector
@@ -432,29 +580,30 @@ export default function SearchPage() {
 
   return (
     <Layout title="首页">
+      <p className="home-scene-hint">搜名字找物料 · 点货架找位置</p>
       <SectionCard className="flush-body home-search-card">
         {searchAndFilters}
         {!hasSearchQuery && (
           <div className="home-mode-switch" role="tablist" aria-label="浏览方式">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={browseBy === "category"}
-                className={`home-mode-btn ${browseBy === "category" ? "home-mode-btn-active" : ""}`}
-                onClick={() => onBrowseByChange("category")}
-              >
-                按分类
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={browseBy === "location"}
-                className={`home-mode-btn ${browseBy === "location" ? "home-mode-btn-active" : ""}`}
-                onClick={() => onBrowseByChange("location")}
-              >
-                按货架
-              </button>
-            </div>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={browseBy === "category"}
+              className={`home-mode-btn ${browseBy === "category" ? "home-mode-btn-active" : ""}`}
+              onClick={() => onBrowseByChange("category")}
+            >
+              物料分类
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={browseBy === "location"}
+              className={`home-mode-btn ${browseBy === "location" ? "home-mode-btn-active" : ""}`}
+              onClick={() => onBrowseByChange("location")}
+            >
+              库位分类
+            </button>
+          </div>
         )}
       </SectionCard>
 
@@ -480,16 +629,19 @@ export default function SearchPage() {
         </>
       ) : (
         <SectionCard className="flush-body home-section-card">
-          {locationRecords.length === 0 ? (
+          {metaLoading ? (
+            <ShelfGridSkeleton />
+          ) : locationRecords.length === 0 ? (
             <EmptyState icon="📍" text="暂无货架/货柜" hint="请先在「管理 → 库位」中维护" />
           ) : (
             <StorageUnitPicker
-                locations={locationRecords}
-                inventory={allInventory}
-                folderId={shelfFolderId}
-                onSelect={openShelfLocation}
-                onNavigate={setShelfFolderId}
-              />
+              locations={locationRecords}
+              inventory={allInventory}
+              folderId={shelfFolderId}
+              canInbound={canInbound}
+              onSelect={openShelfLocation}
+              onNavigate={onShelfFolderNavigate}
+            />
           )}
         </SectionCard>
       )}
