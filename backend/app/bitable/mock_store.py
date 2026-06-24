@@ -127,10 +127,10 @@ class MockStore:
     def _seed(self) -> None:
         self.categories = _build_lab_categories()
         self.locations = {
-            "loc_01": Location(id="loc_01", code="A-柜-01", name="A柜", type="货柜", major_name="A柜"),
+            "loc_01": Location(id="loc_01", code="A-柜-01", name="A柜", type="货柜", major_name="A柜", grid_rows=4, grid_columns=6),
             "loc_01_l2": Location(id="loc_01_l2", code="A-柜-01-2", name="第二层", type="货柜层", parent_id="loc_01", major_name="A柜", mid_name="第二层"),
             "loc_01_l3": Location(id="loc_01_l3", code="A-柜-01-2-3", name="第三格", type="货柜格", parent_id="loc_01_l2", major_name="A柜", mid_name="第二层", sub_name="第三格"),
-            "loc_02": Location(id="loc_02", code="B-架-01", name="B架", type="货架", major_name="B架"),
+            "loc_02": Location(id="loc_02", code="B-架-01", name="B架", type="货架", major_name="B架", grid_rows=5, grid_columns=None),
             "loc_bolt": Location(id="loc_bolt", code="BOLT-01", name="螺栓专用架", type="专用螺栓架", major_name="螺栓专用架"),
             "loc_staging": Location(
                 id="loc_staging", code="STAGE-01", name="快递暂存区", type="快递暂存", major_name="快递暂存区"
@@ -162,15 +162,15 @@ class MockStore:
 
         # ── 库存 ──
         self.inventory = {
-            inv_key("mat_001", "loc_01"): InventoryItem(material_id="mat_001", location_id="loc_01", location_name="A柜", quantity=8, last_updated=now),
-            inv_key("mat_001", "loc_01_l3"): InventoryItem(material_id="mat_001", location_id="loc_01_l3", location_name="第三格", quantity=3, last_updated=now, row=3, column=3),
-            inv_key("mat_002", "loc_01"): InventoryItem(material_id="mat_002", location_id="loc_01", location_name="A柜", quantity=2, last_updated=now),
+            inv_key("mat_001", "loc_01", 1, 2): InventoryItem(material_id="mat_001", location_id="loc_01", location_name="A柜", quantity=5, last_updated=now, row=1, column=2),
+            inv_key("mat_001", "loc_01", 2, 4): InventoryItem(material_id="mat_001", location_id="loc_01", location_name="A柜", quantity=3, last_updated=now, row=2, column=4),
+            inv_key("mat_002", "loc_01", 1, 1): InventoryItem(material_id="mat_002", location_id="loc_01", location_name="A柜", quantity=2, last_updated=now, row=1, column=1),
             inv_key("mat_003", "loc_01"): InventoryItem(material_id="mat_003", location_id="loc_01", location_name="A柜", quantity=1, last_updated=now),
             inv_key("mat_004", "loc_bolt"): InventoryItem(material_id="mat_004", location_id="loc_bolt", location_name="螺栓专用架", quantity=45, last_updated=now),
-            inv_key("mat_005", "loc_01"): InventoryItem(material_id="mat_005", location_id="loc_01", location_name="A柜", quantity=15, last_updated=now),
-            inv_key("mat_006", "loc_01"): InventoryItem(material_id="mat_006", location_id="loc_01", location_name="A柜", quantity=1, last_updated=now),
-            inv_key("mat_007", "loc_02"): InventoryItem(material_id="mat_007", location_id="loc_02", location_name="B架", quantity=2, last_updated=now),
-            inv_key("mat_008", "loc_02"): InventoryItem(material_id="mat_008", location_id="loc_02", location_name="B架", quantity=8, last_updated=now),
+            inv_key("mat_005", "loc_01", 3, 3): InventoryItem(material_id="mat_005", location_id="loc_01", location_name="A柜", quantity=15, last_updated=now, row=3, column=3),
+            inv_key("mat_006", "loc_01", 4, 1): InventoryItem(material_id="mat_006", location_id="loc_01", location_name="A柜", quantity=1, last_updated=now, row=4, column=1),
+            inv_key("mat_007", "loc_02", 1, None): InventoryItem(material_id="mat_007", location_id="loc_02", location_name="B架", quantity=2, last_updated=now, row=1),
+            inv_key("mat_008", "loc_02", 3, None): InventoryItem(material_id="mat_008", location_id="loc_02", location_name="B架", quantity=8, last_updated=now, row=3),
         }
 
         # ── 流水 ──
@@ -432,6 +432,8 @@ class MockStore:
             major_name=major_name,
             mid_name=mid_name,
             sub_name=sub_name,
+            grid_rows=payload.grid_rows,
+            grid_columns=payload.grid_columns,
         )
         self.locations[location_id] = location
         return location
@@ -459,6 +461,10 @@ class MockStore:
             major_name=major_name or name,
             mid_name=mid_name,
             sub_name=sub_name,
+            grid_rows=payload.grid_rows if "grid_rows" in payload.model_dump(exclude_unset=True) else current.grid_rows,
+            grid_columns=(
+                payload.grid_columns if "grid_columns" in payload.model_dump(exclude_unset=True) else current.grid_columns
+            ),
         )
         self.locations[location_id] = updated
         for item in self.inventory.values():

@@ -1,5 +1,4 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useMemo } from "react";
 import { useAuth } from "./AuthGate";
 import { ROLE_LABEL, RoleBadge } from "./ui";
 
@@ -8,50 +7,22 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
   const location = useLocation();
   const { user, canApprove, loading, authStep, pendingCount } = useAuth();
 
-  const tabs = useMemo(() => [
-    { key: "/", title: "搜索", icon: "search" },
-    { key: "/stock", title: "出入库", icon: "swap_vert" },
-    ...(user && (user.role === "KEEPER" || user.role === "ADMIN")
-      ? [{ key: "/locations", title: "库位", icon: "location_on" }]
-      : []),
-    { key: "/history", title: "历史", icon: "history" },
-    ...(user?.role === "USER" ? [{ key: "/returns", title: "待还", icon: "undo" }] : []),
-    ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "admin_panel_settings", badge: pendingCount }] : []),
-  ], [user, canApprove, pendingCount]);
+  const canManage = user && (user.role === "KEEPER" || user.role === "ADMIN");
 
-  const showBack = useMemo(
-    () => location.pathname !== "/" &&
-    ![
-      "/stock",
-      "/locations",
-      "/history",
-      "/returns",
-      "/purchase",
-      "/admin-center",
-    ].includes(location.pathname),
-    [location.pathname],
-  );
+  const tabs = [
+    { key: "/", title: "首页", icon: "home" },
+    { key: "/history", title: "历史", icon: "history" },
+    ...(canManage
+      ? [{ key: "/manage", title: "管理", icon: "tune", badge: canApprove ? pendingCount : undefined }]
+      : []),
+  ];
+
+  const rootPaths = ["/", "/history", "/manage"];
+  const showBack = location.pathname !== "/" && !rootPaths.includes(location.pathname);
 
   return (
     <div className="page">
-      {/* 顶部进度条 */}
       <div className={`top-loader ${loading ? "active" : ""}`} />
-      {/* 冷启动全屏加载 — 给用户心理安慰 */}
-      {loading && (
-        <div className="cold-start-splash">
-          <div className="cold-start-card">
-            <div className="cold-start-logo">📦</div>
-            <div className="cold-start-title">物料管理系统</div>
-            <div className="cold-start-progress">
-              <div className="cold-start-bar"><div className="cold-start-bar-fill" /></div>
-            </div>
-            <div className="cold-start-step">{hint || authStep || "正在启动…"}</div>
-            <div className="cold-start-dots">
-              <span className="loading-dot" /><span className="loading-dot" /><span className="loading-dot" />
-            </div>
-          </div>
-        </div>
-      )}
       <header className="page-navbar">
         <div className="page-navbar-main">
           {showBack ? (
@@ -60,11 +31,7 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
             </button>
           ) : (
             <button type="button" className="app-brand" onClick={() => navigate("/")} aria-label="返回首页">
-              <img
-                src="/logo.png"
-                alt="知来具身 FORESEE ROBOTICS · 物料管理系统"
-                className="app-logo"
-              />
+              <img src="/logo.png" alt="物料管理" className="app-logo" />
             </button>
           )}
           {showBack && (
@@ -74,6 +41,7 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
           )}
         </div>
         <div className="page-navbar-right">
+          {loading && <span className="nav-loading-hint">{hint || authStep || "加载中…"}</span>}
           {user && user.name !== ROLE_LABEL[user.role] && (
             <span className="user-pill">{user.name}</span>
           )}
@@ -85,9 +53,13 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
         <nav className="page-tabbar" aria-label="主导航">
           {tabs.map((t) => {
             const active =
-              t.key === "/locations"
-                ? location.pathname === "/locations" || location.pathname.startsWith("/locations/")
-                : location.pathname === t.key;
+              t.key === "/manage"
+                ? location.pathname === "/manage" ||
+                  location.pathname.startsWith("/locations/") ||
+                  location.pathname === "/locations"
+                : t.key === "/"
+                  ? location.pathname === "/" || location.pathname.startsWith("/shelves/")
+                  : location.pathname === t.key;
             return (
               <button
                 key={t.key}

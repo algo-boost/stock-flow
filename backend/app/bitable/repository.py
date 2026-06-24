@@ -60,6 +60,22 @@ _TABLE_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 _TABLE_INFLIGHT: dict[tuple[str, str], asyncio.Task[list[dict[str, Any]]]] = {}
 
 
+def _optional_grid_number(fields: dict[str, Any], key: str) -> int | None:
+    if not key:
+        return None
+    val = field_number(fields.get(key))
+    return val if val > 0 else None
+
+
+def _location_grid_fields(settings: Settings, grid_rows: int | None, grid_columns: int | None) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    if settings.bitable_f_location_grid_rows and grid_rows is not None:
+        fields[settings.bitable_f_location_grid_rows] = grid_rows
+    if settings.bitable_f_location_grid_columns and grid_columns is not None:
+        fields[settings.bitable_f_location_grid_columns] = grid_columns
+    return fields
+
+
 class BitableRepository:
     """Bitable real 模式：读写五表（字段名可通过 Settings 配置）。"""
 
@@ -711,6 +727,8 @@ class BitableRepository:
             major = field_text(fields.get(s.bitable_f_location_major))
             mid = field_text(fields.get(s.bitable_f_location_mid))
             sub = field_text(fields.get(s.bitable_f_location_sub))
+            grid_rows = _optional_grid_number(fields, s.bitable_f_location_grid_rows)
+            grid_columns = _optional_grid_number(fields, s.bitable_f_location_grid_columns)
             result[rid] = Location(
                 id=rid,
                 code=field_text(fields.get(s.bitable_f_location_code)) or rid,
@@ -720,6 +738,8 @@ class BitableRepository:
                 major_name=major,
                 mid_name=mid,
                 sub_name=sub,
+                grid_rows=grid_rows,
+                grid_columns=grid_columns,
             )
         # 自动派生缺失的层级字段
         for loc_id, loc in list(result.items()):
@@ -1088,6 +1108,7 @@ class BitableRepository:
             s.bitable_f_location_name: name,
             s.bitable_f_location_type: loc_type,
             s.bitable_f_location_major: major_name or name,
+            **_location_grid_fields(s, payload.grid_rows, payload.grid_columns),
         }
         if parent_id:
             fields[s.bitable_f_location_parent] = write_link(parent_id)
@@ -1102,7 +1123,18 @@ class BitableRepository:
             s.bitable_table_locations,
             rec if rec.get("fields") else self._cached_record(rid, fields),
         )
-        return Location(id=rid, code=code, name=name, type=loc_type, parent_id=parent_id, major_name=major_name or name, mid_name=mid_name, sub_name=sub_name)
+        return Location(
+            id=rid,
+            code=code,
+            name=name,
+            type=loc_type,
+            parent_id=parent_id,
+            major_name=major_name or name,
+            mid_name=mid_name,
+            sub_name=sub_name,
+            grid_rows=payload.grid_rows,
+            grid_columns=payload.grid_columns,
+        )
 
     async def update_location(self, location_id: str, payload: LocationUpdate) -> Location:
         locations = await self._load_locations()
@@ -1123,16 +1155,19 @@ class BitableRepository:
 
         major_name, mid_name, sub_name = derive_location_levels(locations, parent_id, name)
         s = self.settings
+        grid_rows = payload.grid_rows if "grid_rows" in payload.model_dump(exclude_unset=True) else current.grid_rows
+        grid_columns = (
+            payload.grid_columns if "grid_columns" in payload.model_dump(exclude_unset=True) else current.grid_columns
+        )
         fields = {
             s.bitable_f_location_code: code,
             s.bitable_f_location_name: name,
             s.bitable_f_location_type: loc_type or "货柜",
             s.bitable_f_location_major: major_name or name,
+            **_location_grid_fields(s, grid_rows, grid_columns),
         }
         if parent_id:
             fields[s.bitable_f_location_parent] = write_link(parent_id)
-        else:
-            fields[s.bitable_f_location_parent] = ""
         fields[s.bitable_f_location_mid] = mid_name or ""
         if sub_name:
             fields[s.bitable_f_location_sub] = sub_name
@@ -1142,7 +1177,18 @@ class BitableRepository:
             s.bitable_table_locations,
             rec if rec.get("fields") else self._cached_record(location_id, fields),
         )
-        return Location(id=location_id, code=code, name=name, type=loc_type or "货柜", parent_id=parent_id, major_name=major_name or name, mid_name=mid_name, sub_name=sub_name)
+        return Location(
+            id=location_id,
+            code=code,
+            name=name,
+            type=loc_type or "货柜",
+            parent_id=parent_id,
+            major_name=major_name or name,
+            mid_name=mid_name,
+            sub_name=sub_name,
+            grid_rows=grid_rows,
+            grid_columns=grid_columns,
+        )
 
     async def delete_location(self, location_id: str) -> None:
         locations = await self._load_locations()

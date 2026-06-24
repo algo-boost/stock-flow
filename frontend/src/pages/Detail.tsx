@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, DotLoading, Toast } from "antd-mobile";
+import { ActionSheet, Button, DotLoading, Toast } from "antd-mobile";
+import type { Action } from "antd-mobile/es/components/action-sheet";
 import { useNavigate, useParams } from "react-router-dom";
 import { getMaterial, getMaterialTransactions } from "../api";
 import type { InventoryItem, MaterialDetail, Transaction } from "../api/types";
@@ -17,6 +18,8 @@ export default function DetailPage() {
   const { canInbound, canApprove } = useAuth();
   const [detail, setDetail] = useState<MaterialDetail | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const reloadDetail = async () => {
     const [d, t] = await Promise.all([getMaterial(id), getMaterialTransactions(id)]);
@@ -50,11 +53,10 @@ export default function DetailPage() {
 
   if (!detail) {
     return (
-      <Layout title="物料详情">
+      <Layout title="详情">
         <SectionCard>
           <div className="empty">
             <DotLoading color="primary" />
-            <div style={{ marginTop: 8 }}>加载中…</div>
           </div>
         </SectionCard>
       </Layout>
@@ -63,51 +65,89 @@ export default function DetailPage() {
 
   const { material, inventory, total_quantity } = detail;
   const isLowStock = total_quantity < (material.min_stock ?? 5);
+  const recentTxs = txs.slice(0, 3);
+
+  const actionItems: Action[] = [
+    { text: canInbound ? "出库" : "申请出库", key: "outbound" },
+    ...(canInbound
+      ? [
+          { text: "入库", key: "inbound" },
+          { text: "移动", key: "transfer" },
+          ...(canApprove ? [{ text: "进货", key: "purchase" }] : []),
+        ]
+      : [{ text: "申请入库", key: "inbound" }]),
+  ];
+
+  const onAction = (action: Action) => {
+    setActionsOpen(false);
+    const mid = material.id;
+    switch (action.key) {
+      case "outbound":
+        navigate(`/stock?material_id=${mid}`);
+        break;
+      case "inbound":
+        navigate(`/stock?tab=inbound&material_id=${mid}`);
+        break;
+      case "transfer":
+        navigate(`/stock?tab=transfer&material_id=${mid}`);
+        break;
+      case "purchase":
+        navigate(`/purchase?material_id=${mid}`);
+        break;
+    }
+  };
 
   return (
     <Layout title={material.name}>
-      <div className="stat-grid">
-        <StatCard label="总库存" value={total_quantity} unit={material.unit} tone={isLowStock ? "warning" : "primary"} />
-        <StatCard label="库位数" value={inventory.length} unit="个" />
-        <StatCard label="安全库存" value={material.min_stock ?? 5} unit={material.unit} tone={isLowStock ? "warning" : "default"} />
+      <div className="stat-grid stat-grid-compact">
+        <StatCard label="库存" value={total_quantity} unit={material.unit} tone={isLowStock ? "warning" : "primary"} />
+        <StatCard label="库位" value={inventory.length} unit="个" />
       </div>
-      {isLowStock && (
-        <div className="low-stock-alert">
-          缺货预警：当前库存低于安全库存 {material.min_stock ?? 5}，管理员可从进货入口补货。
-        </div>
-      )}
+      {isLowStock && <div className="low-stock-alert">低于安全库存 {material.min_stock ?? 5}</div>}
 
-      <SectionCard title="基本信息">
-        <InfoRow label="物料编码" value={material.code} />
-        <InfoRow label="大类" value={material.major_category ?? "-"} />
-        <InfoRow label="中类" value={material.mid_category || "-"} />
-        <InfoRow label="子类" value={material.sub_category ?? material.category_name ?? "-"} />
-        <InfoRow label="规格型号" value={material.spec ?? "-"} />
-        <InfoRow label="单位" value={material.unit} />
-        <InfoRow label="供货商" value={material.supplier ?? "-"} />
-        <InfoRow label="安全库存" value={material.min_stock ?? 5} />
-        {material.barcode && <InfoRow label="条码" value={material.barcode} />}
+      <div className="detail-actions-bar">
+        <Button color="primary" size="small" onClick={() => setActionsOpen(true)}>
+          操作
+        </Button>
+        <Button size="small" fill="outline" onClick={() => navigate(`/history`)}>
+          流水
+        </Button>
+      </div>
+
+      <ActionSheet visible={actionsOpen} actions={actionItems} onClose={() => setActionsOpen(false)} onAction={onAction} cancelText="取消" />
+
+      <SectionCard>
+        <button type="button" className="collapse-trigger" onClick={() => setInfoOpen((v) => !v)}>
+          基本信息 {infoOpen ? "▲" : "▼"}
+        </button>
+        {infoOpen && (
+          <>
+            <InfoRow label="编码" value={material.code} />
+            <InfoRow label="分类" value={[material.major_category, material.sub_category ?? material.category_name].filter(Boolean).join(" / ") || "-"} />
+            <InfoRow label="规格" value={material.spec ?? "-"} />
+            <InfoRow label="单位" value={material.unit} />
+            {material.supplier && <InfoRow label="供货商" value={material.supplier} />}
+          </>
+        )}
       </SectionCard>
 
       {canInbound && (
         <MaterialManagePanel
           detail={detail}
           hasTransactions={txs.length > 0}
-          onUpdated={(updated) =>
-            setDetail((current) => (current ? { ...current, material: updated } : current))
-          }
+          onUpdated={(updated) => setDetail((current) => (current ? { ...current, material: updated } : current))}
           onDeleted={() => navigate(-1)}
         />
       )}
 
-      <SectionCard title="各库位库存" subtitle="货柜类库位可设置第几行、第几列；手机端数据旧时可点下方刷新缓存">
+      <SectionCard title="库位库存">
         {canInbound && (
-          <div style={{ marginBottom: 12 }}>
+          <div className="panel-toolbar">
             <CacheRefreshButton onRefreshed={reloadDetail} />
           </div>
         )}
         {inventory.length === 0 ? (
-          <EmptyState icon="🏷️" text="暂无库存记录" />
+          <EmptyState icon="🏷️" text="暂无库存" />
         ) : (
           inventory.map((inv) => (
             <InventorySlotEditor
@@ -121,49 +161,31 @@ export default function DetailPage() {
         )}
       </SectionCard>
 
-      <div className={`actions ${canInbound ? "" : "single"}`}>
-        <Button color="primary" onClick={() => navigate(`/stock?material_id=${material.id}`)}>
-          {canInbound ? "出库领用" : "出库申请"}
-        </Button>
-        {canInbound && (
-          <>
-            <Button fill="outline" onClick={() => navigate(`/stock?tab=inbound&material_id=${material.id}`)}>
-              入库上架
-            </Button>
-            <Button fill="outline" onClick={() => navigate(`/locations?tab=transfer&material_id=${material.id}`)}>
-              库内移动
-            </Button>
-            {canApprove && (
-              <Button fill="outline" onClick={() => navigate(`/purchase?material_id=${material.id}`)}>
-                进货补货
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-
-      <SectionCard title="最近流水" subtitle="出入库与库内移动追溯">
-        {txs.length === 0 ? (
-          <EmptyState icon="📒" text="暂无流水" hint="完成出入库后会显示在这里" />
-        ) : (
-          txs.map((tx) => (
+      {recentTxs.length > 0 && (
+        <SectionCard
+          title="最近流水"
+          subtitle={txs.length > 3 ? `共 ${txs.length} 条` : undefined}
+        >
+          {recentTxs.map((tx) => (
             <div className="tx-item" key={tx.id}>
               <TxBadge type={tx.type} />
               <div className="tx-main">
                 <div className="tx-title">{tx.location_name ?? tx.location_id}</div>
-                <div className="tx-meta">
-                  {tx.operator} · {new Date(tx.created_at).toLocaleString()}
-                  {tx.remark ? ` · ${tx.remark}` : ""}
-                </div>
+                <div className="tx-meta">{tx.operator}</div>
               </div>
               <div className="tx-qty">
                 {tx.quantity > 0 ? "+" : ""}
                 {tx.quantity}
               </div>
             </div>
-          ))
-        )}
-      </SectionCard>
+          ))}
+          {txs.length > 3 && (
+            <button type="button" className="back-link" onClick={() => navigate("/history")}>
+              查看全部 →
+            </button>
+          )}
+        </SectionCard>
+      )}
     </Layout>
   );
 }

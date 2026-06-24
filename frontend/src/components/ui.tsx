@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ActionSheet, Dialog } from "antd-mobile";
 import type { Action } from "antd-mobile/es/components/action-sheet";
 import type { Role } from "../api/types";
+import { ACTION_ICONS, actionAriaLabel } from "../utils/materialActions";
 
 export const ROLE_LABEL: Record<Role, string> = {
   ADMIN: "管理员",
@@ -48,6 +49,7 @@ export function RolePermissions({ role }: { role: Role }) {
   );
 }
 
+/** @deprecated 使用 PageHeader */
 export function PageHero({
   title,
   subtitle,
@@ -57,12 +59,23 @@ export function PageHero({
   subtitle?: string;
   extra?: ReactNode;
 }) {
+  return <PageHeader title={title} subtitle={subtitle} extra={extra} />;
+}
+
+export function PageHeader({
+  title,
+  subtitle,
+  extra,
+}: {
+  title: string;
+  subtitle?: string;
+  extra?: ReactNode;
+}) {
   return (
-    <div className="page-hero">
-      <div className="page-hero-text">
-        <div className="page-hero-kicker">物料管理系统</div>
-        <h1 className="page-hero-title">{title}</h1>
-        {subtitle && <p className="page-hero-subtitle">{subtitle}</p>}
+    <div className="page-header">
+      <div className="page-header-text">
+        <h1 className="page-header-title">{title}</h1>
+        {subtitle && <p className="page-header-subtitle">{subtitle}</p>}
       </div>
       {extra}
     </div>
@@ -80,6 +93,7 @@ export function SectionCard({
   children: ReactNode;
   className?: string;
 }) {
+  const flush = className.includes("flush-body");
   return (
     <section className={`section-card ${className}`.trim()}>
       {(title || subtitle) && (
@@ -88,7 +102,7 @@ export function SectionCard({
           {subtitle && <p className="section-card-subtitle">{subtitle}</p>}
         </header>
       )}
-      <div className="section-card-body">{children}</div>
+      <div className={`section-card-body${flush ? " flush" : ""}`}>{children}</div>
     </section>
   );
 }
@@ -133,6 +147,7 @@ export function MaterialCard({
   onAction,
   actions = [],
   quantity,
+  inlineCount = 2,
 }: {
   name: string;
   code?: string;
@@ -145,12 +160,14 @@ export function MaterialCard({
   onClick?: () => void;
   actions?: Action[];
   onAction?: (action: Action) => void;
+  inlineCount?: number;
 }) {
   const [menuVisible, setMenuVisible] = useState(false);
   const [confirmAction, setConfirmAction] = useState<Action | null>(null);
 
-  const safeActions = actions.filter(a => !a.disabled);
-  const hasActions = safeActions.length > 0;
+  const safeActions = actions.filter((a) => !a.disabled);
+  const inlineActions = safeActions.slice(0, inlineCount);
+  const menuActions = safeActions.slice(inlineCount);
 
   const handleAction = (action: Action) => {
     if (action.danger) {
@@ -162,61 +179,57 @@ export function MaterialCard({
 
   return (
     <>
-      <div className="material-card-wrap">
-        <button type="button" className="material-card" onClick={onClick}>
-          <div className="material-card-main">
-            <div className="material-card-name">{name}</div>
-            <div className="material-card-meta">
-              {category && <span className="chip">{category}</span>}
-              {stockSummary && <span className="material-card-loc">{stockSummary}</span>}
-            </div>
-          </div>
-          <div className="material-card-right">
-            {quantity != null && (
-              <span className={`stock-badge${warning ? " stock-badge-warning" : ""}`}>
-                {quantity}
-              </span>
-            )}
-            {hasActions && (
-              <span
-                className="material-card-menu-btn"
-                aria-label="更多操作"
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuVisible(true);
-                }}
-              >
-                ⋯
-              </span>
-            )}
+      <div className="material-row">
+        <button type="button" className="material-row-body" onClick={onClick}>
+          <div className="material-row-name">{name}</div>
+          <div className="material-row-meta">
+            {category && <span className="material-row-cat">{category}</span>}
+            {stockSummary && <span className="material-row-loc">{stockSummary}</span>}
           </div>
         </button>
-        {/* 快捷操作按钮（始终可见，仅在有过 2 个操作时折叠） */}
-        {hasActions && safeActions.length <= 2 && (
-          <div className="material-card-actions">
-            {safeActions.map((action) => (
-              <button
-                key={action.key}
-                type="button"
-                className={`material-card-action-btn ${action.danger ? "action-danger" : ""}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAction(action);
-                }}
-              >
-                {action.text}
-              </button>
-            ))}
-          </div>
+        {quantity != null && (
+          <span className={`stock-badge stock-badge-sm${warning ? " stock-badge-warning" : ""}`}>
+            {quantity}
+          </span>
+        )}
+        {inlineActions.map((action) => (
+          <button
+            key={action.key}
+            type="button"
+            className={`material-icon-btn ${action.danger ? "action-danger" : ""}`}
+            aria-label={actionAriaLabel(String(action.key), String(action.text))}
+            title={String(action.text)}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAction(action);
+            }}
+          >
+            <span className="material-symbols-outlined" aria-hidden>
+              {ACTION_ICONS[String(action.key)] ?? "touch_app"}
+            </span>
+          </button>
+        ))}
+        {menuActions.length > 0 && (
+          <button
+            type="button"
+            className="material-icon-btn material-icon-btn-muted"
+            aria-label="更多操作"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuVisible(true);
+            }}
+          >
+            <span className="material-symbols-outlined" aria-hidden>
+              more_horiz
+            </span>
+          </button>
         )}
       </div>
 
-      {hasActions && (safeActions.length > 2 || menuVisible) && (
+      {menuActions.length > 0 && (
         <ActionSheet
           visible={menuVisible}
-          actions={safeActions}
+          actions={menuActions}
           onClose={() => setMenuVisible(false)}
           onAction={(action) => {
             setMenuVisible(false);

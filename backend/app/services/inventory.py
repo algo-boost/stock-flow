@@ -795,11 +795,77 @@ class InventoryService:
         requests = await self._admin_requests(limit=500)
         low_stock = await self.list_low_stock()
 
+        if self.repo:
+            materials_map = await self.repo._load_materials()
+            locations_map = await self.repo._load_locations()
+        else:
+            materials_map = self.store.materials
+            locations_map = self.store.locations
+
+        materials = list(materials_map.values())
+        mat_qty: dict[str, int] = {}
+        for item in inventory:
+            mat_qty[item.material_id] = mat_qty.get(item.material_id, 0) + item.quantity
+
+        material_count = len(materials)
+        in_stock_count = sum(1 for material in materials if mat_qty.get(material.id, 0) > 0)
+        zero_stock_count = max(0, material_count - in_stock_count)
+
+        loc_kinds: dict[str, set[str]] = {}
+        loc_qty: dict[str, int] = {}
+        loc_names: dict[str, str] = {}
+        for item in inventory:
+            if item.quantity <= 0:
+                continue
+            loc_kinds.setdefault(item.location_id, set()).add(item.material_id)
+            loc_qty[item.location_id] = loc_qty.get(item.location_id, 0) + item.quantity
+            if item.location_name:
+                loc_names[item.location_id] = item.location_name
+
+        location_distribution: list[dict] = []
+        for loc_id, kinds in loc_kinds.items():
+            loc = locations_map.get(loc_id)
+            location_distribution.append(
+                {
+                    "location_id": loc_id,
+                    "location_name": (loc.name if loc else None) or loc_names.get(loc_id) or loc_id,
+                    "kind_count": len(kinds),
+                    "stock_qty": loc_qty[loc_id],
+                }
+            )
+        location_distribution.sort(key=lambda row: (-row["stock_qty"], row["location_name"]))
+        location_distribution = location_distribution[:10]
+
+        cat_kinds: dict[str, set[str]] = {}
+        cat_qty: dict[str, int] = {}
+        for material in materials:
+            qty = mat_qty.get(material.id, 0)
+            if qty <= 0:
+                continue
+            cat_name = material.major_category or material.category_name or "未分类"
+            cat_kinds.setdefault(cat_name, set()).add(material.id)
+            cat_qty[cat_name] = cat_qty.get(cat_name, 0) + qty
+
+        category_distribution = [
+            {
+                "category_name": name,
+                "kind_count": len(cat_kinds[name]),
+                "stock_qty": cat_qty[name],
+            }
+            for name in cat_kinds
+        ]
+        category_distribution.sort(key=lambda row: (-row["stock_qty"], row["category_name"]))
+        category_distribution = category_distribution[:8]
+
+        stocked_location_ids = set(loc_qty.keys())
+        empty_location_count = sum(
+            1 for loc in locations_map.values() if loc.id not in stocked_location_ids
+        )
+
         inbound_qty = sum(tx.quantity for tx in transactions if tx.quantity > 0)
         outbound_qty = sum(abs(tx.quantity) for tx in transactions if tx.quantity < 0)
-        pending_requests = sum(1 for req in requests if req.status == StockRequestStatus.PENDING)
-        approved_requests = sum(1 for req in requests if req.status == StockRequestStatus.APPROVED)
-        rejected_requests = sum(1 for req in requests if req.status == StockRequestStatus.REJECTED)
+        pending_list = [req for req in requests if req.status == StockRequestStatus.PENDING]
+        pending_requests = len(pending_list)
 
         return {
             "period": {
@@ -808,18 +874,22 @@ class InventoryService:
             },
             "tables": snap.get("tables", {}),
             "totals": {
+                "material_count": material_count,
+                "in_stock_count": in_stock_count,
+                "zero_stock_count": zero_stock_count,
                 "inventory_quantity": sum(item.quantity for item in inventory),
                 "inventory_records": len(inventory),
                 "transaction_count": len(transactions),
                 "inbound_quantity": inbound_qty,
                 "outbound_quantity": outbound_qty,
                 "pending_requests": pending_requests,
-                "approved_requests": approved_requests,
-                "rejected_requests": rejected_requests,
                 "low_stock_count": len(low_stock),
+                "empty_location_count": empty_location_count,
             },
+            "location_distribution": location_distribution,
+            "category_distribution": category_distribution,
             "recent_transactions": [tx.model_dump(mode="json") for tx in transactions[:8]],
-            "recent_requests": [req.model_dump(mode="json") for req in requests[:8]],
+            "pending_requests_list": [req.model_dump(mode="json") for req in pending_list[:8]],
             "low_stock_items": [item.model_dump(mode="json") for item in low_stock[:8]],
         }
 

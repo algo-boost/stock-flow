@@ -288,6 +288,7 @@ export function searchMaterials(
     stockOnly?: boolean;
     searchBy?: "all" | "category" | "name" | "code";
     category?: string;
+    location?: string;
   },
 ) {
   const params = new URLSearchParams({
@@ -298,6 +299,7 @@ export function searchMaterials(
   if (opts?.stockOnly) params.set("stock_only", "true");
   if (opts?.searchBy) params.set("search_by", opts.searchBy);
   if (opts?.category) params.set("category", opts.category);
+  if (opts?.location) params.set("location", opts.location);
   return request<PaginatedMaterials>(`/materials/search?${params}`);
 }
 
@@ -305,7 +307,14 @@ export function listLocations() {
   return request<Location[]>("/locations");
 }
 
-export function createLocation(payload: { code: string; name: string; type: string; parent_id?: string }) {
+export function createLocation(payload: {
+  code: string;
+  name: string;
+  type: string;
+  parent_id?: string;
+  grid_rows?: number | null;
+  grid_columns?: number | null;
+}) {
   return request<Location>("/locations", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -314,7 +323,14 @@ export function createLocation(payload: { code: string; name: string; type: stri
 
 export function updateLocation(
   id: string,
-  payload: { code?: string; name?: string; type?: string; parent_id?: string | null },
+  payload: {
+    code?: string;
+    name?: string;
+    type?: string;
+    parent_id?: string | null;
+    grid_rows?: number | null;
+    grid_columns?: number | null;
+  },
 ) {
   return request<Location>(`/locations/${id}`, {
     method: "PATCH",
