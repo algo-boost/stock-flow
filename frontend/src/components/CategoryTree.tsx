@@ -6,6 +6,7 @@ import {
   formatCategoryPath,
   getCategoryChildren,
   getCategoryPath,
+  getDescendantIds,
   getRootCategories,
 } from "../utils/categoryTree";
 
@@ -269,7 +270,12 @@ export function CategoryTree({
             case "delete":
               if (onDelete) {
                 const cat = categories.find((c) => c.id === ctxCategoryId);
-                const confirmed = await Dialog.confirm({ content: `确定删除分类「${cat?.name ?? ctxCategoryId}」？` });
+                const descendants = getDescendantIds(categories, ctxCategoryId);
+                const childCount = descendants.size;
+                const childHint = childCount > 0
+                  ? `\n将同时删除其下 ${childCount} 个子分类；关联物料会自动改挂到上一级分类。`
+                  : "";
+                const confirmed = await Dialog.confirm({ content: `确定删除分类「${cat?.name ?? ctxCategoryId}」？${childHint}` });
                 if (!confirmed) break;
                 setBusy(true);
                 void onDelete(ctxCategoryId).then(() => {

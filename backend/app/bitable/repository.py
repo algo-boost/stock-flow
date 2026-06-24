@@ -997,6 +997,16 @@ class BitableRepository:
         if await self._material_has_transactions(material_id):
             raise ValueError("material_has_transactions")
         s = self.settings
+
+        # 清理关联库存记录（防止孤儿行）
+        inv_records = await self._load_inventory_records()
+        for key, rec in inv_records.items():
+            if key_material_id(key) == material_id:
+                record_id = rec.get("record_id")
+                if record_id:
+                    await self.client.delete_record(s.bitable_table_inventory, record_id)
+                    self._remove_cached_record(s.bitable_table_inventory, record_id)
+
         await self.client.delete_record(s.bitable_table_materials, material_id)
         self._materials_cache = None
         self._remove_cached_record(s.bitable_table_materials, material_id)
