@@ -393,6 +393,26 @@ export function getAdminSystem() {
   return request<AdminSystem>("/admin/system");
 }
 
+export function updateTransaction(
+  transactionId: string,
+  payload: { quantity?: number; material_id?: string; location_id?: string; remark?: string },
+) {
+  return request<Transaction>(`/admin/transactions/${transactionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateStockRequest(
+  requestId: string,
+  payload: { quantity?: number; material_id?: string; location_id?: string; remark?: string },
+) {
+  return request<StockRequest>(`/admin/requests/${requestId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getMaterial(id: string) {
   return request<MaterialDetail>(`/materials/${id}`);
 }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Selector, Toast } from "antd-mobile";
-import { listApprovalRequests } from "../api";
+import { Button, Dialog, Form, Input, Selector, Stepper, Toast } from "antd-mobile";
+import { listApprovalRequests, updateStockRequest } from "../api";
 import type { StockRequest, StockRequestStatus } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
+import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard, TxBadge } from "./ui";
 
 const STATUS_OPTIONS: Array<{ label: string; value: StockRequestStatus | "ALL" }> = [
@@ -25,9 +26,42 @@ function formatRequestLocation(item: StockRequest) {
 
 /** 只读审批记录列表，审批操作统一在飞书原生审批中完成。 */
 export function ApprovalRecords() {
+  const { canApprove } = useAuth();
+  const isAdmin = canApprove;
   const [items, setItems] = useState<StockRequest[]>([]);
   const [status, setStatus] = useState<StockRequestStatus | "ALL">("ALL");
   const [loading, setLoading] = useState(false);
+
+  // ── 纠错弹窗 ──
+  const [editTarget, setEditTarget] = useState<StockRequest | null>(null);
+  const [editQty, setEditQty] = useState(1);
+  const [editRemark, setEditRemark] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+
+  const openEdit = (item: StockRequest) => {
+    setEditTarget(item);
+    setEditQty(item.quantity);
+    setEditRemark(item.remark ?? "");
+  };
+  const closeEdit = () => setEditTarget(null);
+
+  const submitEdit = async () => {
+    if (!editTarget) return;
+    setEditBusy(true);
+    try {
+      await updateStockRequest(editTarget.id, {
+        quantity: editQty,
+        remark: editRemark.trim() || undefined,
+      });
+      Toast.show({ icon: "success", content: "已修正" });
+      closeEdit();
+      void load();
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "修正失败" });
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,10 +140,38 @@ export function ApprovalRecords() {
                 {item.approver_name ? `审批人：${item.approver_name} · ` : ""}
                 {new Date(item.created_at).toLocaleString()}
               </div>
+              {isAdmin && (
+                <div style={{ marginTop: 6 }}>
+                  <Button size="mini" fill="none" onClick={() => openEdit(item)}>
+                    <span className="material-symbols-outlined" style={{fontSize:18}}>edit</span>
+                    {" "}纠错
+                  </Button>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
+
+      <Dialog
+        visible={editTarget !== null}
+        title="数据纠错"
+        onClose={closeEdit}
+        actions={[
+          { key: "cancel", text: "取消", onClick: closeEdit },
+          { key: "save", text: editBusy ? "保存中…" : "保存", bold: true, onClick: () => void submitEdit() },
+        ]}
+        content={
+          <Form layout="vertical">
+            <Form.Item label="数量">
+              <Stepper min={1} max={99999} value={editQty} onChange={setEditQty} />
+            </Form.Item>
+            <Form.Item label="备注说明">
+              <Input value={editRemark} onChange={setEditRemark} placeholder="纠错原因或补充说明" />
+            </Form.Item>
+          </Form>
+        }
+      />
     </SectionCard>
   );
 }

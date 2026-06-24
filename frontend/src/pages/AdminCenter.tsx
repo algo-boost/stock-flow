@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Tabs, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, Stepper, Tabs, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getAdminAudit, getAdminOverview } from "../api";
-import type { AdminAudit, AdminOverview } from "../api/types";
+import { getAdminAudit, getAdminOverview, updateTransaction, updateStockRequest } from "../api";
+import type { AdminAudit, AdminOverview, StockRequest, Transaction } from "../api/types";
 import { AuthGate, useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHero, RolePermissions, SectionCard, StatCard, TxBadge } from "../components/ui";
@@ -22,6 +22,42 @@ function AdminCenterContent() {
   const [audit, setAudit] = useState<AdminAudit | null>(null);
   const [loading, setLoading] = useState(false);
   const { user, setPendingCount } = useAuth();
+
+  // ── 纠错弹窗 ──
+  const [editTarget, setEditTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
+  const [editQty, setEditQty] = useState(1);
+  const [editRemark, setEditRemark] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+
+  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
+    setEditTarget({ type, item });
+    setEditQty(Math.abs(item.quantity));
+    setEditRemark(item.remark ?? "");
+  };
+  const closeEdit = () => setEditTarget(null);
+
+  const submitEdit = async () => {
+    if (!editTarget) return;
+    setEditBusy(true);
+    try {
+      const payload = {
+        quantity: editQty,
+        remark: editRemark.trim() || undefined,
+      };
+      if (editTarget.type === "tx") {
+        await updateTransaction(editTarget.item.id, payload);
+      } else {
+        await updateStockRequest(editTarget.item.id, payload);
+      }
+      Toast.show({ icon: "success", content: "已修正" });
+      closeEdit();
+      void load();
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "修正失败" });
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,13 +174,43 @@ function AdminCenterContent() {
             {audit?.recent_transactions.length ? (
               <div className="tx-list">
                 {audit.recent_transactions.slice(0, 10).map((tx) => (
-                  <div className="tx-item" key={tx.id}><TxBadge type={tx.type} /><div className="tx-main"><div className="tx-title">{tx.material_name ?? tx.material_id}</div><div className="tx-meta">{tx.operator} · {tx.location_name ?? tx.location_id} · {formatDate(tx.created_at)}</div></div><div className="tx-qty">{tx.quantity>0?`+${tx.quantity}`:tx.quantity}</div></div>
+                  <div className="tx-item" key={tx.id}>
+                    <TxBadge type={tx.type} />
+                    <div className="tx-main">
+                      <div className="tx-title">{tx.material_name ?? tx.material_id}</div>
+                      <div className="tx-meta">{tx.operator} · {tx.location_name ?? tx.location_id} · {formatDate(tx.created_at)}</div>
+                    </div>
+                    <div className="tx-qty">{tx.quantity>0?`+${tx.quantity}`:tx.quantity}</div>
+                    <Button size="mini" fill="none" onClick={() => openEdit("tx", tx)}>
+                      <span className="material-symbols-outlined" style={{fontSize:18}}>edit</span>
+                    </Button>
+                  </div>
                 ))}
               </div>
             ) : <EmptyState icon="📋" text="暂无审计流水" hint="出入库操作后会显示在这里" />}
           </SectionCard>
         </Tabs.Tab>
       </Tabs>
+
+      <Dialog
+        visible={editTarget !== null}
+        title="数据纠错"
+        onClose={closeEdit}
+        actions={[
+          { key: "cancel", text: "取消", onClick: closeEdit },
+          { key: "save", text: editBusy ? "保存中…" : "保存", bold: true, onClick: () => void submitEdit() },
+        ]}
+        content={
+          <Form layout="vertical">
+            <Form.Item label="数量">
+              <Stepper min={1} max={99999} value={editQty} onChange={setEditQty} />
+            </Form.Item>
+            <Form.Item label="备注说明">
+              <Input value={editRemark} onChange={setEditRemark} placeholder="纠错原因或补充说明" />
+            </Form.Item>
+          </Form>
+        }
+      />
     </Layout>
   );
 }

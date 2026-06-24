@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Form, Input, SearchBar, Selector, Toast } from "antd-mobile";
+import { Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   listApprovalRequests,
@@ -7,6 +7,8 @@ import {
   listMyRequests,
   listTransactions,
   searchMaterials,
+  updateTransaction,
+  updateStockRequest,
 } from "../api";
 import type { Category, StockRequest, StockRequestStatus, Transaction } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
@@ -66,9 +68,13 @@ function requestViewHint(view: RequestView): string {
 function TransactionRow({
   tx,
   onOpenMaterial,
+  canEdit,
+  onEdit,
 }: {
   tx: Transaction;
   onOpenMaterial: (materialId: string) => void;
+  canEdit?: boolean;
+  onEdit?: (tx: Transaction) => void;
 }) {
   const parsed = parsePipeRemark(tx.remark);
   return (
@@ -95,6 +101,11 @@ function TransactionRow({
       <div className={`tx-qty ${tx.type === "出库" ? "tx-qty-out" : tx.type === "入库" ? "tx-qty-in" : ""}`}>
         {formatTxQuantity(tx.type, tx.quantity)}
       </div>
+      {canEdit && onEdit && (
+        <Button size="mini" fill="none" onClick={() => onEdit(tx)}>
+          <span className="material-symbols-outlined" style={{fontSize:18}}>edit</span>
+        </Button>
+      )}
     </div>
   );
 }
@@ -103,6 +114,7 @@ export default function HistoryPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { canApprove, canInbound } = useAuth();
+  const isAdmin = canApprove;
   const staffHistoryOptions = useMemo(() => {
     const opts: Array<{ label: string; value: StaffHistoryView }> = [
       { label: "流水", value: "transactions" },
@@ -128,6 +140,42 @@ export default function HistoryPage() {
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(false);
+
+  // ── 纠错弹窗 ──
+  const [editTarget, setEditTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
+  const [editQty, setEditQty] = useState(1);
+  const [editRemark, setEditRemark] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+
+  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
+    setEditTarget({ type, item });
+    setEditQty(Math.abs(item.quantity));
+    setEditRemark(item.remark ?? "");
+  };
+  const closeEdit = () => setEditTarget(null);
+
+  const submitEdit = async () => {
+    if (!editTarget) return;
+    setEditBusy(true);
+    try {
+      const payload = {
+        quantity: editQty,
+        remark: editRemark.trim() || undefined,
+      };
+      if (editTarget.type === "tx") {
+        await updateTransaction(editTarget.item.id, payload);
+      } else {
+        await updateStockRequest(editTarget.item.id, payload);
+      }
+      Toast.show({ icon: "success", content: "已修正" });
+      closeEdit();
+      void load();
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "修正失败" });
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!canInbound) return;
@@ -305,6 +353,7 @@ export default function HistoryPage() {
       : `已执行流水 ${displayedTxs.length} 条（${txTypeFilter}，共 ${txs.length} 条）`;
 
   return (
+    <>
     <Layout title="历史">
       {canApprove && pendingCount > 0 && (
         <div className="history-pending-banner">
@@ -543,12 +592,33 @@ export default function HistoryPage() {
           />
         ) : (
           displayedTxs.map((tx) => (
-            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} />
+            <TransactionRow key={tx.id} tx={tx} onOpenMaterial={openMaterial} canEdit={isAdmin} onEdit={(t) => openEdit("tx", t)} />
           ))
         )}
       </SectionCard>
         </>
       )}
     </Layout>
+
+      <Dialog
+        visible={editTarget !== null}
+        title="数据纠错"
+        onClose={closeEdit}
+        actions={[
+          { key: "cancel", text: "取消", onClick: closeEdit },
+          { key: "save", text: editBusy ? "保存中…" : "保存", bold: true, onClick: () => void submitEdit() },
+        ]}
+        content={
+          <Form layout="vertical">
+            <Form.Item label="数量">
+              <Stepper min={1} max={99999} value={editQty} onChange={setEditQty} />
+            </Form.Item>
+            <Form.Item label="备注说明">
+              <Input value={editRemark} onChange={setEditRemark} placeholder="纠错原因或补充说明" />
+            </Form.Item>
+          </Form>
+        }
+      />
+    </>
   );
 }

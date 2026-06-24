@@ -187,3 +187,19 @@ export interface AdminSystem {
   tables: Record<string, number>;
   server_time: string;
 }
+
+/** 管理员纠错 — 可修改的流水字段 */
+export interface TransactionUpdate {
+  quantity?: number;
+  material_id?: string;
+  location_id?: string;
+  remark?: string;
+}
+
+/** 管理员纠错 — 可修改的申请字段 */
+export interface StockRequestUpdate {
+  quantity?: number;
+  material_id?: string;
+  location_id?: string;
+  remark?: string;
+}
