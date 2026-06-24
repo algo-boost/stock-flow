@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
+import { useMemo } from "react";
 import { useAuth } from "./AuthGate";
 import { ROLE_LABEL, RoleBadge } from "./ui";
 
@@ -7,7 +8,7 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
   const location = useLocation();
   const { user, canApprove, loading, authStep, pendingCount } = useAuth();
 
-  const tabs = [
+  const tabs = useMemo(() => [
     { key: "/", title: "搜索", icon: "search" },
     { key: "/stock", title: "出入库", icon: "swap_vert" },
     ...(user && (user.role === "KEEPER" || user.role === "ADMIN")
@@ -16,10 +17,10 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
     { key: "/history", title: "历史", icon: "history" },
     ...(user?.role === "USER" ? [{ key: "/returns", title: "待还", icon: "undo" }] : []),
     ...(canApprove ? [{ key: "/admin-center", title: "运营", icon: "admin_panel_settings", badge: pendingCount }] : []),
-  ];
+  ], [user, canApprove, pendingCount]);
 
-  const showBack =
-    location.pathname !== "/" &&
+  const showBack = useMemo(
+    () => location.pathname !== "/" &&
     ![
       "/stock",
       "/locations",
@@ -27,7 +28,9 @@ export function Layout({ title, children, hint }: { title: string; children: Rea
       "/returns",
       "/purchase",
       "/admin-center",
-    ].includes(location.pathname);
+    ].includes(location.pathname),
+    [location.pathname],
+  );
 
   return (
     <div className="page">

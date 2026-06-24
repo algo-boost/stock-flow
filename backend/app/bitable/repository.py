@@ -190,19 +190,20 @@ class BitableRepository:
             if now - cached_at <= ttl:
                 return records
 
-        # 2. SQLite 本地缓存（毫秒级，跨重启持久化）
+        # 2. SQLite 本地缓存（持久化兜底，不判过期，有数据就用）
         if self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
             from app.bitable.sqlite_cache import get_sqlite_cache
             sqlite = get_sqlite_cache()
             sqlite_age = sqlite.get_cache_age(table_id)
-            sqlite_stale = sqlite_age is None or (ttl > 0 and now - sqlite_age > ttl)
-            if sqlite_age is not None and (ttl == 0 or not sqlite_stale):
+            if sqlite_age is not None:
                 records = sqlite.get_records(table_id)
                 if records:
                     _TABLE_CACHE[cache_key] = (now, records)
+                    # 后台异步从 Bitable 刷新（不阻塞当前请求）
+                    asyncio.create_task(self._background_refresh(table_id, cache_key))
                     return records
 
-        # 3. Bitable API（慢，仅在缓存过期时）
+        # 3. Bitable API（仅在 SQLite 无数据时回源）
         inflight = _TABLE_INFLIGHT.get(cache_key)
         if inflight:
             records = await inflight
@@ -226,6 +227,18 @@ class BitableRepository:
                 pass
 
         return records
+
+    async def _background_refresh(self, table_id: str, cache_key: tuple[str, str]) -> None:
+        """后台静默从 Bitable 拉取最新数据，更新内存和 SQLite 缓存。"""
+        try:
+            records = await self.client.list_records(table_id)
+            if records:
+                _TABLE_CACHE[cache_key] = (time.monotonic(), records)
+                if self.settings.sqlite_cache_enabled:
+                    from app.bitable.sqlite_cache import get_sqlite_cache
+                    get_sqlite_cache().upsert_records(table_id, records)
+        except Exception:
+            pass  # 静默失败，下次请求继续用 SQLite 旧数据
 
     def _invalidate_table_cache(self, *table_ids: str) -> None:
         app_token = self.settings.bitable_app_token
