@@ -13,6 +13,7 @@ const PurchasePage = lazy(() => import("./pages/Purchase"));
 const LocationShelvesPage = lazy(() => import("./pages/LocationShelves"));
 const SearchPage = lazy(() => import("./pages/Search"));
 const StockPage = lazy(() => import("./pages/Stock"));
+const NotFoundPage = lazy(() => import("./pages/NotFound"));
 
 function PageFallback() {
   return <PageLoadFallback />;
@@ -75,7 +76,7 @@ export default function App() {
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/history/transactions" element={<HistoryTransactionResultsPage />} />
             <Route path="/returns" element={<Navigate to="/history?view=returns" replace />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
       </BrowserRouter>

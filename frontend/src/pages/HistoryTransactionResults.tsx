@@ -35,7 +35,7 @@ export default function HistoryTransactionResultsPage() {
   const [editBusy, setEditBusy] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(total / TX_PAGE_SIZE));
-  const backTo = `/history${canApprove ? "" : "?view=transactions"}`;
+  const backTo = "/history?view=transactions";
 
   const isFirstLoad = useRef(true);
 

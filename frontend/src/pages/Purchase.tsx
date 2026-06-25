@@ -231,16 +231,20 @@ export function PurchaseForm() {
 }
 
 export default function PurchasePage() {
+  const [params] = useSearchParams();
+  const fromHome = params.get("from") === "home";
+  const backTo = fromHome ? "/" : "/manage?tab=dashboard";
+
   return (
     <AuthGate
       roles={["ADMIN"]}
       fallback={
-        <Layout title="进货">
+        <Layout title="进货" backTo="/">
           <EmptyState icon="lock" text="权限不足" hint="仅管理员可进货" />
         </Layout>
       }
     >
-      <Layout title="进货">
+      <Layout title="进货" backTo={backTo}>
         <PurchaseForm />
       </Layout>
     </AuthGate>

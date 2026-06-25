@@ -26,7 +26,11 @@ export type FeishuIconName =
   | "folder-open"
   | "warehouse"
   | "search"
-  | "refresh";
+  | "scan"
+  | "refresh"
+  | "plus"
+  | "chevron-right"
+  | "trash";
 
 type IconDef = (props: { className?: string }) => JSX.Element;
 
@@ -193,10 +197,31 @@ const ICONS: Record<FeishuIconName, IconDef> = {
       <path {...stroke} d="m16 16 4 4" />
     </Svg>
   ),
+  scan: (p) => (
+    <Svg {...p}>
+      <path {...stroke} d="M4 7V5a1 1 0 0 1 1-1h2M20 7V5a1 1 0 0 0-1-1h-2M4 17v2a1 1 0 0 0 1 1h2M20 17v2a1 1 0 0 1-1 1h-2" />
+      <path {...stroke} d="M7 12h10" />
+    </Svg>
+  ),
   refresh: (p) => (
     <Svg {...p}>
       <path {...stroke} d="M20 12a8 8 0 1 1-2.3-5.7" />
       <path {...stroke} d="M20 4v5h-5" />
+    </Svg>
+  ),
+  plus: (p) => (
+    <Svg {...p}>
+      <path {...stroke} d="M12 5v14M5 12h14" />
+    </Svg>
+  ),
+  "chevron-right": (p) => (
+    <Svg {...p}>
+      <path {...stroke} d="m9 6 6 6-6 6" />
+    </Svg>
+  ),
+  trash: (p) => (
+    <Svg {...p}>
+      <path {...stroke} d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M7 7l.7 11.5A1.5 1.5 0 0 0 9.2 20h5.6a1.5 1.5 0 0 0 1.5-1.5L17 7" />
     </Svg>
   ),
 };

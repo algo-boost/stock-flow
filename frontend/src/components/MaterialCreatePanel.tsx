@@ -1,13 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Dialog, Form, Input, Selector, Stepper, Toast } from "antd-mobile";
-import { createMaterial, listCategories } from "../api";
+import { Dialog, Form, Input, Selector, Stepper, Toast } from "antd-mobile";
+import { createMaterial } from "../api";
 import type { Category } from "../api/types";
-import { SectionCard } from "./ui";
+import { getCategoryPath } from "../utils/categoryTree";
 
-export function MaterialCreatePanel({ onCreated }: { onCreated?: () => void }) {
-  const [open, setOpen] = useState(false);
+function applyCategoryPrefill(
+  categories: Category[],
+  categoryId: string | null | undefined,
+): { major: string; mid: string; leafId: string } {
+  if (!categoryId) return { major: "", mid: "", leafId: "" };
+  const cat = categories.find((c) => c.id === categoryId);
+  if (!cat) return { major: "", mid: "", leafId: "" };
+
+  const path = getCategoryPath(categories, categoryId);
+  const root = path[0];
+  const major = cat.major_name || root?.name || cat.name;
+  const mid = cat.mid_name || "";
+
+  const hasSubName = Boolean(cat.sub_name);
+  const isLeaf = !categories.some((c) => c.parent_id === cat.id);
+  const leafId = hasSubName || isLeaf ? cat.id : "";
+
+  return { major, mid, leafId };
+}
+
+export function MaterialCreateDialog({
+  visible,
+  categories,
+  initialCategoryId,
+  onClose,
+  onCreated,
+}: {
+  visible: boolean;
+  categories: Category[];
+  initialCategoryId?: string | null;
+  onClose: () => void;
+  onCreated?: () => void;
+}) {
   const [saving, setSaving] = useState(false);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [majorCategory, setMajorCategory] = useState("");
@@ -19,10 +49,18 @@ export function MaterialCreatePanel({ onCreated }: { onCreated?: () => void }) {
   const [minStock, setMinStock] = useState(5);
 
   useEffect(() => {
-    void listCategories()
-      .then(setCategories)
-      .catch(() => undefined);
-  }, []);
+    if (!visible) return;
+    setName("");
+    setCode("");
+    setUnit("个");
+    setSpec("");
+    setSupplier("");
+    setMinStock(5);
+    const prefill = applyCategoryPrefill(categories, initialCategoryId);
+    setMajorCategory(prefill.major);
+    setMidCategory(prefill.mid);
+    setCategoryId(prefill.leafId);
+  }, [visible, initialCategoryId, categories]);
 
   const majorOptions = useMemo(() => {
     const names = new Set<string>();
@@ -46,25 +84,11 @@ export function MaterialCreatePanel({ onCreated }: { onCreated?: () => void }) {
       categories
         .filter(
           (cat) =>
-            cat.major_name === majorCategory &&
-            cat.mid_name === midCategory &&
-            cat.sub_name,
+            cat.major_name === majorCategory && cat.mid_name === midCategory && cat.sub_name,
         )
         .map((cat) => ({ label: cat.sub_name || cat.name, value: cat.id })),
     [categories, majorCategory, midCategory],
   );
-
-  const resetForm = () => {
-    setName("");
-    setCode("");
-    setMajorCategory("");
-    setMidCategory("");
-    setCategoryId("");
-    setUnit("个");
-    setSpec("");
-    setSupplier("");
-    setMinStock(5);
-  };
 
   const onSubmit = async () => {
     if (!name.trim()) {
@@ -90,8 +114,7 @@ export function MaterialCreatePanel({ onCreated }: { onCreated?: () => void }) {
         min_stock: minStock,
       });
       Toast.show({ icon: "success", content: "物料已创建" });
-      setOpen(false);
-      resetForm();
+      onClose();
       onCreated?.();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "创建失败" });
@@ -101,72 +124,67 @@ export function MaterialCreatePanel({ onCreated }: { onCreated?: () => void }) {
   };
 
   return (
-    <SectionCard title="新建物料" subtitle="创建后需入库才有库存">
-      <Button size="small" color="primary" fill="outline" onClick={() => setOpen(true)}>
-        新建物料
-      </Button>
-
-      <Dialog
-        visible={open}
-        title="新建物料"
-        content={
-          <Form layout="vertical" className="form-card">
-            <Form.Item label="物料名称">
-              <Input value={name} onChange={setName} placeholder="必填" />
-            </Form.Item>
-            <Form.Item label="物料编码">
-              <Input value={code} onChange={setCode} placeholder="可选，留空自动生成" />
-            </Form.Item>
-            <Form.Item label="大类">
+    <Dialog
+      visible={visible}
+      title="新建物料"
+      content={
+        <Form layout="vertical" className="form-card">
+          <p className="material-create-hint">创建后需入库才有库存</p>
+          <Form.Item label="物料名称">
+            <Input value={name} onChange={setName} placeholder="必填" />
+          </Form.Item>
+          <Form.Item label="物料编码">
+            <Input value={code} onChange={setCode} placeholder="可选，留空自动生成" />
+          </Form.Item>
+          <Form.Item label="大类">
+            <Selector
+              options={majorOptions}
+              value={majorCategory ? [majorCategory] : []}
+              onChange={(arr) => {
+                setMajorCategory(arr[0] ?? "");
+                setMidCategory("");
+                setCategoryId("");
+              }}
+            />
+          </Form.Item>
+          {midOptions.length > 0 && (
+            <Form.Item label="中类">
               <Selector
-                options={majorOptions}
-                value={majorCategory ? [majorCategory] : []}
+                options={midOptions}
+                value={midCategory ? [midCategory] : []}
                 onChange={(arr) => {
-                  setMajorCategory(arr[0] ?? "");
-                  setMidCategory("");
+                  setMidCategory(arr[0] ?? "");
                   setCategoryId("");
                 }}
               />
             </Form.Item>
-            {midOptions.length > 0 && (
-              <Form.Item label="中类">
-                <Selector
-                  options={midOptions}
-                  value={midCategory ? [midCategory] : []}
-                  onChange={(arr) => {
-                    setMidCategory(arr[0] ?? "");
-                    setCategoryId("");
-                  }}
-                />
-              </Form.Item>
-            )}
-            <Form.Item label="子类">
-              <Selector
-                options={subOptions}
-                value={categoryId ? [categoryId] : []}
-                onChange={(arr) => setCategoryId(arr[0] ?? "")}
-              />
-            </Form.Item>
-            <Form.Item label="单位">
-              <Input value={unit} onChange={setUnit} />
-            </Form.Item>
-            <Form.Item label="规格型号">
-              <Input value={spec} onChange={setSpec} placeholder="可选" />
-            </Form.Item>
-            <Form.Item label="供货商">
-              <Input value={supplier} onChange={setSupplier} placeholder="可选" />
-            </Form.Item>
-            <Form.Item label="安全库存">
-              <Stepper min={0} max={9999} value={minStock} onChange={setMinStock} />
-            </Form.Item>
-          </Form>
-        }
-        actions={[
-          { key: "cancel", text: "取消", onClick: () => setOpen(false) },
-          { key: "save", text: saving ? "创建中…" : "创建", bold: true, onClick: () => void onSubmit() },
-        ]}
-        onClose={() => setOpen(false)}
-      />
-    </SectionCard>
+          )}
+          <Form.Item label="子类">
+            <Selector
+              options={subOptions}
+              value={categoryId ? [categoryId] : []}
+              onChange={(arr) => setCategoryId(arr[0] ?? "")}
+            />
+          </Form.Item>
+          <Form.Item label="单位">
+            <Input value={unit} onChange={setUnit} />
+          </Form.Item>
+          <Form.Item label="规格型号">
+            <Input value={spec} onChange={setSpec} placeholder="可选" />
+          </Form.Item>
+          <Form.Item label="供货商">
+            <Input value={supplier} onChange={setSupplier} placeholder="可选" />
+          </Form.Item>
+          <Form.Item label="安全库存">
+            <Stepper min={0} max={9999} value={minStock} onChange={setMinStock} />
+          </Form.Item>
+        </Form>
+      }
+      actions={[
+        { key: "cancel", text: "取消", onClick: onClose },
+        { key: "save", text: saving ? "创建中…" : "创建", bold: true, onClick: () => void onSubmit() },
+      ]}
+      onClose={onClose}
+    />
   );
 }

@@ -22,6 +22,20 @@ export function fetchInventoryCached(): Promise<InventoryItem[]> {
   return withCache("meta:inventory", listInventory, META_CACHE_TTL_MS);
 }
 
+export function fetchHomeBrowseMetaCached(): Promise<{
+  categories: Category[];
+  locations: Location[];
+}> {
+  return withCache(
+    "meta:home-browse",
+    async () => {
+      const [categories, locations] = await Promise.all([listCategories(), listLocations()]);
+      return { categories, locations };
+    },
+    META_CACHE_TTL_MS,
+  );
+}
+
 export function fetchHomeMetaCached(): Promise<{
   categories: Category[];
   locations: Location[];

@@ -290,7 +290,7 @@ class OutboundCreate(BaseModel):
     location_id: str
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
-    note: str = Field(min_length=1, max_length=500)
+    note: str | None = Field(default=None, max_length=500)
     return_required: bool | None = None
     return_due_at: date | None = None
     row: int | None = Field(default=None, ge=1, le=99)
@@ -313,7 +313,7 @@ class StockRequestCreate(BaseModel):
     location_id: str | None = None
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
-    note: str = Field(min_length=1, max_length=500)
+    note: str | None = Field(default=None, max_length=500)
     return_required: bool | None = None
     return_due_at: date | None = None
     row: int | None = Field(default=None, ge=1, le=99)

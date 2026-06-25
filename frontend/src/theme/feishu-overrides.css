@@ -112,6 +112,10 @@ body {
   display: none;
 }
 
+.feishu-hide-app-navbar {
+  --sf-navbar-h: env(safe-area-inset-top, 0px);
+}
+
 .feishu-hide-app-navbar .page {
   padding-top: 0;
 }

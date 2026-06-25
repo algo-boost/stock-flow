@@ -1,7 +1,7 @@
 import { apiConfig } from "./config";
 import {
   consumePostLoginRedirect,
-  feishuLogin,
+  feishuLoginWithRedirectFallback,
   isFeishuClient,
   redirectToLoginHomeIfNeeded,
 } from "../auth/feishu";
@@ -105,7 +105,7 @@ async function reauthWithFeishu(): Promise<void> {
   if (!reauthPromise) {
     reauthPromise = (async () => {
       clearAuthToken();
-      await feishuLogin();
+      await feishuLoginWithRedirectFallback();
       consumePostLoginRedirect();
     })().finally(() => {
       reauthPromise = null;
@@ -454,7 +454,7 @@ export function postOutbound(payload: {
   location_id: string;
   qty: number;
   idempotency_key: string;
-  note: string;
+  note?: string;
   return_required: boolean;
   return_due_at?: string;
   row?: number;
@@ -486,7 +486,7 @@ export function createStockRequest(payload: {
   location_id?: string;
   qty: number;
   idempotency_key: string;
-  note: string;
+  note?: string;
   return_required?: boolean;
   return_due_at?: string;
   row?: number;

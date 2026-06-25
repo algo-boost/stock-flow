@@ -9,6 +9,7 @@ import { Layout } from "../components/Layout";
 import { EmptyState, SectionCard } from "../components/ui";
 import {
   openMaterialDetail,
+  openStockPage,
   readShelfNavState,
   resolveShelfBack,
 } from "../utils/detailNavigation";
@@ -132,11 +133,20 @@ export default function LocationShelvesPage() {
 
   const openInboundAtSlot = () => {
     if (!slotPanel || !locationId) return;
-    const params = new URLSearchParams({ tab: "inbound", location_id: locationId });
-    if (slotPanel.row > 0) params.set("row", String(slotPanel.row));
-    if (slotPanel.column != null) params.set("column", String(slotPanel.column));
+    const shelfQs = searchParams.toString();
+    const shelfBack = `/shelves/${locationId}${shelfQs ? `?${shelfQs}` : ""}`;
     setSlotPanel(null);
-    navigate(`/stock?${params.toString()}`);
+    openStockPage(navigate, "inbound", {
+      materialBackTo: shelfBack,
+      detailBackTo: shelfNav.backTo,
+      detailBackState: shelfNav.backState,
+      fromLabel: slotPanel.label,
+      searchParams: {
+        location_id: locationId,
+        row: slotPanel.row > 0 ? slotPanel.row : undefined,
+        column: slotPanel.column ?? undefined,
+      },
+    });
   };
 
   const closeSlotPanel = () => {

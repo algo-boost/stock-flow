@@ -16,7 +16,7 @@ import {
   parsePipeRemark,
   sortRequestsByPriority,
 } from "../utils/historyDisplay";
-import { buildTransactionQueryParams } from "../utils/transactionQuery";
+import { buildTransactionQueryParams, type TransactionQueryState } from "../utils/transactionQuery";
 import { openMaterialDetail } from "../utils/detailNavigation";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
@@ -66,7 +66,7 @@ export default function HistoryPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { canApprove, canInbound, pendingCount } = useAuth();
+  const { canApprove, canInbound, pendingCount, user } = useAuth();
   const staffHistoryOptions = useMemo(() => {
     const opts: Array<{ label: string; value: StaffHistoryView }> = [];
     if (canApprove) {
@@ -115,7 +115,7 @@ export default function HistoryPage() {
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [txTypeFilter, setTxTypeFilter] = useState<TxTypeFilter>("ALL");
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [advancedFiltersExpanded, setAdvancedFiltersExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [everMounted, setEverMounted] = useState<Record<string, boolean>>(() => ({
     transactions: true,
@@ -168,18 +168,81 @@ export default function HistoryPage() {
   const trimmedKeyword = keyword.trim();
 
   const goToTransactionResults = () => {
-    const params = buildTransactionQueryParams({
-      keyword,
-      txType: txTypeFilter,
-      operator,
-      locationId: "",
-      datePreset,
-      customStartDate,
-      customEndDate,
-      page: 1,
-    });
-    navigate(`/history/transactions?${params.toString()}`);
+    navigateTx(getTxQueryState());
   };
+
+  const getTxQueryState = (overrides?: Partial<TransactionQueryState>): TransactionQueryState => ({
+    keyword,
+    txType: txTypeFilter,
+    operator,
+    locationId: "",
+    datePreset,
+    customStartDate,
+    customEndDate,
+    page: 1,
+    ...overrides,
+  });
+
+  const navigateTx = (state: TransactionQueryState) => {
+    navigate(`/history/transactions?${buildTransactionQueryParams(state).toString()}`);
+  };
+
+  const syncTxFilterState = (state: TransactionQueryState) => {
+    setKeyword(state.keyword);
+    setTxTypeFilter(state.txType);
+    setOperator(state.operator);
+    setDatePreset(state.datePreset);
+    setCustomStartDate(state.customStartDate);
+    setCustomEndDate(state.customEndDate);
+    setSuggestions([]);
+    setOperatorSuggestions([]);
+  };
+
+  const applyTxPreset = (preset: "7d" | "7d-out" | "mine") => {
+    const overrides =
+      preset === "7d"
+        ? { datePreset: "7d" as const, txType: "ALL" as const, operator: "", customStartDate: "", customEndDate: "" }
+        : preset === "7d-out"
+          ? { datePreset: "7d" as const, txType: "出库" as const, operator: "", customStartDate: "", customEndDate: "" }
+          : {
+              datePreset: "7d" as const,
+              txType: "ALL" as const,
+              operator: user?.name ?? "",
+              customStartDate: "",
+              customEndDate: "",
+            };
+    const next = getTxQueryState(overrides);
+    syncTxFilterState(next);
+    navigateTx(next);
+  };
+
+  const clearAllTxFilters = () => {
+    const next = getTxQueryState({
+      keyword: "",
+      txType: "ALL",
+      operator: "",
+      datePreset: "all",
+      customStartDate: "",
+      customEndDate: "",
+    });
+    syncTxFilterState(next);
+  };
+
+  const hasActiveTxFilters =
+    Boolean(trimmedKeyword) ||
+    txTypeFilter !== "ALL" ||
+    (canApprove && (datePreset !== "all" || Boolean(operator.trim())));
+
+  const activePreset =
+    datePreset === "7d" && !operator.trim() && !trimmedKeyword
+      ? txTypeFilter === "出库"
+        ? "7d-out"
+        : txTypeFilter === "ALL"
+          ? "7d"
+          : null
+      : datePreset === "7d" && txTypeFilter === "ALL" && operator.trim() === (user?.name ?? "").trim() && !trimmedKeyword
+        ? "mine"
+        : null;
 
   const loadRequests = useCallback(async (nextKeyword = keyword) => {
     if (canInbound) return;
@@ -399,6 +462,7 @@ export default function HistoryPage() {
 
         {(showStaffTransactions || showUserTransactions) && (
           <div className="filter-quick-row history-tx-quick">
+            <span className="filter-quick-label">类型</span>
             {TX_TYPE_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
@@ -412,98 +476,162 @@ export default function HistoryPage() {
           </div>
         )}
 
-        {canApprove && (
-          <div className="history-admin-quick">
-            <Form.Item label="时间范围">
-              <Selector
-                options={DATE_PRESET_OPTIONS}
-                value={[datePreset]}
-                onChange={(arr) => {
-                  const next = (arr[0] as DateRangePreset | undefined) ?? "all";
-                  setDatePreset(next);
-                  if (next !== "custom") {
-                    setCustomStartDate("");
-                    setCustomEndDate("");
-                  }
-                }}
-              />
-            </Form.Item>
-            {datePreset === "custom" && (
-              <div className="history-date-row">
-                <label className="history-date-field">
-                  <span>开始</span>
-                  <input
-                    className="native-date-input"
-                    type="date"
-                    value={customStartDate}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
-                  />
-                </label>
-                <label className="history-date-field">
-                  <span>结束</span>
-                  <input
-                    className="native-date-input"
-                    type="date"
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
+        {canApprove && (showStaffTransactions || showUserTransactions) && (
+          <div className="filter-quick-row history-tx-presets">
+            <span className="filter-quick-label">快捷</span>
             <button
               type="button"
-              className="history-filter-toggle"
-              onClick={() => setFiltersExpanded((v) => !v)}
+              className={`filter-quick-chip ${activePreset === "7d" ? "filter-quick-chip-active" : ""}`}
+              onClick={() => applyTxPreset("7d")}
             >
-              {filtersExpanded ? "收起成员筛选 ▲" : "按成员筛选 ▼"}
+              近7天
             </button>
-            {filtersExpanded && (
-              <Form layout="vertical" className="form-card history-filters">
-                <Form.Item label="成员（操作人）">
-                  <Input
-                    value={operator}
-                    onChange={setOperator}
-                    placeholder="输入成员姓名后匹配"
-                    clearable
-                  />
-                  {operatorSuggestions.length > 0 && (
-                    <div className="search-suggestions member-suggestions">
-                      {operatorSuggestions.map((suggestion) => (
-                        <button
-                          key={`${suggestion.hint}-${suggestion.value}`}
-                          type="button"
-                          className="search-suggestion"
-                          onClick={() => chooseOperatorSuggestion(suggestion)}
-                        >
-                          <span className="search-suggestion-label">{suggestion.label}</span>
-                          <span className="search-suggestion-hint">{suggestion.hint}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </Form.Item>
-              </Form>
-            )}
+            <button
+              type="button"
+              className={`filter-quick-chip ${activePreset === "7d-out" ? "filter-quick-chip-active" : ""}`}
+              onClick={() => applyTxPreset("7d-out")}
+            >
+              近7天出库
+            </button>
+            {user?.name ? (
+              <button
+                type="button"
+                className={`filter-quick-chip ${activePreset === "mine" ? "filter-quick-chip-active" : ""}`}
+                onClick={() => applyTxPreset("mine")}
+              >
+                我的操作
+              </button>
+            ) : null}
           </div>
         )}
 
+        {canApprove && (showStaffTransactions || showUserTransactions) && (
+          <>
+            <button
+              type="button"
+              className="history-advanced-toggle"
+              onClick={() => setAdvancedFiltersExpanded((v) => !v)}
+            >
+              {advancedFiltersExpanded ? "收起高级筛选 ▲" : "高级筛选（时间 / 成员）▼"}
+            </button>
+            {advancedFiltersExpanded && (
+              <div className="history-admin-quick">
+                <Form.Item label="时间范围">
+                  <Selector
+                    options={DATE_PRESET_OPTIONS}
+                    value={[datePreset]}
+                    onChange={(arr) => {
+                      const next = (arr[0] as DateRangePreset | undefined) ?? "all";
+                      setDatePreset(next);
+                      if (next !== "custom") {
+                        setCustomStartDate("");
+                        setCustomEndDate("");
+                      }
+                    }}
+                  />
+                </Form.Item>
+                {datePreset === "custom" && (
+                  <div className="history-date-row">
+                    <label className="history-date-field">
+                      <span>开始</span>
+                      <input
+                        className="native-date-input"
+                        type="date"
+                        value={customStartDate}
+                        onChange={(e) => setCustomStartDate(e.target.value)}
+                      />
+                    </label>
+                    <label className="history-date-field">
+                      <span>结束</span>
+                      <input
+                        className="native-date-input"
+                        type="date"
+                        value={customEndDate}
+                        onChange={(e) => setCustomEndDate(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
+                <Form layout="vertical" className="form-card history-filters">
+                  <Form.Item label="成员（操作人）">
+                    <Input
+                      value={operator}
+                      onChange={setOperator}
+                      placeholder="输入成员姓名后匹配"
+                      clearable
+                    />
+                    {operatorSuggestions.length > 0 && (
+                      <div className="search-suggestions member-suggestions">
+                        {operatorSuggestions.map((suggestion) => (
+                          <button
+                            key={`${suggestion.hint}-${suggestion.value}`}
+                            type="button"
+                            className="search-suggestion"
+                            onClick={() => chooseOperatorSuggestion(suggestion)}
+                          >
+                            <span className="search-suggestion-label">{suggestion.label}</span>
+                            <span className="search-suggestion-hint">{suggestion.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </Form.Item>
+                </Form>
+              </div>
+            )}
+          </>
+        )}
+
         <Button block color="primary" onClick={goToTransactionResults}>
-          查询
+          查询流水
         </Button>
-        {canApprove && (datePreset !== "all" || operator.trim() || trimmedKeyword) && (
+
+        {hasActiveTxFilters && (
           <div className="history-active-filters">
-            {datePreset !== "all" && (
-              <span className="history-filter-tag">
+            {trimmedKeyword && (
+              <button
+                type="button"
+                className="history-filter-tag"
+                onClick={() => {
+                  setKeyword("");
+                  setSuggestions([]);
+                }}
+              >
+                关键词：{trimmedKeyword} ×
+              </button>
+            )}
+            {txTypeFilter !== "ALL" && (
+              <button type="button" className="history-filter-tag" onClick={() => setTxTypeFilter("ALL")}>
+                类型：{txTypeFilter} ×
+              </button>
+            )}
+            {canApprove && datePreset !== "all" && (
+              <button
+                type="button"
+                className="history-filter-tag"
+                onClick={() => {
+                  setDatePreset("all");
+                  setCustomStartDate("");
+                  setCustomEndDate("");
+                }}
+              >
                 时间：
                 {datePreset === "7d"
                   ? "近7天"
                   : datePreset === "30d"
                     ? "近30天"
-                    : `${customStartDate || "…"} ~ ${customEndDate || "…"}`}
-              </span>
+                    : `${customStartDate || "…"} ~ ${customEndDate || "…"}`}{" "}
+                ×
+              </button>
             )}
-            {operator.trim() && <span className="history-filter-tag">成员：{operator.trim()}</span>}
-            {trimmedKeyword && <span className="history-filter-tag">关键词：{trimmedKeyword}</span>}
+            {canApprove && operator.trim() && (
+              <button type="button" className="history-filter-tag" onClick={() => setOperator("")}>
+                成员：{operator.trim()} ×
+              </button>
+            )}
+            <button type="button" className="history-filter-clear-all" onClick={clearAllTxFilters}>
+              清除全部
+            </button>
           </div>
         )}
       </SectionCard>
@@ -515,6 +643,16 @@ export default function HistoryPage() {
           title={loading ? "我的申请 · 加载中…" : `我的申请 ${requests.length} 条`}
           subtitle={requestViewHint(requestView)}
         >
+          <SearchBar
+            placeholder="搜索物料名称"
+            value={keyword}
+            onChange={setKeyword}
+            onSearch={() => void loadRequests()}
+            onClear={() => {
+              setKeyword("");
+              void loadRequests("");
+            }}
+          />
           <Selector
             className="history-request-tabs"
             options={REQUEST_VIEW_OPTIONS}

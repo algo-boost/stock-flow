@@ -5,7 +5,7 @@ import { listPendingReturns } from "../api";
 import type { PendingReturn } from "../api/types";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard } from "./ui";
-import { openMaterialDetail } from "../utils/detailNavigation";
+import { openMaterialDetail, openStockPage } from "../utils/detailNavigation";
 import { formatHistoryDate } from "../utils/historyDisplay";
 
 interface PendingReturnsPanelProps {
@@ -55,13 +55,16 @@ export function PendingReturnsPanel({
   }, [load, active]);
 
   const goReturn = (item: PendingReturn) => {
-    const params = new URLSearchParams({
-      tab: "inbound",
-      material_id: item.material_id,
-      qty: String(item.quantity),
-      return_note: "归还",
+    openStockPage(navigate, "inbound", {
+      materialId: item.material_id,
+      materialBackTo: "/history?view=returns",
+      detailBackTo: "/history?view=returns",
+      searchParams: {
+        location_id: item.location_id,
+        qty: item.quantity,
+        return_note: "归还",
+      },
     });
-    navigate(`/stock?${params.toString()}`);
   };
 
   const overdueCount = items.filter((item) => item.overdue).length;

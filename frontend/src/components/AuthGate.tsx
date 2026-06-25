@@ -6,7 +6,7 @@ import {
   configureFeishuJsapi,
   consumePostLoginRedirect,
   currentFeishuPageUrl,
-  feishuLogin,
+  feishuLoginWithRedirectFallback,
   isFeishuClient,
   redirectToLoginHomeIfNeeded,
 } from "../auth/feishu";
@@ -50,7 +50,7 @@ async function loginWithFeishu(): Promise<{ user: User; roleMeta: RoleMeta | nul
   if (!redirectToLoginHomeIfNeeded()) {
     throw new Error("正在跳转登录页…");
   }
-  const data = await feishuLogin();
+  const data = await feishuLoginWithRedirectFallback();
   consumePostLoginRedirect();
   return { user: data.user, roleMeta: data.role_meta ?? null };
 }

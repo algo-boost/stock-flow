@@ -7,7 +7,6 @@ import { AuthGate, useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { AdminSystemPanel } from "../components/AdminSystemPanel";
 import { CategoryManagePanel } from "../components/CategoryManagePanel";
-import { MaterialCreatePanel } from "../components/MaterialCreatePanel";
 import { LocationManagePanel } from "../components/LocationManagePanel";
 import { EmptyState, SectionCard, TxBadge } from "../components/ui";
 import { FeishuIcon } from "../components/FeishuIcon";
@@ -127,7 +126,6 @@ function ManageContent() {
             <LocationManagePanel />
           </Tabs.Tab>
           <Tabs.Tab title="分类" key="categories">
-            <MaterialCreatePanel />
             <CategoryManagePanel />
           </Tabs.Tab>
           <Tabs.Tab title="同步" key="sync">
@@ -162,7 +160,6 @@ function ManageContent() {
         </Tabs.Tab>
 
         <Tabs.Tab title="分类" key="categories">
-          <MaterialCreatePanel />
           <CategoryManagePanel />
         </Tabs.Tab>
 

@@ -10,16 +10,35 @@ import { StockOutboundPanel } from "../components/StockOutboundPanel";
 import { PageHeader } from "../components/ui";
 import { readStockNavState } from "../utils/detailNavigation";
 
+type StockTabKey = "outbound" | "inbound" | "transfer";
+
+function resolveInitialMounted(tab: string, canInbound: boolean): Record<StockTabKey, boolean> {
+  const key = (tab === "inbound" || tab === "transfer" ? tab : "outbound") as StockTabKey;
+  return {
+    outbound: key === "outbound",
+    inbound: key === "inbound",
+    transfer: canInbound && key === "transfer",
+  };
+}
+
 export default function StockPage() {
   const { canInbound } = useAuth();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get("tab") ?? "outbound";
+  const activeTab = (searchParams.get("tab") === "inbound"
+    ? "inbound"
+    : searchParams.get("tab") === "transfer" && canInbound
+      ? "transfer"
+      : "outbound") as StockTabKey;
   const materialId = searchParams.get("material_id") ?? "";
   const stockState = readStockNavState(location.state, materialId || undefined);
-  const backTo = materialId ? stockState.materialBackTo : "/";
+  const backTo = stockState.materialBackTo;
+  const backState = stockState.detailBackState;
 
   const [materialName, setMaterialName] = useState("");
+  const [everMounted, setEverMounted] = useState<Record<StockTabKey, boolean>>(() =>
+    resolveInitialMounted(searchParams.get("tab") ?? "outbound", canInbound),
+  );
 
   useEffect(() => {
     if (!materialId) {
@@ -30,6 +49,10 @@ export default function StockPage() {
       .then((d) => setMaterialName(d.material.name))
       .catch(() => setMaterialName(""));
   }, [materialId]);
+
+  useEffect(() => {
+    setEverMounted((prev) => (prev[activeTab] ? prev : { ...prev, [activeTab]: true }));
+  }, [activeTab]);
 
   const onTabChange = (key: string) => {
     const next = new URLSearchParams(searchParams);
@@ -43,22 +66,32 @@ export default function StockPage() {
   const pageSubtitle = materialName ? "完成后返回物料详情" : "搜到物料后，在详情页底部办理";
 
   return (
-    <Layout title={materialName || "出入库"} backTo={backTo}>
+    <Layout title={materialName || "出入库"} backTo={backTo} backState={backState}>
       <PageHeader title={pageTitle} subtitle={pageSubtitle} />
 
-      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs sticky-page-tabs">
-        <Tabs.Tab title={canInbound ? "出库" : "申请出库"} key="outbound">
-          <StockOutboundPanel />
-        </Tabs.Tab>
-        <Tabs.Tab title={canInbound ? "入库" : "申请入库"} key="inbound">
-          <StockInboundPanel />
-        </Tabs.Tab>
-        {canInbound && (
-          <Tabs.Tab title="移动" key="transfer">
-            <LocationTransferPanel />
-          </Tabs.Tab>
-        )}
+      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs sticky-page-tabs stock-page-tabs">
+        <Tabs.Tab title={canInbound ? "出库" : "申请出库"} key="outbound" />
+        <Tabs.Tab title={canInbound ? "入库" : "申请入库"} key="inbound" />
+        {canInbound && <Tabs.Tab title="移动" key="transfer" />}
       </Tabs>
+
+      <div className="stock-tab-panels">
+        {everMounted.outbound && (
+          <div className="stock-tab-pane" hidden={activeTab !== "outbound"}>
+            <StockOutboundPanel active={activeTab === "outbound"} />
+          </div>
+        )}
+        {everMounted.inbound && (
+          <div className="stock-tab-pane" hidden={activeTab !== "inbound"}>
+            <StockInboundPanel active={activeTab === "inbound"} />
+          </div>
+        )}
+        {canInbound && everMounted.transfer && (
+          <div className="stock-tab-pane" hidden={activeTab !== "transfer"}>
+            <LocationTransferPanel active={activeTab === "transfer"} />
+          </div>
+        )}
+      </div>
     </Layout>
   );
 }

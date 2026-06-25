@@ -20,33 +20,44 @@ def _strip_system_labels(text: str) -> str:
         text = next_text
 
 
+
 def format_outbound_remark(
-    note: str,
+    note: str | None,
     *,
     return_required: bool,
     return_due_at: date | None = None,
     row: int | None = None,
     column: int | None = None,
 ) -> str:
-    text = note.strip()
+    parts: list[str] = []
+    text = (note or "").strip()
+    if text:
+        parts.append(text)
     if row is not None and column is not None:
-        text = f"{text} | 格位:{row}:{column}"
+        parts.append(f"格位:{row}:{column}")
     if return_required:
         due = return_due_at.isoformat() if return_due_at else ""
-        return f"{text} | 需归还：{due}".rstrip("：")
-    return f"{text} | 无须归还"
+        parts.append(f"需归还：{due}".rstrip("："))
+    else:
+        parts.append("无须归还")
+    return " | ".join(parts)
 
 
 def format_request_remark(payload: StockRequestCreate) -> str:
-    note = payload.note.strip()
+    parts: list[str] = []
+    text = (payload.note or "").strip()
+    if text:
+        parts.append(text)
     if payload.row is not None and payload.column is not None:
-        note = f"{note} | 格位:{payload.row}:{payload.column}"
+        parts.append(f"格位:{payload.row}:{payload.column}")
     if payload.type != StockRequestType.OUTBOUND or payload.return_required is None:
-        return note
+        return " | ".join(parts)
     if payload.return_required:
         due = payload.return_due_at.isoformat() if payload.return_due_at else ""
-        return f"{note} | 需归还：{due}".rstrip("：")
-    return f"{note} | 无须归还"
+        parts.append(f"需归还：{due}".rstrip("："))
+    else:
+        parts.append("无须归还")
+    return " | ".join(parts)
 
 
 def parse_request_remark(remark: str | None) -> tuple[str | None, int | None, int | None, bool | None, date | None]:

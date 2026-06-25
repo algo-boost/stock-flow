@@ -3,8 +3,9 @@ import { Button, Selector, Toast } from "antd-mobile";
 import { useLocation, useNavigate } from "react-router-dom";
 import { searchMaterials } from "../api";
 import type { Category, InventoryItem, Location, MaterialSearchItem } from "../api/types";
-import { fetchHomeMetaCached, fetchInboundMaterialIdsCached } from "../utils/cachedApi";
+import { fetchHomeBrowseMetaCached, fetchInboundMaterialIdsCached, fetchInventoryCached } from "../utils/cachedApi";
 import { CategoryFolderBrowser } from "../components/CategoryFolderBrowser";
+import { ScanBarcodeButton } from "../components/ScanBarcodeButton";
 import { StorageUnitPicker } from "../components/StorageUnitPicker";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
@@ -12,7 +13,7 @@ import { CardSkeleton, EmptyState, MaterialCard, SectionCard, ShelfGridSkeleton 
 import type { DateRangePreset } from "../utils/historyDisplay";
 import { getLocationChildren } from "../utils/locationTree";
 import { isGridCapableLocation } from "../utils/shelfGrid";
-import { openMaterialDetail } from "../utils/detailNavigation";
+import { openMaterialDetail, openStockForMaterial } from "../utils/detailNavigation";
 
 type BrowseBy = "category" | "location";
 type StockFilter = "all" | "instock" | "out" | "lowstock";
@@ -68,6 +69,7 @@ export default function SearchPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [locationRecords, setLocationRecords] = useState<Location[]>([]);
   const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
   const [folderId, setFolderId] = useState<string | null>(null);
   const [shelfFolderId, setShelfFolderId] = useState<string | null>(loadShelfFolderId);
   const [metaLoading, setMetaLoading] = useState(true);
@@ -186,7 +188,16 @@ export default function SearchPage() {
     setFolderId(null);
     setShelfFolderId(null);
     saveHomeSession(null);
+    if (next === "category") {
+      setAllInventory([]);
+    }
   };
+
+  const canLoadMore =
+    items.length < total &&
+    stockFilter !== "out" &&
+    stockFilter !== "lowstock" &&
+    (hasSearchQuery || Boolean(folderId));
 
   const onShelfFolderNavigate = (id: string | null) => {
     setShelfFolderId(id);
@@ -206,10 +217,21 @@ export default function SearchPage() {
   };
 
   const loadCategories = useCallback(async () => {
-    const data = await fetchHomeMetaCached();
+    const data = await fetchHomeBrowseMetaCached();
     setCategories(data.categories);
     setLocationRecords(data.locations);
-    setAllInventory(data.inventory);
+  }, []);
+
+  const loadInventoryForLocationBrowse = useCallback(async () => {
+    setInventoryLoading(true);
+    try {
+      const inventory = await fetchInventoryCached();
+      setAllInventory(inventory);
+    } catch {
+      setAllInventory([]);
+    } finally {
+      setInventoryLoading(false);
+    }
   }, []);
 
   const loadSearchResults = useCallback(async () => {
@@ -291,7 +313,30 @@ export default function SearchPage() {
     }
   }, [folderId]);
 
+  const loadCategoryBrowseMore = useCallback(async () => {
+    if (!folderId || hasSearchQuery) return;
+    setLoading(true);
+    try {
+      const data = await searchMaterials("", {
+        page: page + 1,
+        size: pageSize,
+        category: folderId,
+      });
+      setItems((cur) => [...cur, ...data.items]);
+      setPage(data.page);
+      setTotal(data.total);
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
+    } finally {
+      setLoading(false);
+    }
+  }, [folderId, hasSearchQuery, page]);
+
   const loadMore = useCallback(async () => {
+    if (folderId && !hasSearchQuery) {
+      void loadCategoryBrowseMore();
+      return;
+    }
     if (!hasSearchQuery || stockFilter === "out" || stockFilter === "lowstock") return;
     setLoading(true);
     try {
@@ -310,7 +355,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterCategoryId, filterLocationId, hasSearchQuery, keyword, page, stockFilter]);
+  }, [filterCategoryId, filterLocationId, folderId, hasSearchQuery, keyword, loadCategoryBrowseMore, page, stockFilter]);
 
   useEffect(() => {
     const state = location.state as { browseBy?: BrowseBy; shelfFolderId?: string | null } | null;
@@ -335,10 +380,15 @@ export default function SearchPage() {
       .catch(() => {
         setCategories([]);
         setLocationRecords([]);
-        setAllInventory([]);
       })
       .finally(() => setMetaLoading(false));
   }, [location.pathname, loadCategories]);
+
+  useEffect(() => {
+    if (location.pathname !== "/" || browseBy !== "location") return;
+    if (allInventory.length > 0 || inventoryLoading) return;
+    void loadInventoryForLocationBrowse();
+  }, [allInventory.length, browseBy, inventoryLoading, loadInventoryForLocationBrowse, location.pathname]);
 
   useEffect(() => {
     if (location.pathname !== "/") return;
@@ -385,20 +435,20 @@ export default function SearchPage() {
     switch (key) {
       case "outbound":
       case "req-outbound":
-        navigate(`/stock?material_id=${id}`);
+        openStockForMaterial(navigate, id, "outbound", detailBackCtx, { materialBackTo: "/" });
         break;
       case "inbound":
       case "req-inbound":
-        navigate(`/stock?tab=inbound&material_id=${id}`);
+        openStockForMaterial(navigate, id, "inbound", detailBackCtx, { materialBackTo: "/" });
         break;
       case "transfer":
-        navigate(`/stock?tab=transfer&material_id=${id}`);
+        openStockForMaterial(navigate, id, "transfer", detailBackCtx, { materialBackTo: "/" });
         break;
       case "edit":
         openMaterialDetail(navigate, id, detailBackCtx);
         break;
       case "purchase":
-        navigate(`/purchase?material_id=${id}`);
+        navigate(`/purchase?material_id=${id}&from=home`);
         break;
     }
   };
@@ -451,7 +501,7 @@ export default function SearchPage() {
           />
         );
       })}
-      {hasSearchQuery && items.length < total && stockFilter !== "out" && stockFilter !== "lowstock" && (
+      {canLoadMore && (
         <div className="load-more">
           <Button loading={loading} fill="outline" block onClick={() => void loadMore()}>
             加载更多
@@ -472,6 +522,7 @@ export default function SearchPage() {
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
         />
+        <ScanBarcodeButton onScan={setKeyword} disabled={loading} />
         {keyword && (
           <button type="button" className="search-input-clear" onClick={() => setKeyword("")} aria-label="清除">
             ×
@@ -632,7 +683,7 @@ export default function SearchPage() {
         </>
       ) : (
         <SectionCard className="flush-body home-section-card">
-          {metaLoading ? (
+          {metaLoading || inventoryLoading ? (
             <ShelfGridSkeleton />
           ) : locationRecords.length === 0 ? (
             <EmptyState icon="location" text="暂无货架/货柜" hint="请先在「管理 → 库位」中维护" />

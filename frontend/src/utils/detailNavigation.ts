@@ -73,6 +73,11 @@ export interface StockNavState {
   fromLabel?: string;
 }
 
+export interface OpenStockOptions {
+  materialBackTo?: string;
+  searchParams?: Record<string, string | number | undefined | null>;
+}
+
 export function readDetailNavState(state: unknown, materialId?: string): DetailNavState {
   const fromRoute: Partial<DetailNavState> = {};
   if (state && typeof state === "object") {
@@ -94,13 +99,11 @@ export function readStockNavState(state: unknown, materialId?: string): StockNav
     if (raw.detailBackState !== undefined) fromRoute.detailBackState = raw.detailBackState;
     if (typeof raw.fromLabel === "string") fromRoute.fromLabel = raw.fromLabel;
   }
+  const storageKey = materialId ? `stock:${materialId}` : "stock:page";
   const defaults: Partial<StockNavState> = materialId
     ? { materialBackTo: `/materials/${materialId}` }
     : { materialBackTo: "/" };
-  if (!materialId) {
-    return { materialBackTo: fromRoute.materialBackTo ?? "/", ...fromRoute };
-  }
-  return mergeNav(fromRoute, `stock:${materialId}`, defaults);
+  return mergeNav(fromRoute, storageKey, defaults);
 }
 
 export function detailContextAfterStock(stockState: StockNavState): DetailNavState {
@@ -121,21 +124,64 @@ export function openMaterialDetail(
   navigate(`/materials/${materialId}`, { state });
 }
 
+export function openStockPage(
+  navigate: NavigateFunction,
+  tab: "outbound" | "inbound" | "transfer",
+  options: {
+    materialId?: string;
+    searchParams?: Record<string, string | number | undefined | null>;
+    materialBackTo: string;
+    detailBackTo?: string;
+    detailBackState?: unknown;
+    fromLabel?: string;
+  },
+) {
+  const params = new URLSearchParams({ tab });
+  if (options.materialId) params.set("material_id", options.materialId);
+  for (const [key, value] of Object.entries(options.searchParams ?? {})) {
+    if (value != null && value !== "") params.set(key, String(value));
+  }
+  const state: StockNavState = {
+    materialBackTo: options.materialBackTo,
+    detailBackTo: options.detailBackTo,
+    detailBackState: options.detailBackState,
+    fromLabel: options.fromLabel,
+  };
+  const storageKey = options.materialId ? `stock:${options.materialId}` : "stock:page";
+  saveNav(storageKey, state);
+  navigate(`/stock?${params.toString()}`, { state });
+}
+
 export function openStockForMaterial(
   navigate: NavigateFunction,
   materialId: string,
   tab: "outbound" | "inbound" | "transfer",
   detailCtx: DetailNavState,
+  options?: OpenStockOptions,
 ) {
-  const params = new URLSearchParams({ material_id: materialId, tab });
-  const state: StockNavState = {
-    materialBackTo: `/materials/${materialId}`,
+  openStockPage(navigate, tab, {
+    materialId,
+    materialBackTo: options?.materialBackTo ?? `/materials/${materialId}`,
     detailBackTo: detailCtx.backTo,
     detailBackState: detailCtx.backState,
     fromLabel: detailCtx.fromLabel,
-  };
-  saveNav(`stock:${materialId}`, state);
-  navigate(`/stock?${params.toString()}`, { state });
+    searchParams: options?.searchParams,
+  });
+}
+
+export function navigateAfterStockSubmit(
+  navigate: NavigateFunction,
+  materialId: string,
+  stockState: StockNavState,
+) {
+  if (stockState.materialBackTo.startsWith("/materials/")) {
+    openMaterialDetail(navigate, materialId, detailContextAfterStock(stockState));
+    return;
+  }
+  navigate(
+    stockState.materialBackTo,
+    stockState.detailBackState !== undefined ? { state: stockState.detailBackState } : undefined,
+  );
 }
 
 export function persistShelfNav(locationId: string, state: ShelfNavState) {

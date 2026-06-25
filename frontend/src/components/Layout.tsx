@@ -10,6 +10,23 @@ const TAB_ICONS: Record<string, FeishuIconName> = {
   tune: "settings",
 };
 
+function isTabActive(tabKey: string, pathname: string): boolean {
+  if (tabKey === "/manage") {
+    return (
+      pathname === "/manage" ||
+      pathname.startsWith("/locations/") ||
+      pathname === "/locations"
+    );
+  }
+  if (tabKey === "/") {
+    return pathname === "/" || pathname.startsWith("/shelves/");
+  }
+  if (tabKey === "/history") {
+    return pathname === "/history" || pathname.startsWith("/history/");
+  }
+  return pathname === tabKey;
+}
+
 export function Layout({
   title,
   children,
@@ -33,7 +50,12 @@ export function Layout({
 
   const tabs = [
     { key: "/", title: "首页", icon: "home" as const },
-    { key: "/history", title: "历史", icon: "history" as const, badge: canApprove && pendingCount > 0 ? pendingCount : undefined },
+    {
+      key: "/history",
+      title: "历史",
+      icon: "history" as const,
+      badge: canApprove && pendingCount > 0 ? pendingCount : undefined,
+    },
     ...(canManage
       ? [{ key: "/manage", title: "管理", icon: "tune" as const, badge: canApprove ? pendingCount : undefined }]
       : []),
@@ -58,8 +80,21 @@ export function Layout({
     onBack: handleBack,
   });
 
+  const hideTabbar =
+    location.pathname.startsWith("/materials/") ||
+    location.pathname.startsWith("/stock") ||
+    location.pathname === "/purchase";
+
+  const handleTabClick = (tabKey: string) => {
+    if (isTabActive(tabKey, location.pathname)) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    navigate(tabKey);
+  };
+
   return (
-    <div className="page">
+    <div className={`page${hideTabbar ? " page-no-tabbar" : ""}`}>
       <div className={`top-loader ${loading ? "active" : ""}`} />
       <header className="page-navbar">
         <div className="page-navbar-main">
@@ -87,23 +122,16 @@ export function Layout({
         </div>
       </header>
       <div className="page-body">{children}</div>
-      {!location.pathname.startsWith("/materials/") && (
+      {!hideTabbar && (
         <nav className="page-tabbar" aria-label="主导航">
           {tabs.map((t) => {
-            const active =
-              t.key === "/manage"
-                ? location.pathname === "/manage" ||
-                  location.pathname.startsWith("/locations/") ||
-                  location.pathname === "/locations"
-                : t.key === "/"
-                  ? location.pathname === "/" || location.pathname.startsWith("/shelves/")
-                  : location.pathname === t.key;
+            const active = isTabActive(t.key, location.pathname);
             return (
               <button
                 key={t.key}
                 type="button"
                 className={`page-tabbar-item ${active ? "page-tabbar-item-active" : ""}`}
-                onClick={() => navigate(t.key)}
+                onClick={() => handleTabClick(t.key)}
               >
                 <FeishuIcon name={TAB_ICONS[t.icon]} size={22} className="page-tabbar-icon" />
                 <span className="page-tabbar-label">

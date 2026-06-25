@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NavigateFunction } from "react-router-dom";
 import {
   detailContextAfterStock,
+  navigateAfterStockSubmit,
   openMaterialDetail,
   openStockForMaterial,
+  openStockPage,
   readDetailNavState,
   readShelfNavState,
   readStockNavState,
@@ -34,6 +36,13 @@ describe("detailNavigation", () => {
     expect(readStockNavState(undefined).materialBackTo).toBe("/");
   });
 
+  it("readStockNavState 无物料时使用 stock:page", () => {
+    openStockPage(vi.fn() as unknown as NavigateFunction, "inbound", {
+      materialBackTo: "/shelves/loc_01",
+    });
+    expect(readStockNavState(undefined).materialBackTo).toBe("/shelves/loc_01");
+  });
+
   it("detailContextAfterStock 保留详情上下文", () => {
     const ctx = detailContextAfterStock({
       materialBackTo: "/materials/m1",
@@ -50,10 +59,48 @@ describe("detailNavigation", () => {
     expect(navigate).toHaveBeenCalledWith("/materials/mat_001", { state: { backTo: "/" } });
 
     openStockForMaterial(navigate, "mat_001", "outbound", { backTo: "/" });
-    expect(navigate).toHaveBeenCalledWith(
-      "/stock?material_id=mat_001&tab=outbound",
+    expect(navigate).toHaveBeenLastCalledWith(
+      "/stock?tab=outbound&material_id=mat_001",
       expect.objectContaining({ state: expect.objectContaining({ materialBackTo: "/materials/mat_001" }) }),
     );
+  });
+
+  it("openStockForMaterial 支持自定义 materialBackTo", () => {
+    const navigate = vi.fn() as unknown as NavigateFunction;
+    openStockForMaterial(navigate, "mat_001", "inbound", { backTo: "/", backState: { browseBy: "category" } }, {
+      materialBackTo: "/",
+    });
+    expect(navigate).toHaveBeenCalledWith(
+      "/stock?tab=inbound&material_id=mat_001",
+      expect.objectContaining({
+        state: expect.objectContaining({
+          materialBackTo: "/",
+          detailBackTo: "/",
+          detailBackState: { browseBy: "category" },
+        }),
+      }),
+    );
+  });
+
+  it("openStockPage 支持额外 query 参数", () => {
+    const navigate = vi.fn() as unknown as NavigateFunction;
+    openStockPage(navigate, "inbound", {
+      materialId: "mat_001",
+      materialBackTo: "/history?view=returns",
+      searchParams: { location_id: "loc_01", qty: 2, return_note: "归还" },
+    });
+    expect(navigate).toHaveBeenCalledWith(
+      "/stock?tab=inbound&material_id=mat_001&location_id=loc_01&qty=2&return_note=%E5%BD%92%E8%BF%98",
+      expect.any(Object),
+    );
+  });
+
+  it("navigateAfterStockSubmit 非详情路径直接返回来源页", () => {
+    const navigate = vi.fn() as unknown as NavigateFunction;
+    navigateAfterStockSubmit(navigate, "mat_001", {
+      materialBackTo: "/history?view=returns",
+    });
+    expect(navigate).toHaveBeenCalledWith("/history?view=returns", undefined);
   });
 
   it("resolveDetailBack 优先 backTo", () => {

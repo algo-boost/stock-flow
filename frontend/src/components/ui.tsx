@@ -42,24 +42,47 @@ export function PageHeader({
   );
 }
 
+/** 出入库/移动表单：内容区 + 固定于底栏 Tab 之上的提交条 */
+export function StockFormShell({
+  children,
+  action,
+}: {
+  children: ReactNode;
+  action: ReactNode;
+}) {
+  return (
+    <div className="stock-form-shell">
+      {children}
+      <div className="form-bottom-bar">{action}</div>
+    </div>
+  );
+}
+
 export function SectionCard({
   title,
   subtitle,
+  extra,
   children,
   className = "",
 }: {
-  title?: string;
+  title?: ReactNode;
   subtitle?: string;
+  extra?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   const flush = className.includes("flush-body");
   return (
     <section className={`section-card ${className}`.trim()}>
-      {(title || subtitle) && (
+      {(title || subtitle || extra) && (
         <header className="section-card-header">
-          {title && <h2 className="section-card-title">{title}</h2>}
-          {subtitle && <p className="section-card-subtitle">{subtitle}</p>}
+          <div className="section-card-header-row">
+            <div className="section-card-header-main">
+              {title && <h2 className="section-card-title">{title}</h2>}
+              {subtitle && <p className="section-card-subtitle">{subtitle}</p>}
+            </div>
+            {extra ? <div className="section-card-extra">{extra}</div> : null}
+          </div>
         </header>
       )}
       <div className={`section-card-body${flush ? " flush" : ""}`}>{children}</div>
