@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     feishu_approval_enabled: bool = False
     feishu_approval_code: str = ""
 
+    # 审批抄送：新申请自动抄送管理员群成员 + 额外抄送人（open_id 逗号分隔）
+    feishu_cc_enabled: bool = True
+    feishu_cc_extra: str = ""  # 额外抄送人 open_id，如上司等
+
     # Bitable 字段名（与多维表格列名一致，可按模板调整）
     bitable_f_category_name: str = "分类名称"
     bitable_f_category_parent: str = "父分类ID"

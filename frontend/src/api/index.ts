@@ -524,6 +524,20 @@ export function listApprovalRequests(opts?: {
   return request<StockRequest[]>(`/requests${qs ? `?${qs}` : ""}`);
 }
 
+export function listApprovers() {
+  return request<Array<{ open_id: string; name: string }>>("/admin/approvers");
+}
+
+export function getCcSettings() {
+  return request<{ cc_enabled: boolean; cc_recipients: string[] }>("/admin/cc-settings");
+}
+
+export function updateCcSettings(enabled: boolean) {
+  return request<{ cc_enabled: boolean; message: string }>(`/admin/cc-settings?enabled=${enabled}`, {
+    method: "PATCH",
+  });
+}
+
 export function approveStockRequest(
   id: string,
   payload?: {

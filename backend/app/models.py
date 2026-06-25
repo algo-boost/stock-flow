@@ -307,6 +307,7 @@ class StockRequestCreate(BaseModel):
     qty: int = Field(gt=0, le=10000)
     idempotency_key: str = Field(min_length=8, max_length=128)
     note: str = Field(min_length=1, max_length=500)
+    approver_open_id: str | None = None  # 指定审批人，默认通知所有管理员
     return_required: bool | None = None
     return_due_at: date | None = None
     row: int | None = Field(default=None, ge=1, le=99)
@@ -355,6 +356,16 @@ class TransactionResult(BaseModel):
 
 class StockRequestResult(BaseModel):
     request_id: str
+    type: StockRequestType | None = None
+    material_id: str | None = None
+    material_name: str | None = None
+    quantity: int | None = None
+    requester_open_id: str | None = None
+    requester_name: str | None = None
+    remark: str | None = None
+    return_required: bool | None = None
+    return_due_at: date | None = None
+    location_name: str | None = None
 
 
 class TransferResult(BaseModel):

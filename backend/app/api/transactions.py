@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -106,6 +107,7 @@ async def create_request(
     payload: StockRequestCreate,
     user: User = Depends(get_current_user),
     service: InventoryService = Depends(get_service),
+    settings: Settings = Depends(get_settings),
 ):
     cached = get_idempotent(payload.idempotency_key)
     if cached:
@@ -113,6 +115,28 @@ async def create_request(
     req = await service.create_request(payload, user)
     result = StockRequestResult(request_id=req.id).model_dump()
     set_idempotent(payload.idempotency_key, result)
+
+    # 异步通知审批人 + 抄送
+    from app.services.notifications import notify_new_request, notify_request_cc
+    asyncio.create_task(notify_new_request(
+        StockRequestResult(
+            request_id=req.id, type=req.type, material_name=req.material_name,
+            material_id=req.material_id, quantity=req.quantity,
+            requester_name=req.requester_name, requester_open_id=req.requester_open_id,
+            remark=req.remark,
+        ),
+        payload.approver_open_id, settings,
+    ))
+    asyncio.create_task(notify_request_cc(
+        StockRequestResult(
+            request_id=req.id, type=req.type, material_name=req.material_name,
+            material_id=req.material_id, quantity=req.quantity,
+            requester_name=req.requester_name, requester_open_id=req.requester_open_id,
+            remark=req.remark,
+        ),
+        payload.approver_open_id, settings,
+    ))
+
     return success(result)
 
 
@@ -158,8 +182,19 @@ async def approve_request(
     payload: RequestApprove | None = None,
     user: User = Depends(require_roles(Role.ADMIN)),
     service: InventoryService = Depends(get_service),
+    settings: Settings = Depends(get_settings),
 ):
     item = await service.approve_request(request_id, payload or RequestApprove(), user)
+    # 异步通知申请人
+    from app.services.notifications import notify_request_approved
+    asyncio.create_task(notify_request_approved(
+        StockRequestResult(
+            request_id=item.id, type=item.type, material_name=item.material_name,
+            material_id=item.material_id, quantity=item.quantity,
+            requester_name=item.requester_name, requester_open_id=item.requester_open_id,
+            remark=item.remark,
+        ), settings,
+    ))
     return success(item.model_dump(mode="json"))
 
 
@@ -169,8 +204,19 @@ async def reject_request(
     payload: RequestReject,
     user: User = Depends(require_roles(Role.ADMIN)),
     service: InventoryService = Depends(get_service),
+    settings: Settings = Depends(get_settings),
 ):
     item = await service.reject_request(request_id, payload, user)
+    # 异步通知申请人
+    from app.services.notifications import notify_request_rejected
+    asyncio.create_task(notify_request_rejected(
+        StockRequestResult(
+            request_id=item.id, type=item.type, material_name=item.material_name,
+            material_id=item.material_id, quantity=item.quantity,
+            requester_name=item.requester_name, requester_open_id=item.requester_open_id,
+            remark=item.remark,
+        ), payload.reason, settings,
+    ))
     return success(item.model_dump(mode="json"))
 
 

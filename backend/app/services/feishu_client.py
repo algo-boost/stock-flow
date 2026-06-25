@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import json
 import logging
 import secrets
 import time
@@ -57,6 +58,59 @@ class FeishuClient:
                 limits=httpx.Limits(max_keepalive_connections=4, max_connections=10),
             )
         return self._http
+
+    # ── 消息通知 ──
+
+    async def send_card_message(
+        self,
+        open_id: str,
+        title: str,
+        content_lines: list[str],
+        link_url: str = "",
+        link_text: str = "查看详情",
+    ) -> bool:
+        """通过飞书机器人给指定用户发卡片消息。"""
+        tenant_token = await self.get_tenant_access_token()
+        http = await self._ensure_http()
+
+        elements: list[dict[str, Any]] = []
+        for line in content_lines:
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line}})
+        if link_url:
+            elements.append({
+                "tag": "action",
+                "actions": [{
+                    "tag": "button", "text": {"tag": "lark_md", "content": link_text},
+                    "url": link_url, "type": "default",
+                }],
+            })
+
+        card = {
+            "header": {"title": {"tag": "plain_text", "content": title}, "template": "blue"},
+            "elements": elements,
+        }
+
+        try:
+            resp = await self._timed(
+                f"send_card_message to {open_id}",
+                http.post(
+                    f"{FEISHU_BASE}/im/v1/messages?receive_id_type=open_id",
+                    headers={
+                        "Authorization": f"Bearer {tenant_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"receive_id": open_id, "msg_type": "interactive", "content": json.dumps(card)},
+                ),
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                logger.warning("飞书消息发送失败 code=%s msg=%s", data.get("code"), data.get("msg"))
+                return False
+            logger.info("飞书消息已发送 open_id=%s", open_id)
+            return True
+        except Exception:
+            logger.warning("飞书消息发送异常 open_id=%s", open_id, exc_info=True)
+            return False
 
     async def close(self) -> None:
         if self._http:
@@ -418,3 +472,75 @@ class FeishuClient:
             ticket = data["ticket"]
             _jsapi_ticket_cache[cache_key] = (ticket, time.time() + data.get("expire_in", 7200))
             return ticket
+
+    # ── 消息通知 ──
+
+    async def send_card_message(
+        self,
+        open_id: str,
+        title: str,
+        content_lines: list[str],
+        link_url: str = "",
+        link_text: str = "查看详情",
+    ) -> bool:
+        """通过飞书机器人给指定用户发卡片消息。"""
+        tenant_token = await self.get_tenant_access_token()
+        http = await self._ensure_http()
+
+        elements: list[dict[str, Any]] = []
+        for line in content_lines:
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line}})
+        if link_url:
+            elements.append({
+                "tag": "action", "actions": [{
+                    "tag": "button", "text": {"tag": "lark_md", "content": link_text},
+                    "url": link_url, "type": "default",
+                }],
+            })
+
+        card = {"header": {"title": {"tag": "plain_text", "content": title}, "template": "blue"}, "elements": elements}
+
+        try:
+            resp = await self._timed(f"send_card_message", http.post(
+                f"{FEISHU_BASE}/im/v1/messages?receive_id_type=open_id",
+                headers={"Authorization": f"Bearer {tenant_token}", "Content-Type": "application/json"},
+                json={"receive_id": open_id, "msg_type": "interactive", "content": json.dumps(card)},
+            ))
+            data = resp.json()
+            if data.get("code") != 0:
+                logger.warning("飞书消息发送失败 code=%s", data.get("code"))
+                return False
+            return True
+        except Exception:
+            logger.warning("飞书消息发送异常 open_id=%s", open_id, exc_info=True)
+            return False
+
+    async def list_group_members(self, chat_id: str) -> list[str]:
+        """获取群聊所有成员的 open_id 列表。"""
+        if not chat_id:
+            return []
+        tenant_token = await self.get_tenant_access_token()
+        http = await self._ensure_http()
+        members: list[str] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"member_id_type": "open_id", "page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            resp = await http.get(
+                f"{FEISHU_BASE}/im/v1/chats/{chat_id}/members",
+                headers={"Authorization": f"Bearer {tenant_token}"},
+                params=params,
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                logger.warning("获取群成员失败 chat_id=%s code=%s", chat_id, data.get("code"))
+                break
+            for item in data.get("data", {}).get("items", []):
+                mid = item.get("member_id")
+                if mid:
+                    members.append(mid)
+            if not data.get("data", {}).get("has_more"):
+                break
+            page_token = data.get("data", {}).get("page_token")
+        return members

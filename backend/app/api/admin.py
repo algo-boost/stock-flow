@@ -206,6 +206,59 @@ async def update_location_type(
     return success(types)
 
 
+# ── 审批人列表 ──
+
+@router.get("/approvers")
+async def list_approvers(
+    _user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """返回可选审批人列表（管理员 open_id + 姓名）。"""
+    admins: list[dict[str, str]] = []
+    for entry in settings.feishu_role_overrides.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = entry.split(":", 1)
+        if len(parts) >= 2 and parts[1].strip() == "ADMIN":
+            admins.append({"open_id": parts[0].strip(), "name": parts[0].strip()})
+    return success(admins)
+
+
+# ── 审批抄送设置 ──
+
+@router.get("/cc-settings")
+async def get_cc_settings(
+    _user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    return success({
+        "cc_enabled": settings.feishu_cc_enabled,
+        "cc_recipients": _cc_admin_ids(settings),
+    })
+
+
+@router.patch("/cc-settings")
+async def update_cc_settings(
+    enabled: bool = Query(...),
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    settings: Settings = Depends(get_settings),
+):
+    settings.feishu_cc_enabled = enabled
+    return success({"cc_enabled": enabled, "message": "抄送设置已更新"})
+
+
+def _cc_admin_ids(settings: Settings) -> list[str]:
+    ids: list[str] = []
+    for entry in settings.feishu_role_overrides.split(","):
+        entry = entry.strip()
+        if not entry: continue
+        parts = entry.split(":", 1)
+        if len(parts) >= 2 and parts[1].strip() == "ADMIN":
+            ids.append(parts[0].strip())
+    return ids
+
+
 # ── SQLite 缓存管理 ──
 
 @router.post("/sqlite-sync")

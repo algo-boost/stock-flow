@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Dialog, Form, Input, Stepper, Tabs, Toast } from "antd-mobile";
+import { ActionSheet, Button, Dialog, Form, Input, Stepper, Switch, Tabs, Toast } from "antd-mobile";
 import { useSearchParams } from "react-router-dom";
-import { getAdminAudit, getAdminOverview, updateStockRequest, updateTransaction } from "../api";
+import { getAdminAudit, getAdminOverview, updateStockRequest, updateTransaction, deleteTransaction, deleteStockRequest, getCcSettings, updateCcSettings } from "../api";
 import type { AdminAudit, AdminOverview, StockRequest, Transaction } from "../api/types";
 import { AuthGate, useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
@@ -13,6 +13,7 @@ import {
   WarehouseDashboard,
   type DashboardPeriod,
 } from "../components/WarehouseDashboard";
+import { ApprovalsPanel } from "../components/ApprovalsPanel";
 
 function formatDate(value?: string | null) {
   if (!value) return "-";
@@ -23,7 +24,8 @@ function formatDate(value?: string | null) {
 
 function ManageContent() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { canApprove, setPendingCount } = useAuth();
+  const { canApprove, setPendingCount, user } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
   const rawTab = searchParams.get("tab") ?? (canApprove ? "dashboard" : "locations");
   const activeTab = rawTab === "overview" ? "dashboard" : rawTab;
   const [period, setPeriod] = useState<DashboardPeriod>("7d");
@@ -31,15 +33,61 @@ function ManageContent() {
   const [audit, setAudit] = useState<AdminAudit | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ── 抄送设置 ──
+  const [ccEnabled, setCcEnabled] = useState(true);
+  const [ccChanging, setCcChanging] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    void getCcSettings().then((s) => setCcEnabled(s.cc_enabled)).catch(() => {});
+  }, [isAdmin]);
+
+  const toggleCc = async (checked: boolean) => {
+    setCcChanging(true);
+    try {
+      await updateCcSettings(checked);
+      setCcEnabled(checked);
+      Toast.show({ icon: "success", content: checked ? "抄送已开启" : "抄送已关闭" });
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "设置失败" });
+      setCcEnabled(!checked);
+    } finally { setCcChanging(false); }
+  };
+
   const [editTarget, setEditTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
   const [editQty, setEditQty] = useState(1);
   const [editRemark, setEditRemark] = useState("");
   const [editBusy, setEditBusy] = useState(false);
 
-  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
-    setEditTarget({ type, item });
-    setEditQty(Math.abs(item.quantity));
-    setEditRemark(item.remark ?? "");
+  // ── 操作菜单（修改/删除，仅 ADMIN） ──
+  const [menuTarget, setMenuTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
+  const openMenu = (type: "tx" | "req", item: Transaction | StockRequest) => setMenuTarget({ type, item });
+  const closeMenu = () => setMenuTarget(null);
+
+  const handleMenuAction = async (action: string) => {
+    if (!menuTarget) return;
+    const { type, item } = menuTarget;
+    setMenuTarget(null);
+    if (action === "edit") {
+      setEditTarget({ type, item });
+      setEditQty(Math.abs(item.quantity));
+      setEditRemark(item.remark ?? "");
+    } else if (action === "delete") {
+      const label = type === "tx"
+        ? `流水 · ${(item as Transaction).material_name ?? item.id}`
+        : `申请 · ${(item as StockRequest).material_name ?? item.id}`;
+      const confirmed = await Dialog.confirm({ content: `确定删除「${label}」？\n此操作不可恢复。` });
+      if (!confirmed) return;
+      setEditBusy(true);
+      try {
+        if (type === "tx") await deleteTransaction(item.id);
+        else await deleteStockRequest(item.id);
+        Toast.show({ icon: "success", content: "已删除" });
+        void load();
+      } catch (e) {
+        Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
+      } finally { setEditBusy(false); }
+    }
   };
   const closeEdit = () => setEditTarget(null);
 
@@ -154,11 +202,11 @@ function ManageContent() {
                       </div>
                     </div>
                     <div className="tx-qty">{tx.quantity > 0 ? `+${tx.quantity}` : tx.quantity}</div>
-                    <Button size="mini" fill="none" onClick={() => openEdit("tx", tx)}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>
-                        more_vert
-                      </span>
-                    </Button>
+                    {isAdmin && (
+                      <Button size="mini" fill="none" onClick={() => openMenu("tx", tx)}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }}>more_vert</span>
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -166,6 +214,18 @@ function ManageContent() {
               <EmptyState icon="📋" text="暂无审计流水" />
             )}
           </SectionCard>
+        </Tabs.Tab>
+
+        <Tabs.Tab title="审批" key="approvals">
+          {isAdmin && (
+            <SectionCard title="抄送设置" subtitle="新申请自动抄送所有管理员">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span>审批抄送通知</span>
+                <Switch checked={ccEnabled} loading={ccChanging} onChange={toggleCc} />
+              </div>
+            </SectionCard>
+          )}
+          <ApprovalsPanel onReviewed={() => void load()} />
         </Tabs.Tab>
       </Tabs>
 
@@ -187,6 +247,19 @@ function ManageContent() {
             </Form.Item>
           </Form>
         }
+      />
+
+      <ActionSheet
+        visible={menuTarget !== null}
+        actions={[
+          { text: "修改数据", key: "edit" },
+          { text: "删除记录", key: "delete", danger: true },
+        ]}
+        onClose={closeMenu}
+        onAction={async (action) => {
+          await handleMenuAction(String(action.key));
+        }}
+        cancelText="取消"
       />
     </Layout>
   );
