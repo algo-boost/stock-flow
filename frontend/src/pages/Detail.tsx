@@ -12,6 +12,7 @@ import { CardSkeleton, EmptyState, SectionCard, StatCard, TxBadge } from "../com
 import { inventorySlotKey } from "../utils/inventoryDisplay";
 import {
   openStockForMaterial,
+  persistShelfNav,
   readDetailNavState,
   resolveDetailBack,
   type DetailNavState,
@@ -23,7 +24,7 @@ export default function DetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const navState = readDetailNavState(location.state);
+  const navState = readDetailNavState(location.state, id);
   const handleBack = () => resolveDetailBack(navigate, navState);
   const { canInbound, canApprove } = useAuth();
   const [detail, setDetail] = useState<MaterialDetail | null>(null);
@@ -73,17 +74,17 @@ export default function DetailPage() {
     ]
       .filter(Boolean)
       .join(" · ");
-    navigate(`/shelves/${inv.location_id}${qs ? `?${qs}` : ""}`, {
-      state: {
-        backTo: `/materials/${material.id}`,
-        backState: {
-          backTo: navState.backTo,
-          backState: navState.backState,
-          fromLabel: navState.fromLabel,
-        },
-        fromLabel: slotLabel,
-      } satisfies ShelfNavState & DetailNavState,
-    });
+    const shelfState = {
+      backTo: `/materials/${material.id}`,
+      backState: {
+        backTo: navState.backTo,
+        backState: navState.backState,
+        fromLabel: navState.fromLabel,
+      },
+      fromLabel: slotLabel,
+    } satisfies ShelfNavState & DetailNavState;
+    persistShelfNav(inv.location_id, shelfState);
+    navigate(`/shelves/${inv.location_id}${qs ? `?${qs}` : ""}`, { state: shelfState });
   };
 
   if (!detail) {
@@ -99,7 +100,7 @@ export default function DetailPage() {
   const { material, inventory, total_quantity } = detail;
   const isLowStock = total_quantity < (material.min_stock ?? 5);
   const isEmpty = total_quantity <= 0;
-  const preferInbound = isLowStock || isEmpty;
+  const preferInbound = isEmpty;
   const recentTxs = txs.slice(0, 3);
   const categoryLabel = [material.major_category, material.sub_category ?? material.category_name]
     .filter(Boolean)
@@ -220,7 +221,7 @@ export default function DetailPage() {
         <SectionCard title="库位库存">
           {inventory.length === 0 ? (
             <EmptyState
-              icon="🏷️"
+              icon="tag"
               text="暂无库存"
               hint={canInbound ? "可点击下方「入库」上架" : "可提交入库申请"}
             />

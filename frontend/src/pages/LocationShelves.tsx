@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Popup, Toast } from "antd-mobile";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { listInventory, listLocations, searchMaterials } from "../api";
+import { fetchShelfMetaCached } from "../utils/cachedApi";
 import type { InventoryItem, Location, MaterialSearchItem } from "../api/types";
 import { useAuth } from "../components/AuthGate";
 import { LocationShelfGrid } from "../components/LocationShelfGrid";
@@ -9,6 +9,7 @@ import { Layout } from "../components/Layout";
 import { EmptyState, SectionCard } from "../components/ui";
 import {
   openMaterialDetail,
+  openStockPage,
   readShelfNavState,
   resolveShelfBack,
 } from "../utils/detailNavigation";
@@ -49,7 +50,7 @@ export default function LocationShelvesPage() {
   const { locationId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const shelfNav = readShelfNavState(location.state);
+  const shelfNav = readShelfNavState(location.state, locationId);
   const [searchParams, setSearchParams] = useSearchParams();
   const { canInbound } = useAuth();
   const [locations, setLocations] = useState<Location[]>([]);
@@ -61,11 +62,7 @@ export default function LocationShelvesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [locs, inv, materials] = await Promise.all([
-        listLocations(),
-        listInventory(),
-        searchMaterials("", { page: 1, size: 100 }),
-      ]);
+      const { locations: locs, inventory: inv, materials } = await fetchShelfMetaCached();
       setLocations(locs);
       setInventory(inv);
       setMaterialMap(new Map(materials.items.map((item) => [item.id, item])));
@@ -136,11 +133,20 @@ export default function LocationShelvesPage() {
 
   const openInboundAtSlot = () => {
     if (!slotPanel || !locationId) return;
-    const params = new URLSearchParams({ tab: "inbound", location_id: locationId });
-    if (slotPanel.row > 0) params.set("row", String(slotPanel.row));
-    if (slotPanel.column != null) params.set("column", String(slotPanel.column));
+    const shelfQs = searchParams.toString();
+    const shelfBack = `/shelves/${locationId}${shelfQs ? `?${shelfQs}` : ""}`;
     setSlotPanel(null);
-    navigate(`/stock?${params.toString()}`);
+    openStockPage(navigate, "inbound", {
+      materialBackTo: shelfBack,
+      detailBackTo: shelfNav.backTo,
+      detailBackState: shelfNav.backState,
+      fromLabel: slotPanel.label,
+      searchParams: {
+        location_id: locationId,
+        row: slotPanel.row > 0 ? slotPanel.row : undefined,
+        column: slotPanel.column ?? undefined,
+      },
+    });
   };
 
   const closeSlotPanel = () => {
@@ -156,7 +162,7 @@ export default function LocationShelvesPage() {
   if (loading && locations.length === 0) {
     return (
       <Layout title="货架格位">
-        <EmptyState icon="⏳" text="加载中…" />
+        <EmptyState loading text="加载中…" />
       </Layout>
     );
   }
@@ -164,7 +170,7 @@ export default function LocationShelvesPage() {
   if (!activeLocation) {
     return (
       <Layout title="货架格位">
-        <EmptyState icon="📍" text="库位不存在" hint="请从首页库位分类进入" />
+        <EmptyState icon="location" text="库位不存在" hint="请从首页库位分类进入" />
       </Layout>
     );
   }
@@ -247,7 +253,7 @@ export default function LocationShelvesPage() {
             </div>
             {slotPanel.items.length === 0 ? (
               <>
-                <EmptyState icon="📦" text="此格为空" hint={canInbound ? "可在此格入库上架" : "请联系库管入库"} />
+                <EmptyState icon="package" text="此格为空" hint={canInbound ? "可在此格入库上架" : "请联系库管入库"} />
                 {canInbound && (
                   <div className="popup-panel-actions">
                     <Button color="primary" block onClick={openInboundAtSlot}>

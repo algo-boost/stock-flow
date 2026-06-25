@@ -5,7 +5,7 @@ import { listPendingReturns } from "../api";
 import type { PendingReturn } from "../api/types";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard } from "./ui";
-import { openMaterialDetail } from "../utils/detailNavigation";
+import { openMaterialDetail, openStockPage } from "../utils/detailNavigation";
 import { formatHistoryDate } from "../utils/historyDisplay";
 
 interface PendingReturnsPanelProps {
@@ -13,7 +13,10 @@ interface PendingReturnsPanelProps {
   showBorrowerFilter?: boolean;
 }
 
-export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingReturnsPanelProps) {
+export function PendingReturnsPanel({
+  showBorrowerFilter = false,
+  active = true,
+}: PendingReturnsPanelProps & { active?: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { canInbound } = useAuth();
@@ -36,10 +39,12 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
   }, [borrowerFilter, showBorrowerFilter]);
 
   useEffect(() => {
+    if (!active) return;
     void load();
-  }, [load, location.key]);
+  }, [load, active]);
 
   useEffect(() => {
+    if (!active) return;
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void load();
@@ -47,16 +52,19 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [load]);
+  }, [load, active]);
 
   const goReturn = (item: PendingReturn) => {
-    const params = new URLSearchParams({
-      tab: "inbound",
-      material_id: item.material_id,
-      qty: String(item.quantity),
-      return_note: "归还",
+    openStockPage(navigate, "inbound", {
+      materialId: item.material_id,
+      materialBackTo: "/history?view=returns",
+      detailBackTo: "/history?view=returns",
+      searchParams: {
+        location_id: item.location_id,
+        qty: item.quantity,
+        return_note: "归还",
+      },
     });
-    navigate(`/stock?${params.toString()}`);
   };
 
   const overdueCount = items.filter((item) => item.overdue).length;
@@ -98,7 +106,8 @@ export function PendingReturnsPanel({ showBorrowerFilter = false }: PendingRetur
       <SectionCard title="待归还清单">
         {items.length === 0 ? (
           <EmptyState
-            icon="✅"
+            loading={loading}
+            icon="check-circle"
             text={loading ? "加载中…" : "暂无待归还物料"}
             hint={
               showBorrowerFilter

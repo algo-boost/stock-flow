@@ -43,7 +43,14 @@ def test_parse_request_remark_not_required():
     assert return_due_at is None
 
 
-def test_parse_request_remark_with_approval_suffix():
+def test_format_outbound_remark_empty_note():
+    encoded = format_outbound_remark(None, return_required=False)
+    assert encoded == "无须归还"
+    remark, row, column, return_required, return_due_at = parse_request_remark(encoded)
+    assert remark in (None, "无须归还")
+    assert return_required in (None, False)
+    assert row is None
+    assert return_due_at is None
     remark, row, column, return_required, return_due_at = parse_request_remark(
         "测试 | 需归还：2026-06-30；审批人：杨忠银"
     )

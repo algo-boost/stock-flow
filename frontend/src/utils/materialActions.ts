@@ -1,11 +1,13 @@
-/** 快捷操作 → Material Symbols 图标 */
-export const ACTION_ICONS: Record<string, string> = {
-  outbound: "north",
-  inbound: "south",
-  "req-outbound": "north",
-  "req-inbound": "south",
-  transfer: "swap_horiz",
-  purchase: "add_shopping_cart",
+/** 快捷操作 → 飞书 UD 图标 */
+import type { FeishuIconName } from "../components/FeishuIcon";
+
+export const ACTION_ICONS: Record<string, FeishuIconName> = {
+  outbound: "arrow-up",
+  inbound: "arrow-down",
+  "req-outbound": "arrow-up",
+  "req-inbound": "arrow-down",
+  transfer: "swap",
+  purchase: "cart-add",
   edit: "edit",
   detail: "info",
 };

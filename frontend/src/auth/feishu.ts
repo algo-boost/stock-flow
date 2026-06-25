@@ -26,6 +26,15 @@ declare global {
         success: (res: { code: string }) => void;
         fail: (err: unknown) => void;
       }) => void;
+      scanCode?: (opts: {
+        scanType?: string[];
+        barCodeInput?: boolean;
+        success?: (res: { result?: string; code?: string }) => void;
+        fail?: (err: unknown) => void;
+      }) => void;
+      setNavigationBar?: (opts: Record<string, unknown>) => void;
+      onLeftNavigationBarClick?: (opts: Record<string, unknown>) => void;
+      setNavigationBarColor?: (opts: Record<string, unknown>) => void;
     };
   }
 }
@@ -39,25 +48,55 @@ export function currentFeishuPageUrl(): string {
   return window.location.href.split("#")[0].split("?")[0];
 }
 
-/** 免登必须在已配置的重定向 URL 上发起。飞书工作台入口 URL 设为 "/" 可跳过此跳转。 */
-export function redirectToLoginHomeIfNeeded(): boolean {
-  const { pathname, search, origin } = window.location;
-  // 已在首页，直接免登
-  if (pathname === "/" || pathname === "") return true;
-  // 其他路径：先跳回首屏完成免登，再回到目标页
-  // 仅在首次登录时触发一次（有 post_login_redirect 标记说明已回过首页）
-  if (sessionStorage.getItem("post_login_redirect")) return true;
-  sessionStorage.setItem("post_login_redirect", pathname + search);
-  window.location.replace(`${origin}/`);
-  return false;
+/** 当前页 URL 不在飞书重定向白名单时的 errno */
+export function isFeishuRedirectUrlError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("10236") || msg.includes("不在重定向 URL") || msg.includes("重定向 URL 列表");
 }
 
-export function consumePostLoginRedirect(): void {
+/** 记录目标路径并跳转到首页完成免登（仅白名单失败时使用） */
+export function scheduleLoginHomeRedirect(): void {
+  const { pathname, search, origin } = window.location;
+  if (pathname === "/" || pathname === "") return;
+  if (!sessionStorage.getItem("post_login_redirect")) {
+    sessionStorage.setItem("post_login_redirect", pathname + search);
+  }
+  window.location.replace(`${origin}/`);
+}
+
+/** 免登：优先在当前页发起；白名单不包含当前 URL 时由 feishuLoginWithRedirectFallback 回退跳转 */
+export function redirectToLoginHomeIfNeeded(): boolean {
+  return true;
+}
+
+export function consumePostLoginRedirect(): boolean {
   const back = sessionStorage.getItem("post_login_redirect");
-  if (!back) return;
+  if (!back) return false;
+  const target = back.startsWith("/") ? back : `/${back}`;
   sessionStorage.removeItem("post_login_redirect");
-  // 用 replace 而非 href，避免多余的浏览器历史记录
-  window.location.replace(window.location.origin + back);
+  if (target === `${window.location.pathname}${window.location.search}`) {
+    return false;
+  }
+  window.history.replaceState(null, "", target);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  return true;
+}
+
+/** 飞书免登，当前 URL 不在白名单时自动回退到首页免登 */
+export async function feishuLoginWithRedirectFallback(): Promise<{
+  token: string;
+  user: User;
+  role_meta?: RoleMeta | null;
+}> {
+  try {
+    return await feishuLogin();
+  } catch (err) {
+    if (isFeishuRedirectUrlError(err)) {
+      scheduleLoginHomeRedirect();
+      throw new Error("正在跳转登录页…");
+    }
+    throw err;
+  }
 }
 
 function hasLoginApi(): boolean {
@@ -174,6 +213,49 @@ function runWhenReady(fn: () => void): void {
     window.h5sdk.ready(fn);
   } else {
     fn();
+  }
+}
+
+/** 供导航等 JSAPI 使用 */
+export function runWhenFeishuReady(fn: () => void): void {
+  runWhenReady(fn);
+}
+
+const JSAPI_LIST = [
+  "setNavigationBar",
+  "onLeftNavigationBarClick",
+  "setNavigationBarColor",
+  "scanCode",
+];
+
+/** 完成 JSAPI 鉴权，供导航栏等能力调用 */
+export async function configureFeishuJsapi(): Promise<boolean> {
+  if (!isFeishuClient() || !window.h5sdk?.config) return false;
+  try {
+    const pageUrl = currentFeishuPageUrl();
+    const config = await fetchApiData<{
+      appId: string;
+      timestamp: number;
+      nonceStr: string;
+      signature: string;
+      mock?: boolean;
+    }>(`/auth/jsapi-config?url=${encodeURIComponent(pageUrl)}`);
+
+    if (config.mock) return false;
+
+    return await new Promise<boolean>((resolve) => {
+      window.h5sdk!.config({
+        appId: config.appId,
+        timestamp: config.timestamp,
+        nonceStr: config.nonceStr,
+        signature: config.signature,
+        jsApiList: JSAPI_LIST,
+        onSuccess: () => resolve(true),
+        onFail: () => resolve(false),
+      });
+    });
+  } catch {
+    return false;
   }
 }
 

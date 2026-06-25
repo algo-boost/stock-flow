@@ -137,7 +137,7 @@ function LocationFormContent() {
     return (
       <Layout title={isEdit ? "编辑库位" : "新增库位"}>
         <SectionCard>
-          <EmptyState icon="⏳" text="加载中…" />
+          <EmptyState loading text="加载中…" />
         </SectionCard>
       </Layout>
     );
@@ -224,7 +224,7 @@ function LocationFormDenied() {
   return (
     <Layout title="库位管理">
       <SectionCard>
-        <EmptyState icon="🔒" text="暂无库位维护权限" hint="库位维护需要库管员或管理员角色" />
+        <EmptyState icon="lock" text="暂无库位维护权限" hint="库位维护需要库管员或管理员角色" />
       </SectionCard>
     </Layout>
   );

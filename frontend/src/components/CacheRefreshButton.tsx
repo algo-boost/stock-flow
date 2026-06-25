@@ -1,33 +1,45 @@
 import { useState } from "react";
 import { Button, Toast } from "antd-mobile";
+import { invalidateDataCache } from "../utils/dataCache";
 import { refreshBitableCache } from "../api";
+import { FeishuIcon } from "./FeishuIcon";
 
+/** 库管/管理员：手动刷新 Bitable 读缓存 */
 export function CacheRefreshButton({ onRefreshed }: { onRefreshed?: () => Promise<void> | void }) {
-  const [refreshing, setRefreshing] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const onClick = async () => {
-    setRefreshing(true);
+  const handleRefresh = async () => {
+    setBusy(true);
     try {
+      invalidateDataCache("meta:");
+      invalidateDataCache("tx:");
       const result = await refreshBitableCache();
-      await onRefreshed?.();
-      const failedCount = Object.keys(result.failed ?? {}).length;
+      const summary = result.message
+        || (Object.entries(result.tables ?? {})
+          .map(([name, count]) => `${name} ${count}`)
+          .join(" · ") || "缓存已刷新");
       Toast.show({
-        icon: failedCount > 0 ? "fail" : "success",
-        content:
-          failedCount > 0
-            ? `${result.message}（${failedCount} 张表失败）`
-            : result.message || "缓存已刷新",
+        icon: "success",
+        content: summary,
       });
+      void onRefreshed?.();
     } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "刷新缓存失败" });
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "刷新失败" });
     } finally {
-      setRefreshing(false);
+      setBusy(false);
     }
   };
 
   return (
-    <Button size="small" fill="outline" loading={refreshing} onClick={onClick}>
-      刷新缓存
+    <Button
+      size="small"
+      fill="outline"
+      loading={busy}
+      onClick={() => void handleRefresh()}
+      className="cache-refresh-btn"
+    >
+      <FeishuIcon name="refresh" size={16} />
+      <span>刷新数据缓存</span>
     </Button>
   );
 }

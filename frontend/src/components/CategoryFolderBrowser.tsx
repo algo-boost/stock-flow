@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { Category } from "../api/types";
 import { getCategoryChildren, getCategoryPath } from "../utils/categoryTree";
+import { FeishuIcon } from "./FeishuIcon";
 
 interface CategoryFolderBrowserProps {
   categories: Category[];
@@ -49,9 +50,11 @@ export function CategoryFolderBrowser({
             const hasChildren = getCategoryChildren(categories, cat.id).length > 0;
             return (
               <button key={cat.id} type="button" className="folder-tile" onClick={() => onOpenFolder(cat.id)}>
-                <span className="material-symbols-outlined folder-tile-icon" aria-hidden>
-                  {hasChildren ? "folder" : "folder_open"}
-                </span>
+                <FeishuIcon
+                  name={hasChildren ? "folder" : "folder-open"}
+                  size={28}
+                  className="folder-tile-icon"
+                />
                 <span className="folder-tile-name">{cat.name}</span>
                 <span className="folder-tile-meta">
                   {count > 0 ? `${count} 种` : "空"}

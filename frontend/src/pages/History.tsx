@@ -1,28 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActionSheet, Button, Dialog, Form, Input, SearchBar, Selector, Stepper, Toast } from "antd-mobile";
+import { Button, Form, Input, SearchBar, Selector, Toast } from "antd-mobile";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import {
-  listApprovalRequests,
-  listCategories,
   listMyRequests,
-  deleteTransaction,
-  listTransactions,
   searchMaterials,
-  updateTransaction,
-  updateStockRequest,
 } from "../api";
-import type { Category, StockRequest, StockRequestStatus, Transaction } from "../api/types";
+import type { Category, StockRequest, StockRequestStatus } from "../api/types";
+import { fetchCategoriesCached } from "../utils/cachedApi";
+import { prefetchModule } from "../utils/dataCache";
 import { formatReturnPlan } from "../utils/requestDisplay";
 import {
   DateRangePreset,
   TxTypeFilter,
-  filterTransactions,
   formatHistoryDate,
-  formatTxQuantity,
   parsePipeRemark,
-  resolveDateRange,
   sortRequestsByPriority,
 } from "../utils/historyDisplay";
+import { buildTransactionQueryParams, type TransactionQueryState } from "../utils/transactionQuery";
 import { openMaterialDetail } from "../utils/detailNavigation";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
@@ -65,77 +59,14 @@ function requestViewHint(view: RequestView): string {
   if (view === "待审批") return "等待管理员审批的申请会显示在这里";
   if (view === "已拒绝") return "被拒绝的申请及原因会显示在这里";
   if (view === "已通过") return "审批通过的申请记录；实际库存变更见下方流水";
-  return "全部申请记录；已通过项也可在下方流水中查看";
-}
-
-function TransactionRow({
-  tx,
-  onOpenMaterial,
-  canEdit,
-  onEdit,
-  onDelete,
-}: {
-  tx: Transaction;
-  onOpenMaterial: (materialId: string) => void;
-  canEdit?: boolean;
-  onEdit?: (tx: Transaction) => void;
-  onDelete?: (tx: Transaction) => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const parsed = parsePipeRemark(tx.remark);
-  return (
-    <div className="tx-item">
-      <TxBadge type={tx.type} />
-      <div className="tx-main">
-        <button
-          type="button"
-          className="history-link-title tx-title"
-          onClick={() => onOpenMaterial(tx.material_id)}
-        >
-          {tx.material_name ?? tx.material_id} · {tx.location_name ?? tx.location_id}
-        </button>
-        <div className="tx-meta">
-          {tx.operator} · {formatHistoryDate(tx.created_at)}
-        </div>
-        {parsed.note && <div className="tx-meta">说明：{parsed.note}</div>}
-        {parsed.slot && <div className="tx-meta">格位：{parsed.slot}</div>}
-        {parsed.returnPlan && <div className="tx-meta">归还：{parsed.returnPlan}</div>}
-        {parsed.approver && parsed.approver !== tx.operator && (
-          <div className="tx-meta">审批人：{parsed.approver}</div>
-        )}
-      </div>
-      <div className={`tx-qty ${tx.type === "出库" ? "tx-qty-out" : tx.type === "入库" ? "tx-qty-in" : ""}`}>
-        {formatTxQuantity(tx.type, tx.quantity)}
-      </div>
-      {canEdit && (onEdit || onDelete) && (
-        <Button size="mini" fill="none" onClick={() => setMenuOpen(true)}>
-          <span className="material-symbols-outlined" style={{fontSize:18}}>more_vert</span>
-        </Button>
-      )}
-      <ActionSheet
-        visible={menuOpen}
-        actions={[
-          ...(onEdit ? [{ text: "纠错", key: "edit" }] : []),
-          ...(onDelete && tx.type !== "移动" ? [{ text: "删除流水", key: "delete", danger: true }] : []),
-        ]}
-        cancelText="取消"
-        onClose={() => setMenuOpen(false)}
-        onAction={(action) => {
-          setMenuOpen(false);
-          if (action.key === "edit") onEdit?.(tx);
-          if (action.key === "delete") onDelete?.(tx);
-        }}
-      />
-    </div>
-  );
+  return "全部申请记录；已通过项也可在流水中查看";
 }
 
 export default function HistoryPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { canApprove, canInbound, pendingCount } = useAuth();
-  const isAdmin = canApprove;
+  const { canApprove, canInbound, pendingCount, user } = useAuth();
   const staffHistoryOptions = useMemo(() => {
     const opts: Array<{ label: string; value: StaffHistoryView }> = [];
     if (canApprove) {
@@ -173,7 +104,6 @@ export default function HistoryPage() {
 
   const [staffView, setStaffView] = useState<StaffHistoryView>(resolveStaffView);
   const [userView, setUserView] = useState<UserHistoryView>(resolveUserView);
-  const [txs, setTxs] = useState<Transaction[]>([]);
   const [requests, setRequests] = useState<StockRequest[]>([]);
   const [keyword, setKeyword] = useState(() => searchParams.get("q") ?? "");
   const [requestView, setRequestView] = useState<RequestView>("待审批");
@@ -185,46 +115,14 @@ export default function HistoryPage() {
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [txTypeFilter, setTxTypeFilter] = useState<TxTypeFilter>("ALL");
-  const [quickLocationId, setQuickLocationId] = useState("");
-  const [quickOperator, setQuickOperator] = useState("");
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [advancedFiltersExpanded, setAdvancedFiltersExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  // ── 纠错弹窗 ──
-  const [editTarget, setEditTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
-  const [editQty, setEditQty] = useState(1);
-  const [editRemark, setEditRemark] = useState("");
-  const [editBusy, setEditBusy] = useState(false);
-
-  const openEdit = (type: "tx" | "req", item: Transaction | StockRequest) => {
-    setEditTarget({ type, item });
-    setEditQty(Math.abs(item.quantity));
-    setEditRemark(item.remark ?? "");
-  };
-  const closeEdit = () => setEditTarget(null);
-
-  const submitEdit = async () => {
-    if (!editTarget) return;
-    setEditBusy(true);
-    try {
-      const payload = {
-        quantity: editQty,
-        remark: editRemark.trim() || undefined,
-      };
-      if (editTarget.type === "tx") {
-        await updateTransaction(editTarget.item.id, payload);
-      } else {
-        await updateStockRequest(editTarget.item.id, payload);
-      }
-      Toast.show({ icon: "success", content: "已修正" });
-      closeEdit();
-      void load();
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "修正失败" });
-    } finally {
-      setEditBusy(false);
-    }
-  };
+  const [everMounted, setEverMounted] = useState<Record<string, boolean>>(() => ({
+    transactions: true,
+    requests: !canInbound,
+    approvals: canApprove && pendingCount > 0,
+    returns: false,
+  }));
 
   useEffect(() => {
     if (canInbound) {
@@ -268,109 +166,119 @@ export default function HistoryPage() {
   const showUserTransactions = !canInbound && userView === "transactions";
   const showStaffTransactions = canInbound && staffView === "transactions";
   const trimmedKeyword = keyword.trim();
-  const displayedTxs = useMemo(
-    () => filterTransactions(txs, txTypeFilter, quickOperator, quickLocationId),
-    [txs, txTypeFilter, quickOperator, quickLocationId],
-  );
 
-  const locationChips = useMemo(() => {
-    const map = new Map<string, { name: string; count: number }>();
-    for (const tx of txs) {
-      const entry = map.get(tx.location_id) ?? { name: tx.location_name ?? tx.location_id, count: 0 };
-      entry.count += 1;
-      map.set(tx.location_id, entry);
-    }
-    return [...map.entries()]
-      .sort((a, b) => b[1].count - a[1].count)
-      .slice(0, 6)
-      .map(([id, meta]) => ({ id, name: meta.name, count: meta.count }));
-  }, [txs]);
-
-  const operatorChips = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const tx of txs) {
-      if (!tx.operator) continue;
-      map.set(tx.operator, (map.get(tx.operator) ?? 0) + 1);
-    }
-    return [...map.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([name, count]) => ({ name, count }));
-  }, [txs]);
-
-  const confirmDeleteTx = async (tx: Transaction) => {
-    if (tx.type === "移动") {
-      Toast.show({ icon: "fail", content: "移动流水请用反向移动冲正，不可直接删除" });
-      return;
-    }
-    const summary = `${tx.material_name ?? tx.material_id}\n${tx.location_name ?? tx.location_id}\n${formatTxQuantity(tx.type, tx.quantity)} · ${tx.operator}`;
-    const revertHint =
-      tx.type === "入库"
-        ? "删除后将扣减对应库存。"
-        : tx.type === "出库"
-          ? "删除后将加回对应库存。"
-          : "";
-    const confirmed = await Dialog.confirm({
-      title: "确认删除流水",
-      content: `${summary}\n\n${revertHint}删除后不可恢复。`,
-      confirmText: "删除",
-      cancelText: "取消",
-    });
-    if (!confirmed) return;
-    try {
-      await deleteTransaction(tx.id);
-      Toast.show({ icon: "success", content: "流水已删除" });
-      void load();
-    } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
-    }
+  const goToTransactionResults = () => {
+    navigateTx(getTxQueryState());
   };
 
-  const load = useCallback(async (nextKeyword = keyword) => {
+  const getTxQueryState = (overrides?: Partial<TransactionQueryState>): TransactionQueryState => ({
+    keyword,
+    txType: txTypeFilter,
+    operator,
+    locationId: "",
+    datePreset,
+    customStartDate,
+    customEndDate,
+    page: 1,
+    ...overrides,
+  });
+
+  const navigateTx = (state: TransactionQueryState) => {
+    navigate(`/history/transactions?${buildTransactionQueryParams(state).toString()}`);
+  };
+
+  const syncTxFilterState = (state: TransactionQueryState) => {
+    setKeyword(state.keyword);
+    setTxTypeFilter(state.txType);
+    setOperator(state.operator);
+    setDatePreset(state.datePreset);
+    setCustomStartDate(state.customStartDate);
+    setCustomEndDate(state.customEndDate);
+    setSuggestions([]);
+    setOperatorSuggestions([]);
+  };
+
+  const applyTxPreset = (preset: "7d" | "7d-out" | "mine") => {
+    const overrides =
+      preset === "7d"
+        ? { datePreset: "7d" as const, txType: "ALL" as const, operator: "", customStartDate: "", customEndDate: "" }
+        : preset === "7d-out"
+          ? { datePreset: "7d" as const, txType: "出库" as const, operator: "", customStartDate: "", customEndDate: "" }
+          : {
+              datePreset: "7d" as const,
+              txType: "ALL" as const,
+              operator: user?.name ?? "",
+              customStartDate: "",
+              customEndDate: "",
+            };
+    const next = getTxQueryState(overrides);
+    syncTxFilterState(next);
+    navigateTx(next);
+  };
+
+  const clearAllTxFilters = () => {
+    const next = getTxQueryState({
+      keyword: "",
+      txType: "ALL",
+      operator: "",
+      datePreset: "all",
+      customStartDate: "",
+      customEndDate: "",
+    });
+    syncTxFilterState(next);
+  };
+
+  const hasActiveTxFilters =
+    Boolean(trimmedKeyword) ||
+    txTypeFilter !== "ALL" ||
+    (canApprove && (datePreset !== "all" || Boolean(operator.trim())));
+
+  const activePreset =
+    datePreset === "7d" && !operator.trim() && !trimmedKeyword
+      ? txTypeFilter === "出库"
+        ? "7d-out"
+        : txTypeFilter === "ALL"
+          ? "7d"
+          : null
+      : datePreset === "7d" && txTypeFilter === "ALL" && operator.trim() === (user?.name ?? "").trim() && !trimmedKeyword
+        ? "mine"
+        : null;
+
+  const loadRequests = useCallback(async (nextKeyword = keyword) => {
+    if (canInbound) return;
     setLoading(true);
     try {
       const search = nextKeyword.trim() || undefined;
-      const range = resolveDateRange(datePreset, customStartDate, customEndDate);
-      const txPromise = listTransactions({
+      const reqData = await listMyRequests({
+        limit: 100,
         keyword: search,
-        operator: canApprove ? operator.trim() || undefined : undefined,
-        startAt: range.startAt,
-        endAt: range.endAt,
-        limit: 300,
+        status: requestView === "ALL" ? undefined : requestView,
       });
-      const reqPromise = canApprove
-        ? Promise.resolve([])
-        : listMyRequests({
-            limit: 100,
-            keyword: search,
-            status: requestView === "ALL" ? undefined : requestView,
-          });
-      const [txData, reqData] = await Promise.all([txPromise, reqPromise]);
-      setTxs(txData);
       setRequests(sortRequestsByPriority(reqData));
     } catch (e) {
-      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载历史失败" });
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载申请失败" });
     } finally {
       setLoading(false);
     }
-  }, [canApprove, customEndDate, customStartDate, datePreset, keyword, operator, requestView]);
+  }, [canInbound, keyword, requestView]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (showUserRequests) void loadRequests();
+  }, [loadRequests, showUserRequests]);
 
   useEffect(() => {
-    if (!canApprove) return;
-    void listApprovalRequests({ status: "待审批", limit: 200 })
-      .then((items) => {
-        /* pendingCount 由 Layout / Manage 通过 useAuth 同步 */
-        void items;
-      })
-      .catch(() => undefined);
-  }, [canApprove, txs]);
+    const tab = canInbound ? staffView : userView;
+    setEverMounted((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+  }, [canInbound, staffView, userView]);
 
   useEffect(() => {
-    void listCategories()
+    if (showStaffTransactions || showUserTransactions) {
+      prefetchModule(() => import("./HistoryTransactionResults"));
+    }
+  }, [showStaffTransactions, showUserTransactions]);
+
+  useEffect(() => {
+    void fetchCategoriesCached()
       .then(setCategories)
       .catch(() => setCategories([]));
   }, []);
@@ -433,18 +341,13 @@ export default function HistoryPage() {
   const memberSuggestionPool = useMemo(() => {
     const seen = new Set<string>();
     const result: SearchSuggestion[] = [];
-    for (const tx of txs) {
-      if (!tx.operator || tx.operator === "未知" || seen.has(tx.operator)) continue;
-      seen.add(tx.operator);
-      result.push({ label: tx.operator, value: tx.operator, hint: "流水操作人" });
-    }
     for (const req of requests) {
       if (!req.requester_name || req.requester_name === "未知" || seen.has(req.requester_name)) continue;
       seen.add(req.requester_name);
       result.push({ label: req.requester_name, value: req.requester_name, hint: "申请人" });
     }
     return result;
-  }, [requests, txs]);
+  }, [requests]);
 
   useEffect(() => {
     if (!canApprove) {
@@ -466,7 +369,6 @@ export default function HistoryPage() {
   const chooseSuggestion = (suggestion: SearchSuggestion) => {
     setKeyword(suggestion.value);
     setSuggestions([]);
-    void load(suggestion.value);
   };
 
   const chooseOperatorSuggestion = (suggestion: SearchSuggestion) => {
@@ -480,18 +382,12 @@ export default function HistoryPage() {
     openMaterialDetail(navigate, materialId, { backTo });
   };
 
-  const txSectionTitle = loading
-    ? "加载中…"
-    : txTypeFilter === "ALL"
-      ? `已执行流水 ${displayedTxs.length} 条`
-      : `已执行流水 ${displayedTxs.length} 条（${txTypeFilter}，共 ${txs.length} 条）`;
-
   return (
     <>
     <Layout title="历史">
       {canApprove && pendingCount > 0 && (
         <div className="history-pending-banner">
-          <span>待审批 {pendingCount} 条，请在飞书审批中处理</span>
+          <span>待审批 {pendingCount} 条，管理员可在下方审批记录中处理</span>
           <Button
             size="small"
             color="primary"
@@ -505,7 +401,7 @@ export default function HistoryPage() {
 
       {canInbound ? (
         <Selector
-          className="view-tabs"
+          className="view-tabs sticky-subnav"
           options={staffHistoryOptions}
           value={[staffView]}
           onChange={(arr) =>
@@ -514,20 +410,26 @@ export default function HistoryPage() {
         />
       ) : (
         <Selector
-          className="view-tabs"
+          className="view-tabs sticky-subnav"
           options={userHistoryOptions}
           value={[userView]}
           onChange={(arr) => setUserHistoryView((arr[0] as UserHistoryView | undefined) ?? "requests")}
         />
       )}
 
-      {staffView === "approvals" ? (
-        <ApprovalRecords />
-      ) : showReturnsView ? (
-        <PendingReturnsPanel showBorrowerFilter={canInbound} />
-      ) : (
-        <>
-      {(showStaffTransactions || showUserTransactions || canApprove) && (
+      {everMounted.approvals && canApprove && (
+        <div className="history-tab-pane" hidden={staffView !== "approvals"}>
+          <ApprovalRecords active={staffView === "approvals"} />
+        </div>
+      )}
+
+      {everMounted.returns && (
+        <div className="history-tab-pane" hidden={!showReturnsView}>
+          <PendingReturnsPanel active={showReturnsView} showBorrowerFilter={canInbound} />
+        </div>
+      )}
+
+      {(showStaffTransactions || showUserTransactions) && (
       <SectionCard
         title={canApprove ? "出入库流水" : "我的流水"}
         subtitle={canApprove ? undefined : undefined}
@@ -536,11 +438,10 @@ export default function HistoryPage() {
           placeholder="搜索物品 / 库位 / 备注"
           value={keyword}
           onChange={setKeyword}
-          onSearch={() => void load()}
+          onSearch={goToTransactionResults}
           onClear={() => {
             setKeyword("");
             setSuggestions([]);
-            void load("");
           }}
         />
         {suggestions.length > 0 && (
@@ -561,6 +462,7 @@ export default function HistoryPage() {
 
         {(showStaffTransactions || showUserTransactions) && (
           <div className="filter-quick-row history-tx-quick">
+            <span className="filter-quick-label">类型</span>
             {TX_TYPE_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
@@ -574,159 +476,183 @@ export default function HistoryPage() {
           </div>
         )}
 
-        {canInbound && (showStaffTransactions || showUserTransactions) && operatorChips.length > 0 && (
-          <div className="filter-quick-row history-tx-quick">
-            <span className="filter-quick-label">操作人</span>
-            {operatorChips.map((chip) => (
-              <button
-                key={chip.name}
-                type="button"
-                className={`filter-quick-chip ${quickOperator === chip.name ? "filter-quick-chip-active" : ""}`}
-                onClick={() => setQuickOperator((v) => (v === chip.name ? "" : chip.name))}
-              >
-                {chip.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {canInbound && (showStaffTransactions || showUserTransactions) && locationChips.length > 0 && (
-          <div className="filter-quick-row history-tx-quick">
-            <span className="filter-quick-label">库位</span>
-            {locationChips.map((chip) => (
-              <button
-                key={chip.id}
-                type="button"
-                className={`filter-quick-chip ${quickLocationId === chip.id ? "filter-quick-chip-active" : ""}`}
-                onClick={() => setQuickLocationId((v) => (v === chip.id ? "" : chip.id))}
-              >
-                {chip.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {canInbound && (quickOperator || quickLocationId) && (
-          <div className="history-active-filters">
-            {quickOperator && (
-              <button type="button" className="history-filter-tag" onClick={() => setQuickOperator("")}>
-                操作人：{quickOperator} ×
-              </button>
-            )}
-            {quickLocationId && (
-              <button type="button" className="history-filter-tag" onClick={() => setQuickLocationId("")}>
-                库位：{locationChips.find((c) => c.id === quickLocationId)?.name ?? quickLocationId} ×
-              </button>
-            )}
-          </div>
-        )}
-
-        {canApprove && (
-          <div className="history-admin-quick">
-            <Form.Item label="时间范围">
-              <Selector
-                options={DATE_PRESET_OPTIONS}
-                value={[datePreset]}
-                onChange={(arr) => {
-                  const next = (arr[0] as DateRangePreset | undefined) ?? "all";
-                  setDatePreset(next);
-                  if (next !== "custom") {
-                    setCustomStartDate("");
-                    setCustomEndDate("");
-                  }
-                }}
-              />
-            </Form.Item>
-            {datePreset === "custom" && (
-              <div className="history-date-row">
-                <label className="history-date-field">
-                  <span>开始</span>
-                  <input
-                    className="native-date-input"
-                    type="date"
-                    value={customStartDate}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
-                  />
-                </label>
-                <label className="history-date-field">
-                  <span>结束</span>
-                  <input
-                    className="native-date-input"
-                    type="date"
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-            <Form.Item label="流水类型">
-              <Selector
-                options={TX_TYPE_OPTIONS}
-                value={[txTypeFilter]}
-                onChange={(arr) => setTxTypeFilter((arr[0] as TxTypeFilter | undefined) ?? "ALL")}
-              />
-            </Form.Item>
+        {canApprove && (showStaffTransactions || showUserTransactions) && (
+          <div className="filter-quick-row history-tx-presets">
+            <span className="filter-quick-label">快捷</span>
             <button
               type="button"
-              className="history-filter-toggle"
-              onClick={() => setFiltersExpanded((v) => !v)}
+              className={`filter-quick-chip ${activePreset === "7d" ? "filter-quick-chip-active" : ""}`}
+              onClick={() => applyTxPreset("7d")}
             >
-              {filtersExpanded ? "收起成员筛选 ▲" : "按成员筛选 ▼"}
+              近7天
             </button>
-            {filtersExpanded && (
-              <Form layout="vertical" className="form-card history-filters">
-                <Form.Item label="成员（操作人）">
-                  <Input
-                    value={operator}
-                    onChange={setOperator}
-                    placeholder="输入成员姓名后匹配"
-                    clearable
-                  />
-                  {operatorSuggestions.length > 0 && (
-                    <div className="search-suggestions member-suggestions">
-                      {operatorSuggestions.map((suggestion) => (
-                        <button
-                          key={`${suggestion.hint}-${suggestion.value}`}
-                          type="button"
-                          className="search-suggestion"
-                          onClick={() => chooseOperatorSuggestion(suggestion)}
-                        >
-                          <span className="search-suggestion-label">{suggestion.label}</span>
-                          <span className="search-suggestion-hint">{suggestion.hint}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </Form.Item>
-              </Form>
-            )}
+            <button
+              type="button"
+              className={`filter-quick-chip ${activePreset === "7d-out" ? "filter-quick-chip-active" : ""}`}
+              onClick={() => applyTxPreset("7d-out")}
+            >
+              近7天出库
+            </button>
+            {user?.name ? (
+              <button
+                type="button"
+                className={`filter-quick-chip ${activePreset === "mine" ? "filter-quick-chip-active" : ""}`}
+                onClick={() => applyTxPreset("mine")}
+              >
+                我的操作
+              </button>
+            ) : null}
           </div>
         )}
 
-        <Button block color="primary" loading={loading} onClick={() => void load()}>
-          查询
+        {canApprove && (showStaffTransactions || showUserTransactions) && (
+          <>
+            <button
+              type="button"
+              className="history-advanced-toggle"
+              onClick={() => setAdvancedFiltersExpanded((v) => !v)}
+            >
+              {advancedFiltersExpanded ? "收起高级筛选 ▲" : "高级筛选（时间 / 成员）▼"}
+            </button>
+            {advancedFiltersExpanded && (
+              <div className="history-admin-quick">
+                <Form.Item label="时间范围">
+                  <Selector
+                    options={DATE_PRESET_OPTIONS}
+                    value={[datePreset]}
+                    onChange={(arr) => {
+                      const next = (arr[0] as DateRangePreset | undefined) ?? "all";
+                      setDatePreset(next);
+                      if (next !== "custom") {
+                        setCustomStartDate("");
+                        setCustomEndDate("");
+                      }
+                    }}
+                  />
+                </Form.Item>
+                {datePreset === "custom" && (
+                  <div className="history-date-row">
+                    <label className="history-date-field">
+                      <span>开始</span>
+                      <input
+                        className="native-date-input"
+                        type="date"
+                        value={customStartDate}
+                        onChange={(e) => setCustomStartDate(e.target.value)}
+                      />
+                    </label>
+                    <label className="history-date-field">
+                      <span>结束</span>
+                      <input
+                        className="native-date-input"
+                        type="date"
+                        value={customEndDate}
+                        onChange={(e) => setCustomEndDate(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
+                <Form layout="vertical" className="form-card history-filters">
+                  <Form.Item label="成员（操作人）">
+                    <Input
+                      value={operator}
+                      onChange={setOperator}
+                      placeholder="输入成员姓名后匹配"
+                      clearable
+                    />
+                    {operatorSuggestions.length > 0 && (
+                      <div className="search-suggestions member-suggestions">
+                        {operatorSuggestions.map((suggestion) => (
+                          <button
+                            key={`${suggestion.hint}-${suggestion.value}`}
+                            type="button"
+                            className="search-suggestion"
+                            onClick={() => chooseOperatorSuggestion(suggestion)}
+                          >
+                            <span className="search-suggestion-label">{suggestion.label}</span>
+                            <span className="search-suggestion-hint">{suggestion.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </Form.Item>
+                </Form>
+              </div>
+            )}
+          </>
+        )}
+
+        <Button block color="primary" onClick={goToTransactionResults}>
+          查询流水
         </Button>
-        {canApprove && (datePreset !== "all" || operator.trim() || trimmedKeyword) && (
+
+        {hasActiveTxFilters && (
           <div className="history-active-filters">
-            {datePreset !== "all" && (
-              <span className="history-filter-tag">
+            {trimmedKeyword && (
+              <button
+                type="button"
+                className="history-filter-tag"
+                onClick={() => {
+                  setKeyword("");
+                  setSuggestions([]);
+                }}
+              >
+                关键词：{trimmedKeyword} ×
+              </button>
+            )}
+            {txTypeFilter !== "ALL" && (
+              <button type="button" className="history-filter-tag" onClick={() => setTxTypeFilter("ALL")}>
+                类型：{txTypeFilter} ×
+              </button>
+            )}
+            {canApprove && datePreset !== "all" && (
+              <button
+                type="button"
+                className="history-filter-tag"
+                onClick={() => {
+                  setDatePreset("all");
+                  setCustomStartDate("");
+                  setCustomEndDate("");
+                }}
+              >
                 时间：
                 {datePreset === "7d"
                   ? "近7天"
                   : datePreset === "30d"
                     ? "近30天"
-                    : `${customStartDate || "…"} ~ ${customEndDate || "…"}`}
-              </span>
+                    : `${customStartDate || "…"} ~ ${customEndDate || "…"}`}{" "}
+                ×
+              </button>
             )}
-            {operator.trim() && <span className="history-filter-tag">成员：{operator.trim()}</span>}
-            {trimmedKeyword && <span className="history-filter-tag">关键词：{trimmedKeyword}</span>}
+            {canApprove && operator.trim() && (
+              <button type="button" className="history-filter-tag" onClick={() => setOperator("")}>
+                成员：{operator.trim()} ×
+              </button>
+            )}
+            <button type="button" className="history-filter-clear-all" onClick={clearAllTxFilters}>
+              清除全部
+            </button>
           </div>
         )}
       </SectionCard>
       )}
 
-      {!canApprove && showUserRequests && (
-        <SectionCard title={`我的申请 ${requests.length} 条`} subtitle={requestViewHint(requestView)}>
+      {everMounted.requests && !canInbound && (
+        <div className="history-tab-pane" hidden={!showUserRequests}>
+        <SectionCard
+          title={loading ? "我的申请 · 加载中…" : `我的申请 ${requests.length} 条`}
+          subtitle={requestViewHint(requestView)}
+        >
+          <SearchBar
+            placeholder="搜索物料名称"
+            value={keyword}
+            onChange={setKeyword}
+            onSearch={() => void loadRequests()}
+            onClear={() => {
+              setKeyword("");
+              void loadRequests("");
+            }}
+          />
           <Selector
             className="history-request-tabs"
             options={REQUEST_VIEW_OPTIONS}
@@ -735,7 +661,7 @@ export default function HistoryPage() {
           />
           {requests.length === 0 ? (
             <EmptyState
-              icon="📋"
+              icon="list"
               text={trimmedKeyword ? `未找到与「${trimmedKeyword}」相关的申请` : "暂无申请记录"}
               hint={trimmedKeyword ? "试试清空搜索或切换筛选" : requestViewHint(requestView)}
             />
@@ -775,63 +701,9 @@ export default function HistoryPage() {
             })
           )}
         </SectionCard>
-      )}
-
-      {(showStaffTransactions || showUserTransactions) && (
-      <SectionCard title={txSectionTitle}>
-        {displayedTxs.length === 0 ? (
-          <EmptyState
-            icon="📒"
-            text={
-              trimmedKeyword
-                ? `未找到与「${trimmedKeyword}」相关的流水`
-                : txTypeFilter !== "ALL"
-                  ? `暂无${txTypeFilter}流水`
-                  : "暂无流水"
-            }
-            hint={
-              trimmedKeyword || txTypeFilter !== "ALL"
-                ? "试试清空搜索或更换筛选"
-                : "审批通过或库管直接操作后会显示"
-            }
-          />
-        ) : (
-          displayedTxs.map((tx) => (
-            <TransactionRow
-              key={tx.id}
-              tx={tx}
-              onOpenMaterial={openMaterial}
-              canEdit={isAdmin}
-              onEdit={(t) => openEdit("tx", t)}
-              onDelete={isAdmin ? confirmDeleteTx : undefined}
-            />
-          ))
-        )}
-      </SectionCard>
-      )}
-        </>
+        </div>
       )}
     </Layout>
-
-      <Dialog
-        visible={editTarget !== null}
-        title="数据纠错"
-        onClose={closeEdit}
-        actions={[
-          { key: "cancel", text: "取消", onClick: closeEdit },
-          { key: "save", text: editBusy ? "保存中…" : "保存", bold: true, onClick: () => void submitEdit() },
-        ]}
-        content={
-          <Form layout="vertical">
-            <Form.Item label="数量">
-              <Stepper min={1} max={99999} value={editQty} onChange={setEditQty} />
-            </Form.Item>
-            <Form.Item label="备注说明">
-              <Input value={editRemark} onChange={setEditRemark} placeholder="纠错原因或补充说明" />
-            </Form.Item>
-          </Form>
-        }
-      />
     </>
   );
 }

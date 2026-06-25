@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InventoryItem, Location } from "../api/types";
-import { buildShelfCells, formatLocationPath, isGridCapableLocation, resolveGridSize } from "./shelfGrid";
+import { buildShelfCells, isGridCapableLocation, resolveGridSize } from "./shelfGrid";
 
 const cabinet: Location = {
   id: "loc_01",
@@ -62,13 +62,5 @@ describe("shelfGrid", () => {
     ];
     const { cells } = buildShelfCells(shelf, inventory);
     expect(cells.some((c) => c.label === "第 1 层" && c.quantity === 4)).toBe(true);
-  });
-
-  it("formatLocationPath 拼接路径", () => {
-    const locations: Location[] = [
-      { id: "root", code: "R", name: "仓库", type: "区域" },
-      { id: "loc_01", code: "A", name: "A柜", type: "货柜", parent_id: "root" },
-    ];
-    expect(formatLocationPath(locations, "loc_01")).toBe("仓库 / A柜");
   });
 });

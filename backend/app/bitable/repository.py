@@ -334,6 +334,32 @@ class BitableRepository:
         """预热五表缓存，降低服务重启后的首次页面等待时间。"""
         return await self._refresh_tables_best_effort(self._core_table_ids(), force=False, retries=1)
 
+    async def warm_cache_from_sqlite(self) -> list[str]:
+        """从本地 SQLite 预热内存缓存，供手动刷新快速响应。"""
+        if not self.settings.sqlite_cache_enabled or self.settings.bitable_mode != "real":
+            return []
+        from app.bitable.sqlite_cache import get_sqlite_cache
+
+        sqlite = get_sqlite_cache()
+        now = time.monotonic()
+        warmed: list[str] = []
+        for table_id in self._core_table_ids():
+            if not table_id:
+                continue
+            records = sqlite.get_records(table_id)
+            if not records:
+                continue
+            cache_key = (self.settings.bitable_app_token, table_id)
+            _TABLE_CACHE[cache_key] = (now, records)
+            warmed.append(table_id)
+        if warmed:
+            self._clear_derived_caches()
+        return warmed
+
+    def _clear_derived_caches(self) -> None:
+        self._materials_cache = None
+        self._locations_cache = None
+
     async def refresh_core_tables(self, smart: bool = True) -> dict[str, Any]:
         """手动刷新缓存，用于 Bitable 直接改表后的同步。
         
@@ -400,8 +426,11 @@ class BitableRepository:
         if not force and cache_key in _TABLE_CACHE:
             return _TABLE_CACHE[cache_key][1]
         records = await self.client.list_records(table_id, retries=retries)
+        cached_at = time.monotonic()
         if self.settings.bitable_cache_ttl_seconds > 0:
-            _TABLE_CACHE[cache_key] = (time.monotonic(), records)
+            _TABLE_CACHE[cache_key] = (cached_at, records)
+        if self.settings.sqlite_cache_enabled and records and self.settings.bitable_mode == "real":
+            self._sync_sqlite_upsert_all(table_id, records)
         return records
 
     def _core_table_ids(self) -> list[str]:
@@ -766,6 +795,8 @@ class BitableRepository:
         category: str | None,
         location: str | None,
         stock_only: bool,
+        out_of_stock: bool,
+        low_stock: bool,
         page: int,
         size: int,
     ) -> tuple[list[MaterialSearchItem], int]:
@@ -831,6 +862,16 @@ class BitableRepository:
         if stock_only:
             mat_ids = {key_material_id(key) for key, qty in inventory.items() if qty > 0}
             materials = [m for m in materials if m.id in mat_ids]
+
+        def material_total(material_id: str) -> int:
+            return sum(qty for key, qty in inventory.items() if key_material_id(key) == material_id)
+
+        if out_of_stock:
+            materials = [m for m in materials if material_total(m.id) <= 0]
+        if low_stock:
+            materials = [
+                m for m in materials if 0 < material_total(m.id) < (m.min_stock or 5)
+            ]
 
         total = len(materials)
         start = (page - 1) * size
@@ -1489,65 +1530,48 @@ class BitableRepository:
         keyword: str | None = None,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
-        limit: int = 100,
-    ) -> list[Transaction]:
+        tx_type: str | None = None,
+        location_id: str | None = None,
+        page: int = 1,
+        size: int = 20,
+        limit: int | None = None,
+    ) -> tuple[list[Transaction], int]:
         s = self.settings
         materials = await self._load_materials()
         locations = await self._load_locations()
+        effective_size = limit if limit is not None else size
+        has_filters = bool(operator or keyword or start_at or end_at or tx_type or location_id)
 
-        # 优先 SQLite 原生分页（避免全量加载再内存截断）
+        # 优先 SQLite 原生分页（无筛选时只解析当前页）
         if self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
             from app.bitable.sqlite_cache import get_sqlite_cache
             sqlite = get_sqlite_cache()
-            # 多取一些以应对后续内存过滤（operator/keyword/date）
-            fetch_limit = max(limit * 3, 200)
-            raw_records, _total = sqlite.query_records(
-                s.bitable_table_transactions,
-                limit=fetch_limit,
-                offset=0,
-                order_desc=True,
-            )
-            records = raw_records
+            if not has_filters:
+                offset = max(page - 1, 0) * effective_size
+                raw_records, total = sqlite.query_records(
+                    s.bitable_table_transactions,
+                    limit=effective_size,
+                    offset=offset,
+                    order_desc=True,
+                )
+                txs = [
+                    self._build_transaction_from_record(rec, materials, locations)
+                    for rec in raw_records
+                ]
+                return txs, total
+            records = sqlite.get_records(s.bitable_table_transactions)
         else:
             records = await self._list_all(s.bitable_table_transactions)
 
-        txs: list[Transaction] = []
-        for rec in records:
-            fields = rec.get("fields", {})
-            mid = field_link_id(fields.get(s.bitable_f_tx_material)) or ""
-            lid = field_link_id(fields.get(s.bitable_f_tx_location)) or ""
-            tx_type_raw = field_text(fields.get(s.bitable_f_tx_type)) or "out"
-            normalized = normalize_tx_type(tx_type_raw)
-            if normalized == "入库":
-                tx_enum = TransactionType.INBOUND
-            elif normalized == "移动":
-                tx_enum = TransactionType.TRANSFER
-            else:
-                tx_enum = TransactionType.OUTBOUND
-            created_at = self._parse_transaction_created_at(rec, fields)
-            material = materials.get(mid)
-            loc = locations.get(lid)
-            tx_remark = field_text(fields.get(s.bitable_f_tx_remark))
-            tx = Transaction(
-                id=rec["record_id"],
-                type=tx_enum,
-                material_id=mid,
-                material_name=material.name if material else None,
-                location_id=lid,
-                location_name=loc.name if loc else lid,
-                quantity=field_number(fields.get(s.bitable_f_tx_quantity)),
-                operator=resolve_person_name(
-                    fields.get(s.bitable_f_tx_operator),
-                    tx_remark,
-                    remark_prefix="操作人",
-                ),
-                remark=tx_remark,
-                created_at=created_at,
-            )
-            txs.append(tx)
-
+        txs = [
+            self._build_transaction_from_record(rec, materials, locations) for rec in records
+        ]
         if operator:
             txs = [tx for tx in txs if tx.operator == operator]
+        if tx_type:
+            txs = [tx for tx in txs if tx.type.value == tx_type]
+        if location_id:
+            txs = [tx for tx in txs if tx.location_id == location_id]
         if start_at:
             txs = [tx for tx in txs if tx.created_at >= start_at]
         if end_at:
@@ -1562,6 +1586,24 @@ class BitableRepository:
                 or text in tx.operator.lower()
                 or text in (tx.remark or "").lower()
             ]
+        txs.sort(key=lambda t: t.created_at, reverse=True)
+        total = len(txs)
+        start = max(page - 1, 0) * effective_size
+        return txs[start : start + effective_size], total
+
+    async def list_all_transactions_parsed(self, *, limit: int = 2000) -> list[Transaction]:
+        """从本地缓存加载流水（待归还等需全量扫描的场景）。"""
+        s = self.settings
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        if self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            records = get_sqlite_cache().get_records(s.bitable_table_transactions)
+        else:
+            records = await self._list_all(s.bitable_table_transactions)
+        txs = [
+            self._build_transaction_from_record(rec, materials, locations) for rec in records
+        ]
         txs.sort(key=lambda t: t.created_at, reverse=True)
         return txs[:limit]
 
@@ -2289,6 +2331,44 @@ class BitableRepository:
         await self.client.delete_record(s.bitable_table_transactions, transaction_id)
         self._invalidate_table_cache(s.bitable_table_transactions)
         self._remove_cached_record(s.bitable_table_transactions, transaction_id)
+
+    def _build_transaction_from_record(
+        self,
+        rec: dict[str, Any],
+        materials: dict[str, Any],
+        locations: dict[str, Any],
+    ) -> Transaction:
+        s = self.settings
+        fields = rec.get("fields", {})
+        mid = field_link_id(fields.get(s.bitable_f_tx_material)) or ""
+        lid = field_link_id(fields.get(s.bitable_f_tx_location)) or ""
+        tx_type_raw = field_text(fields.get(s.bitable_f_tx_type)) or "out"
+        normalized = normalize_tx_type(tx_type_raw)
+        if normalized == "入库":
+            tx_enum = TransactionType.INBOUND
+        elif normalized == "移动":
+            tx_enum = TransactionType.TRANSFER
+        else:
+            tx_enum = TransactionType.OUTBOUND
+        material = materials.get(mid)
+        loc = locations.get(lid)
+        tx_remark = field_text(fields.get(s.bitable_f_tx_remark))
+        return Transaction(
+            id=rec["record_id"],
+            type=tx_enum,
+            material_id=mid,
+            material_name=material.name if material else None,
+            location_id=lid,
+            location_name=loc.name if loc else lid,
+            quantity=field_number(fields.get(s.bitable_f_tx_quantity)),
+            operator=resolve_person_name(
+                fields.get(s.bitable_f_tx_operator),
+                tx_remark,
+                remark_prefix="操作人",
+            ),
+            remark=tx_remark,
+            created_at=self._parse_transaction_created_at(rec, fields),
+        )
 
     def _record_to_transaction(self, rec: dict[str, Any]) -> Transaction:
         s = self.settings

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import {
@@ -11,17 +11,14 @@ import {
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import { useAuth } from "./AuthGate";
 import {
-  detailContextAfterStock,
-  openMaterialDetail,
+  navigateAfterStockSubmit,
   readStockNavState,
 } from "../utils/detailNavigation";
-import { EmptyState, SectionCard } from "./ui";
+import { EmptyState, SectionCard, StockFormShell } from "./ui";
+import { ScanBarcodeButton } from "./ScanBarcodeButton";
+import { newIdempotencyKey } from "../utils/idempotency";
 
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
-
-export function StockInboundPanel() {
+export function StockInboundPanel({ active = true }: { active?: boolean }) {
   const pageSize = 20;
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
@@ -34,7 +31,7 @@ export function StockInboundPanel() {
   const shouldLoadPreset = activeTab === "inbound";
   const navigate = useNavigate();
   const location = useLocation();
-  const stockState = readStockNavState(location.state);
+  const stockState = readStockNavState(location.state, presetMaterialId || undefined);
 
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
@@ -53,6 +50,7 @@ export function StockInboundPanel() {
   const [slotColumn, setSlotColumn] = useState(1);
   const { canInbound } = useAuth();
   const isDirectInbound = canInbound;
+  const listLoadedRef = useRef(false);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -85,12 +83,14 @@ export function StockInboundPanel() {
   }, []);
 
   useEffect(() => {
+    if (!active || listLoadedRef.current) return;
+    listLoadedRef.current = true;
     void loadMaterials("", 1);
     void loadMeta();
-  }, [loadMaterials, loadMeta]);
+  }, [active, loadMaterials, loadMeta]);
 
   useEffect(() => {
-    if (!shouldLoadPreset) return;
+    if (!active || !shouldLoadPreset) return;
     if (presetLocationId) setLocationId(presetLocationId);
     if (Number.isFinite(presetRow) && presetRow > 0) setSlotRow(presetRow);
     if (Number.isFinite(presetColumn) && presetColumn > 0) setSlotColumn(presetColumn);
@@ -113,7 +113,7 @@ export function StockInboundPanel() {
       }
     })();
   }, [
-    locationId,
+    active,
     presetColumn,
     presetLocationId,
     presetMaterialId,
@@ -132,7 +132,6 @@ export function StockInboundPanel() {
     selected &&
       qty > 0 &&
       !loading &&
-      note.trim() &&
       (isDirectInbound ? locationId : true),
   );
   const hasMore = items.length < total;
@@ -183,7 +182,7 @@ export function StockInboundPanel() {
 
   const onSubmit = async () => {
     if (!selected || !canSubmit) {
-      Toast.show({ content: isDirectInbound ? "请填写物料、库位和数量" : "请填写物料、数量和归还说明" });
+      Toast.show({ content: isDirectInbound ? "请选择物料、库位并填写数量" : "请选择物料并填写数量" });
       return;
     }
     setSubmitting(true);
@@ -206,27 +205,17 @@ export function StockInboundPanel() {
           column: showCabinetSlot ? slotColumn : undefined,
         });
         Toast.show({ icon: "success", content: isReturnInbound ? "归还入库成功" : "入库成功" });
-        if (isReturnInbound) {
-          navigate(canInbound ? "/history?view=returns" : "/history?view=returns");
-        } else if (stockState.materialBackTo.startsWith("/materials/")) {
-          openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
-        } else {
-          openMaterialDetail(navigate, selected.material.id, { backTo: "/" });
-        }
+        navigateAfterStockSubmit(navigate, selected.material.id, stockState);
       } else {
         await createStockRequest({
           type: "入库",
           material_id: selected.material.id,
           qty,
           idempotency_key: newIdempotencyKey(),
-          note: note.trim(),
+          note: note.trim() || undefined,
         });
         Toast.show({ icon: "success", content: "已提交入库申请" });
-        if (stockState.materialBackTo.startsWith("/materials/")) {
-          openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
-        } else {
-          navigate("/history");
-        }
+        navigateAfterStockSubmit(navigate, selected.material.id, stockState);
       }
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "入库失败" });
@@ -238,7 +227,13 @@ export function StockInboundPanel() {
   if (selected) {
     const m = selected.material;
     return (
-      <>
+      <StockFormShell
+        action={
+          <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
+            {isDirectInbound ? "确认入库并同步" : "提交入库申请"}
+          </Button>
+        }
+      >
         <SectionCard
           title={isDirectInbound ? "确认入库" : "提交入库申请"}
           subtitle={`${m.name} · 当前总库存 ${selected.total_quantity} ${m.unit} · ${
@@ -294,22 +289,17 @@ export function StockInboundPanel() {
                 />
               </Form.Item>
             )}
-            <Form.Item label="备注">
+            <Form.Item label="备注（可选）">
               <TextArea
                 value={note}
                 onChange={setNote}
-                placeholder={isDirectInbound ? "采购单号 / 归还说明 / 供应商" : "归还原因 / 来源说明（必填）"}
+                placeholder={isDirectInbound ? "采购单号 / 归还说明 / 供应商" : "归还原因 / 来源说明"}
                 rows={3}
               />
             </Form.Item>
           </Form>
         </SectionCard>
-        <div className="actions single">
-          <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
-            {isDirectInbound ? "确认入库并同步" : "提交入库申请"}
-          </Button>
-        </div>
-      </>
+      </StockFormShell>
     );
   }
 
@@ -319,24 +309,33 @@ export function StockInboundPanel() {
         title={isDirectInbound ? "入库上架" : "入库申请"}
         subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种物料`}
       >
-        <SearchBar
-          placeholder="搜索名称 / 编码 / 条码 / 分类"
-          value={keyword}
-          onChange={setKeyword}
-          onSearch={onSearch}
-          onClear={() => {
-            setKeyword("");
-            void loadMaterials("", 1);
-          }}
-        />
+        <div className="search-bar-with-scan">
+          <SearchBar
+            placeholder="搜索名称 / 编码 / 条码 / 分类"
+            value={keyword}
+            onChange={setKeyword}
+            onSearch={onSearch}
+            onClear={() => {
+              setKeyword("");
+              void loadMaterials("", 1);
+            }}
+          />
+          <ScanBarcodeButton
+            onScan={(code) => {
+              setKeyword(code);
+              void loadMaterials(code, 1);
+            }}
+            disabled={loading}
+          />
+        </div>
       <div className="catalog-meta">
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
       </div>
         {loading && items.length === 0 ? (
-          <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+          <EmptyState loading text="正在从 Bitable 拉取物料…" />
         ) : items.length === 0 ? (
           <EmptyState
-            icon="📦"
+            icon="package"
             text={keyword ? "没有匹配的物料" : "暂无物料"}
             hint={isDirectInbound ? "可在下方快捷新增物料" : "请联系库管先维护物料主数据"}
           />

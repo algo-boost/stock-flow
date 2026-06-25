@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { createStockRequest, getMaterial, postOutbound, postInbound, searchMaterials } from "../api";
@@ -11,16 +11,13 @@ import {
 } from "../utils/inventoryDisplay";
 import { showUndo } from "./UndoToast";
 import { useAuth } from "./AuthGate";
-import { EmptyState, SectionCard, CardSkeleton } from "./ui";
+import { EmptyState, SectionCard, CardSkeleton, StockFormShell } from "./ui";
+import { ScanBarcodeButton } from "./ScanBarcodeButton";
 import {
-  detailContextAfterStock,
-  openMaterialDetail,
+  navigateAfterStockSubmit,
   readStockNavState,
 } from "../utils/detailNavigation";
-
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
+import { newIdempotencyKey } from "../utils/idempotency";
 
 function applyLocalOutbound(
   items: MaterialSearchItem[],
@@ -35,13 +32,13 @@ function applyLocalOutbound(
     .filter((item) => item.total_quantity > 0);
 }
 
-export function StockOutboundPanel() {
+export function StockOutboundPanel({ active = true }: { active?: boolean }) {
   const pageSize = 20;
   const navigate = useNavigate();
   const location = useLocation();
-  const stockState = readStockNavState(location.state);
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
+  const stockState = readStockNavState(location.state, presetMaterialId || undefined);
   const activeTab = params.get("tab");
   const shouldLoadPreset = !activeTab || activeTab === "outbound";
 
@@ -59,6 +56,7 @@ export function StockOutboundPanel() {
   const [submitting, setSubmitting] = useState(false);
   const { canInbound } = useAuth();
   const isDirectOutbound = canInbound;
+  const listLoadedRef = useRef(false);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -78,11 +76,13 @@ export function StockOutboundPanel() {
   }, []);
 
   useEffect(() => {
+    if (!active || listLoadedRef.current) return;
+    listLoadedRef.current = true;
     void loadMaterials("", 1);
-  }, [loadMaterials]);
+  }, [active, loadMaterials]);
 
   useEffect(() => {
-    if (!presetMaterialId || !shouldLoadPreset) return;
+    if (!active || !presetMaterialId || !shouldLoadPreset) return;
     void (async () => {
       try {
         const detail = await getMaterial(presetMaterialId);
@@ -96,7 +96,7 @@ export function StockOutboundPanel() {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
-  }, [presetMaterialId, shouldLoadPreset]);
+  }, [active, presetMaterialId, shouldLoadPreset]);
 
   const selectMaterial = async (item: MaterialSearchItem) => {
     setLoading(true);
@@ -151,7 +151,7 @@ export function StockOutboundPanel() {
   const returnPolicyOk =
     returnPolicy === "not_required" || (returnPolicy === "required" && returnDueDate);
   const canSubmit = Boolean(
-    selected && slotKey && qty > 0 && qty <= maxQty && note.trim() && returnPolicyOk,
+    selected && slotKey && qty > 0 && qty <= maxQty && returnPolicyOk,
   );
 
   const onSubmit = async () => {
@@ -184,7 +184,7 @@ export function StockOutboundPanel() {
           location_id: slotParsed.location_id,
           qty,
           idempotency_key: newIdempotencyKey(),
-          note: note.trim(),
+          note: note.trim() || undefined,
           return_required: returnPolicy === "required",
           return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
           row: slotParsed.row,
@@ -214,7 +214,7 @@ export function StockOutboundPanel() {
           location_id: slotParsed.location_id,
           qty,
           idempotency_key: newIdempotencyKey(),
-          note: note.trim(),
+          note: note.trim() || undefined,
           return_required: returnPolicy === "required",
           return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
           row: slotParsed.row,
@@ -222,11 +222,7 @@ export function StockOutboundPanel() {
         });
         Toast.show({ icon: "success", content: "已提交出库申请" });
       }
-      if (stockState.materialBackTo.startsWith("/materials/")) {
-        openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
-      } else {
-        backToList();
-      }
+      navigateAfterStockSubmit(navigate, selected.material.id, stockState);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "出库失败" });
     } finally {
@@ -237,11 +233,17 @@ export function StockOutboundPanel() {
   if (selected) {
     const m = selected.material;
     return (
-      <>
+      <StockFormShell
+        action={
+          <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
+            {isDirectOutbound ? "确认出库" : "提交出库申请"}
+          </Button>
+        }
+      >
         <SectionCard
           title="确认出库"
           subtitle={`${m.name} · 库存 ${selected.total_quantity} ${m.unit} · ${
-            isDirectOutbound ? "用途与归还计划必填，便于追溯" : "提交后等待管理员审批"
+            isDirectOutbound ? "用途与归还计划可选填，便于追溯" : "提交后等待管理员审批"
           }`}
         >
           <button type="button" className="back-link" onClick={backToList}>
@@ -256,7 +258,7 @@ export function StockOutboundPanel() {
           </div>
 
           {locationOptions.length === 0 ? (
-            <EmptyState icon="🏷️" text="该物料暂无库存" hint="请联系库管入库" />
+            <EmptyState icon="tag" text="该物料暂无库存" hint="请联系库管入库" />
           ) : (
             <Form layout="vertical" className="form-card">
               <Form.Item label="出库库位 / 格位">
@@ -274,7 +276,7 @@ export function StockOutboundPanel() {
                   onChange={(v) => setQty(Math.min(v, maxQty || v))}
                 />
               </Form.Item>
-              <Form.Item label="用途说明">
+              <Form.Item label="用途说明（可选）">
                 <TextArea
                   placeholder="项目 / 实验 / 领用人用途"
                   value={note}
@@ -309,13 +311,7 @@ export function StockOutboundPanel() {
             </Form>
           )}
         </SectionCard>
-
-        <div className="actions single">
-          <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
-            {isDirectOutbound ? "确认出库" : "提交出库申请"}
-          </Button>
-        </div>
-      </>
+      </StockFormShell>
     );
   }
 
@@ -324,16 +320,25 @@ export function StockOutboundPanel() {
       title={isDirectOutbound ? "出库领用" : "出库申请"}
       subtitle={loading && items.length === 0 ? "正在同步…" : `共 ${total} 种可出库物料`}
     >
-      <SearchBar
-        placeholder="搜索名称 / 编码 / 条码 / 分类"
-        value={keyword}
-        onChange={setKeyword}
-        onSearch={onSearch}
-        onClear={() => {
-          setKeyword("");
-          void loadMaterials("", 1);
-        }}
-      />
+      <div className="search-bar-with-scan">
+        <SearchBar
+          placeholder="搜索名称 / 编码 / 条码 / 分类"
+          value={keyword}
+          onChange={setKeyword}
+          onSearch={onSearch}
+          onClear={() => {
+            setKeyword("");
+            void loadMaterials("", 1);
+          }}
+        />
+        <ScanBarcodeButton
+          onScan={(code) => {
+            setKeyword(code);
+            void loadMaterials(code, 1);
+          }}
+          disabled={loading}
+        />
+      </div>
       <div className="catalog-meta">
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
       </div>
@@ -342,7 +347,7 @@ export function StockOutboundPanel() {
         <CardSkeleton count={5} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon="📦"
+          icon="package"
           text={keyword ? "没有匹配的物料" : "暂无可出库物料"}
           hint={keyword ? "换个关键词试试" : "请先在 Bitable 维护库存"}
         />

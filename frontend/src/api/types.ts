@@ -148,6 +148,13 @@ export interface PaginatedMaterials {
   size: number;
 }
 
+export interface PaginatedTransactions {
+  items: Transaction[];
+  total: number;
+  page: number;
+  size: number;
+}
+
 export interface OverviewDistribution {
   location_id?: string;
   location_name?: string;

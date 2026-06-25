@@ -1,7 +1,7 @@
 import { apiConfig } from "./config";
 import {
   consumePostLoginRedirect,
-  feishuLogin,
+  feishuLoginWithRedirectFallback,
   isFeishuClient,
   redirectToLoginHomeIfNeeded,
 } from "../auth/feishu";
@@ -13,11 +13,11 @@ import type {
   AdminSystem,
   Category,
   InventoryItem,
-  LowStockItem,
   MaterialDetail,
   Location,
   Material,
   PaginatedMaterials,
+  PaginatedTransactions,
   PendingReturn,
   RoleMeta,
   StockRequest,
@@ -105,7 +105,7 @@ async function reauthWithFeishu(): Promise<void> {
   if (!reauthPromise) {
     reauthPromise = (async () => {
       clearAuthToken();
-      await feishuLogin();
+      await feishuLoginWithRedirectFallback();
       consumePostLoginRedirect();
     })().finally(() => {
       reauthPromise = null;
@@ -189,14 +189,6 @@ async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized 
 
 export function getMe() {
   return request<{ user: User; role_meta?: RoleMeta | null }>("/me");
-}
-
-export function getMaterialCatalog(opts?: { stockOnly?: boolean; q?: string }) {
-  const params = new URLSearchParams();
-  if (opts?.stockOnly) params.set("stock_only", "true");
-  if (opts?.q) params.set("q", opts.q);
-  const qs = params.toString();
-  return request<MaterialDetail[]>(`/materials/catalog${qs ? `?${qs}` : ""}`);
 }
 
 export function listCategories() {
@@ -286,6 +278,8 @@ export function searchMaterials(
     page?: number;
     size?: number;
     stockOnly?: boolean;
+    outOfStock?: boolean;
+    lowStock?: boolean;
     searchBy?: "all" | "category" | "name" | "code";
     category?: string;
     location?: string;
@@ -297,6 +291,8 @@ export function searchMaterials(
   });
   if (q) params.set("q", q);
   if (opts?.stockOnly) params.set("stock_only", "true");
+  if (opts?.outOfStock) params.set("out_of_stock", "true");
+  if (opts?.lowStock) params.set("low_stock", "true");
   if (opts?.searchBy) params.set("search_by", opts.searchBy);
   if (opts?.category) params.set("category", opts.category);
   if (opts?.location) params.set("location", opts.location);
@@ -365,6 +361,7 @@ export function updateLocationType(oldName: string, newName: string) {
 export function refreshBitableCache() {
   return request<{
     message: string;
+    async?: boolean;
     tables: Record<string, number>;
     refreshed?: string[];
     failed?: Record<string, string>;
@@ -383,9 +380,12 @@ export function syncSqliteCache() {
 }
 
 export function getSqliteCacheStatus() {
-  return request<{ enabled: boolean; snapshot?: Record<string, number>; sync_interval?: number }>(
-    "/admin/sqlite-status",
-  );
+  return request<{
+    enabled: boolean;
+    snapshot?: Record<string, number>;
+    labeled_tables?: Array<{ id: string; label: string; count: number }>;
+    sync_interval?: number;
+  }>("/admin/sqlite-status");
 }
 
 export function getAdminOverview(opts?: { startAt?: string; endAt?: string }) {
@@ -454,7 +454,7 @@ export function postOutbound(payload: {
   location_id: string;
   qty: number;
   idempotency_key: string;
-  note: string;
+  note?: string;
   return_required: boolean;
   return_due_at?: string;
   row?: number;
@@ -486,7 +486,7 @@ export function createStockRequest(payload: {
   location_id?: string;
   qty: number;
   idempotency_key: string;
-  note: string;
+  note?: string;
   return_required?: boolean;
   return_due_at?: string;
   row?: number;
@@ -562,18 +562,26 @@ export function rejectStockRequest(id: string, reason: string) {
 export function listTransactions(opts?: {
   keyword?: string;
   operator?: string;
+  locationId?: string;
+  txType?: string;
   startAt?: string;
   endAt?: string;
+  page?: number;
+  size?: number;
   limit?: number;
 }) {
   const params = new URLSearchParams();
   if (opts?.keyword) params.set("keyword", opts.keyword);
   if (opts?.operator) params.set("operator", opts.operator);
+  if (opts?.locationId) params.set("location_id", opts.locationId);
+  if (opts?.txType) params.set("tx_type", opts.txType);
   if (opts?.startAt) params.set("start_at", opts.startAt);
   if (opts?.endAt) params.set("end_at", opts.endAt);
+  if (opts?.page) params.set("page", String(opts.page));
+  if (opts?.size) params.set("size", String(opts.size));
   if (opts?.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
-  return request<Transaction[]>(`/transactions${qs ? `?${qs}` : ""}`);
+  return request<PaginatedTransactions>(`/transactions${qs ? `?${qs}` : ""}`);
 }
 
 export function listPendingReturns(borrower?: string) {
@@ -634,24 +642,4 @@ export function listInventory(materialId?: string, locationId?: string) {
   if (locationId) params.set("location_id", locationId);
   const qs = params.toString();
   return request<InventoryItem[]>(`/inventory${qs ? `?${qs}` : ""}`);
-}
-
-export function listLowStock() {
-  return request<LowStockItem[]>("/inventory/low-stock");
-}
-
-export function listLocationsForPicker() {
-  return listInventory().then((items) => {
-    const map = new Map<string, string>();
-    for (const item of items) {
-      map.set(item.location_id, item.location_name ?? item.location_id);
-    }
-    return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
-  });
-}
-
-export function searchMaterialsForPicker(q?: string) {
-  return searchMaterials(q ?? "", { page: 1, size: 50 }).then((data) =>
-    data.items.map((m) => ({ value: m.id, label: `${m.name} (${m.code})` })),
-  );
 }

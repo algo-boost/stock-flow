@@ -59,19 +59,20 @@ export function LocationManagePanel() {
 
   return (
     <>
-      <div className="panel-toolbar">
-        <Button size="small" color="primary" onClick={() => navigate("/locations/new")}>
+      <div className="panel-toolbar location-manage-toolbar">
+        <Button size="small" color="primary" block onClick={() => navigate("/locations/new")}>
           + 新增库位
         </Button>
       </div>
 
       <SectionCard title={loading ? "加载中…" : `库位 ${locations.length} 个`}>
         {locations.length === 0 && !loading ? (
-          <EmptyState icon="📍" text="暂无库位" hint="点击上方按钮新增" />
+          <EmptyState icon="location" text="暂无库位" hint="点击上方按钮新增" />
         ) : (
-          <div className="location-list">
+          <div className="location-list location-manage-list">
             {locations.map((loc) => {
               const stock = stockByLocation.get(loc.id) ?? 0;
+              const showGrid = loc.grid_rows || ["货柜", "货架"].includes(loc.type);
               return (
                 <div className="location-card location-manage-card" key={loc.id}>
                   <div className="location-card-main">
@@ -82,20 +83,20 @@ export function LocationManagePanel() {
                     <div className="location-meta">
                       <span className="chip">{loc.code}</span>
                       <span className="chip chip-muted">{loc.type}</span>
+                      <span className={`stock-badge ${stock > 0 ? "" : "stock-badge-out"}`}>库存 {stock}</span>
                     </div>
                   </div>
-                  <div className="location-card-actions">
-                    <span className="stock-badge">库存 {stock}</span>
-                    {(loc.grid_rows || ["货柜", "货架"].includes(loc.type)) && (
-                      <Button size="mini" fill="outline" onClick={() => navigate(`/shelves/${loc.id}`)}>
+                  <div className="location-manage-actions">
+                    {showGrid && (
+                      <Button size="small" fill="outline" onClick={() => navigate(`/shelves/${loc.id}`)}>
                         格位图
                       </Button>
                     )}
-                    <Button size="mini" fill="outline" onClick={() => navigate(`/locations/${loc.id}/edit`)}>
+                    <Button size="small" fill="outline" onClick={() => navigate(`/locations/${loc.id}/edit`)}>
                       编辑
                     </Button>
                     <Button
-                      size="mini"
+                      size="small"
                       color="danger"
                       fill="outline"
                       disabled={stock > 0 || saving}

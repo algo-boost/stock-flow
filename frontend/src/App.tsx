@@ -1,14 +1,23 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { AuthProvider } from "./components/AuthGate";
+import { PageLoadFallback } from "./components/PageLoadFallback";
 import { UndoToast } from "./components/UndoToast";
-import DetailPage from "./pages/Detail";
-import HistoryPage from "./pages/History";
-import LocationFormPage from "./pages/LocationForm";
-import ManagePage from "./pages/Manage";
-import PurchasePage from "./pages/Purchase";
-import LocationShelvesPage from "./pages/LocationShelves";
-import SearchPage from "./pages/Search";
-import StockPage from "./pages/Stock";
+
+const DetailPage = lazy(() => import("./pages/Detail"));
+const HistoryPage = lazy(() => import("./pages/History"));
+const HistoryTransactionResultsPage = lazy(() => import("./pages/HistoryTransactionResults"));
+const LocationFormPage = lazy(() => import("./pages/LocationForm"));
+const ManagePage = lazy(() => import("./pages/Manage"));
+const PurchasePage = lazy(() => import("./pages/Purchase"));
+const LocationShelvesPage = lazy(() => import("./pages/LocationShelves"));
+const SearchPage = lazy(() => import("./pages/Search"));
+const StockPage = lazy(() => import("./pages/Stock"));
+const NotFoundPage = lazy(() => import("./pages/NotFound"));
+
+function PageFallback() {
+  return <PageLoadFallback />;
+}
 
 function TransferRedirect() {
   const [params] = useSearchParams();
@@ -47,26 +56,29 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <UndoToast />
-        <Routes>
-          <Route path="/" element={<SearchPage />} />
-          <Route path="/materials/:id" element={<DetailPage />} />
-          <Route path="/stock" element={<StockPage />} />
-          <Route path="/outbound" element={<StockRedirect />} />
-          <Route path="/inbound" element={<StockRedirect tab="inbound" />} />
-          <Route path="/transfer" element={<TransferRedirect />} />
-          <Route path="/purchase" element={<PurchasePage />} />
-          <Route path="/manage" element={<ManagePage />} />
-          <Route path="/shelves" element={<ShelfListRedirect />} />
-          <Route path="/shelves/:locationId" element={<LocationShelvesPage />} />
-          <Route path="/locations/new" element={<LocationFormPage />} />
-          <Route path="/locations/:id/edit" element={<LocationFormPage />} />
-          <Route path="/locations" element={<LegacyManageRedirect tab="locations" />} />
-          <Route path="/approvals" element={<Navigate to="/history?view=approvals" replace />} />
-          <Route path="/admin-center" element={<Navigate to="/manage?tab=dashboard" replace />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/returns" element={<Navigate to="/history?view=returns" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/" element={<SearchPage />} />
+            <Route path="/materials/:id" element={<DetailPage />} />
+            <Route path="/stock" element={<StockPage />} />
+            <Route path="/outbound" element={<StockRedirect />} />
+            <Route path="/inbound" element={<StockRedirect tab="inbound" />} />
+            <Route path="/transfer" element={<TransferRedirect />} />
+            <Route path="/purchase" element={<PurchasePage />} />
+            <Route path="/manage" element={<ManagePage />} />
+            <Route path="/shelves" element={<ShelfListRedirect />} />
+            <Route path="/shelves/:locationId" element={<LocationShelvesPage />} />
+            <Route path="/locations/new" element={<LocationFormPage />} />
+            <Route path="/locations/:id/edit" element={<LocationFormPage />} />
+            <Route path="/locations" element={<LegacyManageRedirect tab="locations" />} />
+            <Route path="/approvals" element={<Navigate to="/history?view=approvals" replace />} />
+            <Route path="/admin-center" element={<Navigate to="/manage?tab=dashboard" replace />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/history/transactions" element={<HistoryTransactionResultsPage />} />
+            <Route path="/returns" element={<Navigate to="/history?view=returns" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

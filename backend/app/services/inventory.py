@@ -23,6 +23,7 @@ from app.models import (
     MaterialUpdate,
     OutboundCreate,
     PaginatedMaterials,
+    PaginatedTransactions,
     PurchaseInboundCreate,
     RequestApprove,
     RequestReject,
@@ -99,6 +100,8 @@ class InventoryService:
         category: str | None,
         location: str | None,
         stock_only: bool,
+        out_of_stock: bool,
+        low_stock: bool,
         page: int,
         size: int,
     ) -> PaginatedMaterials:
@@ -110,6 +113,8 @@ class InventoryService:
                     category,
                     location,
                     stock_only,
+                    out_of_stock,
+                    low_stock,
                     page,
                     size,
                 )
@@ -120,6 +125,8 @@ class InventoryService:
                     category,
                     location,
                     stock_only,
+                    out_of_stock,
+                    low_stock,
                     page,
                     size,
                 )
@@ -317,30 +324,74 @@ class InventoryService:
         operator: str | None = None,
         start_at=None,
         end_at=None,
-        limit: int = 100,
-    ) -> list[Transaction]:
+        tx_type: str | None = None,
+        location_id: str | None = None,
+        page: int = 1,
+        size: int = 20,
+        limit: int | None = None,
+    ) -> PaginatedTransactions:
         scope_to_user = user.role.value == "USER"
         effective_operator = None if scope_to_user else operator
+        effective_size = limit if limit is not None else size
         try:
-            if self.repo:
-                items = await self.repo.list_transactions(
+            if scope_to_user:
+                fetch_limit = 500
+                if self.repo:
+                    items, _ = await self.repo.list_transactions(
+                        keyword=keyword,
+                        start_at=start_at,
+                        end_at=end_at,
+                        tx_type=tx_type,
+                        location_id=location_id,
+                        page=1,
+                        size=fetch_limit,
+                        limit=fetch_limit,
+                    )
+                else:
+                    items, _ = self.store.list_transactions(
+                        keyword=keyword,
+                        start_at=start_at,
+                        end_at=end_at,
+                        tx_type=tx_type,
+                        location_id=location_id,
+                        page=1,
+                        size=fetch_limit,
+                        limit=fetch_limit,
+                    )
+                scoped = [tx for tx in items if _user_owns_transaction(tx, user.name)]
+                total = len(scoped)
+                start = max(page - 1, 0) * effective_size
+                page_items = scoped[start : start + effective_size]
+            elif self.repo:
+                page_items, total = await self.repo.list_transactions(
                     operator=effective_operator,
                     keyword=keyword,
                     start_at=start_at,
                     end_at=end_at,
-                    limit=limit if not scope_to_user else min(limit * 4, 500),
+                    tx_type=tx_type,
+                    location_id=location_id,
+                    page=page,
+                    size=effective_size,
+                    limit=limit,
                 )
             else:
-                items = self.store.list_transactions(
+                page_items, total = self.store.list_transactions(
                     operator=effective_operator,
                     keyword=keyword,
                     start_at=start_at,
                     end_at=end_at,
-                    limit=limit if not scope_to_user else min(limit * 4, 500),
+                    tx_type=tx_type,
+                    location_id=location_id,
+                    page=page,
+                    size=effective_size,
+                    limit=limit,
                 )
-            if scope_to_user:
-                items = [tx for tx in items if _user_owns_transaction(tx, user.name)]
-            return items[:limit]
+            return PaginatedTransactions(
+                items=page_items,
+                total=total,
+                page=page,
+                size=effective_size,
+            )
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
         except ValueError as exc:
@@ -349,9 +400,9 @@ class InventoryService:
     async def list_pending_returns(self, *, borrower: str | None = None):
         try:
             if self.repo:
-                txs = await self.repo.list_transactions(limit=500)
+                txs = await self.repo.list_all_transactions_parsed()
             else:
-                txs = self.store.list_transactions(limit=500)
+                txs, _ = self.store.list_transactions(page=1, size=2000, limit=2000)
             return compute_pending_returns(txs, borrower=borrower)
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
@@ -777,9 +828,18 @@ class InventoryService:
         snap = self.store.snapshot()
         return {"dry_run": dry_run, "message": "mock 数据快照", "tables": snap}
 
-    async def refresh_cache(self) -> dict:
+    async def refresh_cache(self, *, background: bool = False) -> dict:
         if self.repo:
-            result = await self.repo.refresh_core_tables()
+            if background and self.settings.sqlite_cache_enabled and self.settings.bitable_mode == "real":
+                warmed = await self.repo.warm_cache_from_sqlite()
+                snap = await self.repo.snapshot()
+                return {
+                    "message": "已从本地缓存加载，正在后台同步飞书…",
+                    "async": True,
+                    "warmed": warmed,
+                    "tables": snap,
+                }
+            result = await self.repo.refresh_core_tables(smart=not background)
             failed = result.get("failed") or {}
             message = "Bitable 缓存已刷新"
             if failed:
@@ -787,6 +847,16 @@ class InventoryService:
             return {"message": message, **result}
         snap = self.store.snapshot()
         return {"message": "mock 模式无需刷新缓存", "tables": snap}
+
+    async def refresh_cache_remote(self) -> None:
+        """后台从飞书全量同步（SQLite 已启用时使用）。"""
+        if not self.repo:
+            return
+        try:
+            await self.repo.refresh_core_tables(smart=False)
+            logger.info("后台飞书缓存同步完成")
+        except Exception:
+            logger.exception("后台飞书缓存同步失败")
 
     async def admin_overview(self, start_at=None, end_at=None) -> dict:
         snap = await self.bulk_sync(dry_run=True)
@@ -911,8 +981,10 @@ class InventoryService:
 
     async def _admin_transactions(self, *, start_at=None, end_at=None, limit: int) -> list[Transaction]:
         if self.repo:
-            return await self.repo.list_transactions(start_at=start_at, end_at=end_at, limit=limit)
-        return self.store.list_transactions(start_at=start_at, end_at=end_at, limit=limit)
+            items, _ = await self.repo.list_transactions(start_at=start_at, end_at=end_at, limit=limit, page=1, size=limit)
+            return items
+        items, _ = self.store.list_transactions(start_at=start_at, end_at=end_at, limit=limit, page=1, size=limit)
+        return items
 
     async def _admin_requests(self, *, limit: int) -> list[StockRequest]:
         try:
@@ -979,7 +1051,11 @@ class InventoryService:
                 raise AppError(4001, "移动流水请用反向移动冲正，不可直接删除", 400) from exc
             if msg.startswith("insufficient_stock_to_revert"):
                 available = msg.split(":", 1)[-1] if ":" in msg else "0"
-                raise AppError(4001, f"库存不足，无法冲正删除（当前 {available}）", 400) from exc
+                raise AppError(
+                    4001,
+                    f"无法删除该入库流水：冲正后库存不足（当前 {available}）。请先补货或删除后续出库流水。",
+                    400,
+                ) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc

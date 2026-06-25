@@ -7,10 +7,7 @@ import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHeader, SectionCard } from "../components/ui";
 import { openMaterialDetail } from "../utils/detailNavigation";
-
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
+import { newIdempotencyKey } from "../utils/idempotency";
 
 /** 纯内容，不含 Layout，可嵌入其他页面 */
 export function PurchaseForm() {
@@ -198,9 +195,9 @@ export function PurchaseForm() {
           }}
         />
         {loading && items.length === 0 ? (
-          <EmptyState icon="⏳" text="加载中…" />
+          <EmptyState loading text="加载中…" />
         ) : items.length === 0 ? (
-          <EmptyState icon="📦" text={keyword ? "无匹配" : "暂无物料"} />
+          <EmptyState icon="package" text={keyword ? "无匹配" : "暂无物料"} />
         ) : (
           <div className="catalog-list">
             {items.map((item) => {
@@ -234,16 +231,20 @@ export function PurchaseForm() {
 }
 
 export default function PurchasePage() {
+  const [params] = useSearchParams();
+  const fromHome = params.get("from") === "home";
+  const backTo = fromHome ? "/" : "/manage?tab=dashboard";
+
   return (
     <AuthGate
       roles={["ADMIN"]}
       fallback={
-        <Layout title="进货">
-          <EmptyState icon="🔒" text="权限不足" hint="仅管理员可进货" />
+        <Layout title="进货" backTo="/">
+          <EmptyState icon="lock" text="权限不足" hint="仅管理员可进货" />
         </Layout>
       }
     >
-      <Layout title="进货">
+      <Layout title="进货" backTo={backTo}>
         <PurchaseForm />
       </Layout>
     </AuthGate>

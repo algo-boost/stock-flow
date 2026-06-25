@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.config import Settings, get_settings
 from app.middleware.auth import require_roles
@@ -34,6 +34,26 @@ def _ensure_timezone(value: datetime | None) -> datetime | None:
     return value
 
 
+def _table_label_map(settings: Settings) -> dict[str, str]:
+    return {
+        settings.bitable_table_categories: "分类",
+        settings.bitable_table_locations: "库位",
+        settings.bitable_table_materials: "物料",
+        settings.bitable_table_inventory: "库存",
+        settings.bitable_table_transactions: "流水",
+        settings.bitable_table_requests: "申请",
+    }
+
+
+def _labeled_table_rows(settings: Settings, snapshot: dict[str, int]) -> list[dict[str, str | int]]:
+    labels = _table_label_map(settings)
+    rows: list[dict[str, str | int]] = []
+    for table_id, count in snapshot.items():
+        rows.append({"id": table_id, "label": labels.get(table_id, "其他"), "count": count})
+    rows.sort(key=lambda row: str(row["label"]))
+    return rows
+
+
 @router.post("/bulk-sync")
 async def bulk_sync(
     payload: BulkSyncRequest,
@@ -46,10 +66,15 @@ async def bulk_sync(
 
 @router.post("/cache/refresh")
 async def refresh_cache(
+    background_tasks: BackgroundTasks,
     _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
     service: InventoryService = Depends(get_service),
+    settings: Settings = Depends(get_settings),
 ):
-    data = await service.refresh_cache()
+    use_background = settings.sqlite_cache_enabled and settings.bitable_mode == "real"
+    data = await service.refresh_cache(background=use_background)
+    if data.get("async"):
+        background_tasks.add_task(service.refresh_cache_remote)
     return success(data)
 
 
@@ -263,35 +288,27 @@ def _cc_admin_ids(settings: Settings) -> list[str]:
 
 @router.post("/sqlite-sync")
 async def sync_sqlite_cache(
+    background_tasks: BackgroundTasks,
     _user: User = Depends(require_roles(Role.ADMIN)),
     settings: Settings = Depends(get_settings),
+    service: InventoryService = Depends(get_service),
 ):
-    """强制将 Bitable 数据全量同步到本地 SQLite 缓存。"""
+    """将 Bitable 数据同步到本地 SQLite（与 /cache/refresh 共用刷新逻辑）。"""
     if not settings.sqlite_cache_enabled or settings.bitable_mode != "real":
         return success({"synced": False, "message": "SQLite 缓存未启用或非 real 模式"})
+    data = await service.refresh_cache(background=True)
+    background_tasks.add_task(service.refresh_cache_remote)
     from app.bitable.sqlite_cache import get_sqlite_cache
-    from app.bitable.repository import BitableRepository
-    repo = BitableRepository(settings)
+
     sqlite = get_sqlite_cache()
-    table_ids = [
-        settings.bitable_table_categories,
-        settings.bitable_table_locations,
-        settings.bitable_table_materials,
-        settings.bitable_table_inventory,
-        settings.bitable_table_transactions,
-        settings.bitable_table_requests,
-    ]
-    results = {}
-    for table_id in table_ids:
-        if not table_id:
-            continue
-        try:
-            records = await repo.client.list_records(table_id)
-            sqlite.upsert_records(table_id, records)
-            results[table_id] = len(records)
-        except Exception as exc:
-            results[table_id] = f"失败: {exc}"
-    return success({"synced": True, "tables": results, "snapshot": sqlite.snapshot()})
+    snapshot = sqlite.snapshot()
+    return success({
+        "synced": True,
+        "async": True,
+        "message": data.get("message"),
+        "tables": snapshot,
+        "labeled_tables": _labeled_table_rows(settings, snapshot),
+    })
 
 
 @router.get("/sqlite-status")
@@ -304,9 +321,11 @@ async def sqlite_cache_status(
         return success({"enabled": False})
     from app.bitable.sqlite_cache import get_sqlite_cache
     sqlite = get_sqlite_cache()
+    snapshot = sqlite.snapshot()
     return success({
         "enabled": True,
-        "snapshot": sqlite.snapshot(),
+        "snapshot": snapshot,
+        "labeled_tables": _labeled_table_rows(settings, snapshot),
         "sync_interval": settings.sqlite_cache_sync_interval,
     })
 

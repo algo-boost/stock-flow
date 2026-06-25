@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Form, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { getMaterial, listLocations, postTransfer, searchMaterials } from "../api";
@@ -11,23 +11,19 @@ import {
 } from "../utils/inventoryDisplay";
 import { showUndo } from "./UndoToast";
 import {
-  detailContextAfterStock,
-  openMaterialDetail,
+  navigateAfterStockSubmit,
   readStockNavState,
 } from "../utils/detailNavigation";
-import { EmptyState, SectionCard } from "./ui";
+import { EmptyState, SectionCard, StockFormShell } from "./ui";
+import { newIdempotencyKey } from "../utils/idempotency";
 
-function newIdempotencyKey() {
-  return crypto.randomUUID();
-}
-
-export function LocationTransferPanel() {
+export function LocationTransferPanel({ active = true }: { active?: boolean }) {
   const pageSize = 20;
   const navigate = useNavigate();
   const location = useLocation();
-  const stockState = readStockNavState(location.state);
   const [params] = useSearchParams();
   const presetMaterialId = params.get("material_id") ?? "";
+  const stockState = readStockNavState(location.state, presetMaterialId || undefined);
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -42,6 +38,7 @@ export function LocationTransferPanel() {
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const listLoadedRef = useRef(false);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
     setLoading(true);
@@ -66,12 +63,14 @@ export function LocationTransferPanel() {
   }, []);
 
   useEffect(() => {
+    if (!active || listLoadedRef.current) return;
+    listLoadedRef.current = true;
     void loadMaterials("", 1);
     void loadLocations();
-  }, [loadLocations, loadMaterials]);
+  }, [active, loadLocations, loadMaterials]);
 
   useEffect(() => {
-    if (!presetMaterialId) return;
+    if (!active || !presetMaterialId) return;
     void (async () => {
       try {
         const detail = await getMaterial(presetMaterialId);
@@ -85,7 +84,7 @@ export function LocationTransferPanel() {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
-  }, [locations, presetMaterialId]);
+  }, [active, locations, presetMaterialId]);
 
   const locationOptions = useMemo(
     () =>
@@ -211,11 +210,8 @@ export function LocationTransferPanel() {
         Toast.show({ icon: "success", content: "已撤销移动" });
         void loadMaterials(keyword, 1);
       });
-      backToList();
       void loadMaterials(keyword, 1);
-      if (stockState.materialBackTo.startsWith("/materials/")) {
-        openMaterialDetail(navigate, selected.material.id, detailContextAfterStock(stockState));
-      }
+      navigateAfterStockSubmit(navigate, selected.material.id, stockState);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "移动失败" });
     } finally {
@@ -225,7 +221,13 @@ export function LocationTransferPanel() {
 
   if (selected) {
     return (
-      <>
+      <StockFormShell
+        action={
+          <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
+            确认移动
+          </Button>
+        }
+      >
         <SectionCard
           title="确认移动"
           subtitle={`${selected.material.name} · 总库存 ${selected.total_quantity} ${selected.material.unit} · 移动不改变总库存`}
@@ -285,12 +287,7 @@ export function LocationTransferPanel() {
             </Form.Item>
           </Form>
         </SectionCard>
-        <div className="actions single">
-          <Button color="primary" loading={submitting} disabled={!canSubmit} onClick={onSubmit}>
-            确认移动
-          </Button>
-        </div>
-      </>
+      </StockFormShell>
     );
   }
 
@@ -313,9 +310,9 @@ export function LocationTransferPanel() {
         <span>{loading ? "加载中…" : `显示 ${items.length} / ${total} 条${keyword ? "（已筛选）" : ""}`}</span>
       </div>
       {loading && items.length === 0 ? (
-        <EmptyState icon="⏳" text="正在从 Bitable 拉取物料…" />
+        <EmptyState loading text="正在从 Bitable 拉取物料…" />
       ) : items.length === 0 ? (
-        <EmptyState icon="📦" text={keyword ? "没有匹配的物料" : "暂无可移动物料"} />
+        <EmptyState icon="package" text={keyword ? "没有匹配的物料" : "暂无可移动物料"} />
       ) : (
         <div className="catalog-list">
           {items.map((item) => (

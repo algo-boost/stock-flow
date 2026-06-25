@@ -5,9 +5,11 @@ import { getAdminAudit, getAdminOverview, updateStockRequest, updateTransaction,
 import type { AdminAudit, AdminOverview, StockRequest, Transaction } from "../api/types";
 import { AuthGate, useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
+import { AdminSystemPanel } from "../components/AdminSystemPanel";
 import { CategoryManagePanel } from "../components/CategoryManagePanel";
 import { LocationManagePanel } from "../components/LocationManagePanel";
 import { EmptyState, SectionCard, TxBadge } from "../components/ui";
+import { FeishuIcon } from "../components/FeishuIcon";
 import {
   resolveDashboardPeriod,
   WarehouseDashboard,
@@ -103,7 +105,7 @@ function ManageContent() {
       }
       Toast.show({ icon: "success", content: "已修正" });
       closeEdit();
-      void load();
+      void loadDashboard();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "修正失败" });
     } finally {
@@ -111,17 +113,13 @@ function ManageContent() {
     }
   };
 
-  const load = useCallback(async () => {
+  const loadDashboard = useCallback(async (opts?: { silent?: boolean }) => {
     if (!canApprove) return;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     try {
       const range = resolveDashboardPeriod(period);
-      const [overviewData, auditData] = await Promise.all([
-        getAdminOverview(range),
-        getAdminAudit({ limit: 30 }),
-      ]);
+      const overviewData = await getAdminOverview(range);
       setOverview(overviewData);
-      setAudit(auditData);
       setPendingCount(overviewData.totals.pending_requests);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
@@ -130,9 +128,29 @@ function ManageContent() {
     }
   }, [canApprove, period, setPendingCount]);
 
+  const loadAudit = useCallback(async () => {
+    if (!canApprove) return;
+    setLoading(true);
+    try {
+      const auditData = await getAdminAudit({ limit: 30 });
+      setAudit(auditData);
+    } catch (e) {
+      Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载失败" });
+    } finally {
+      setLoading(false);
+    }
+  }, [canApprove]);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!canApprove || activeTab !== "dashboard") return;
+    void loadDashboard();
+  }, [activeTab, canApprove, loadDashboard]);
+
+  useEffect(() => {
+    if (!canApprove || activeTab !== "audit") return;
+    if (audit) return;
+    void loadAudit();
+  }, [activeTab, audit, canApprove, loadAudit]);
 
   useEffect(() => {
     if (rawTab === "overview") {
@@ -151,12 +169,15 @@ function ManageContent() {
   if (!canApprove) {
     return (
       <Layout title="管理">
-        <Tabs defaultActiveKey="locations" className="compact-tabs manage-tabs">
+        <Tabs defaultActiveKey="locations" className="compact-tabs manage-tabs sticky-page-tabs">
           <Tabs.Tab title="库位" key="locations">
             <LocationManagePanel />
           </Tabs.Tab>
           <Tabs.Tab title="分类" key="categories">
             <CategoryManagePanel />
+          </Tabs.Tab>
+          <Tabs.Tab title="同步" key="sync">
+            <AdminSystemPanel />
           </Tabs.Tab>
         </Tabs>
       </Layout>
@@ -165,18 +186,20 @@ function ManageContent() {
 
   return (
     <Layout title="管理">
-      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs manage-tabs">
+      <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs manage-tabs sticky-page-tabs">
         <Tabs.Tab title="概况" key="dashboard">
           {!overview ? (
-            <EmptyState icon="⏳" text="加载中…" />
+            <EmptyState loading text="加载中…" />
           ) : (
-            <WarehouseDashboard
-              overview={overview}
-              period={period}
-              loading={loading}
-              onPeriodChange={setPeriod}
-              onRefresh={() => void load()}
-            />
+            <>
+              <WarehouseDashboard
+                overview={overview}
+                period={period}
+                loading={loading}
+                onPeriodChange={setPeriod}
+                onRefresh={() => void loadDashboard()}
+              />
+            </>
           )}
         </Tabs.Tab>
 
@@ -186,6 +209,10 @@ function ManageContent() {
 
         <Tabs.Tab title="分类" key="categories">
           <CategoryManagePanel />
+        </Tabs.Tab>
+
+        <Tabs.Tab title="系统" key="system">
+          <AdminSystemPanel onRefreshed={() => void loadDashboard({ silent: true })} />
         </Tabs.Tab>
 
         <Tabs.Tab title="审计" key="audit">
@@ -211,7 +238,7 @@ function ManageContent() {
                 ))}
               </div>
             ) : (
-              <EmptyState icon="📋" text="暂无审计流水" />
+              <EmptyState icon="list" text="暂无审计流水" />
             )}
           </SectionCard>
         </Tabs.Tab>
@@ -271,7 +298,7 @@ export default function ManagePage() {
       roles={["KEEPER", "ADMIN"]}
       fallback={
         <Layout title="管理">
-          <EmptyState icon="🔒" text="暂无权限" hint="库位维护需要库管员或管理员角色" />
+          <EmptyState icon="lock" text="暂无权限" hint="库位维护需要库管员或管理员角色" />
         </Layout>
       }
     >
