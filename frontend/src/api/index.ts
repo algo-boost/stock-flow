@@ -6,13 +6,17 @@ import {
   redirectToLoginHomeIfNeeded,
 } from "../auth/feishu";
 import { clearAuthToken, getAuthToken } from "../auth/token";
+import { invalidateAfterApiWrite } from "../utils/dataMutation";
 import type {
   ApiEnvelope,
   AdminAudit,
   AdminOverview,
   AdminSystem,
   Category,
+  DispositionStatus,
+  DispositionType,
   InventoryItem,
+  LoanClosureRequest,
   MaterialDetail,
   Location,
   Material,
@@ -20,11 +24,13 @@ import type {
   PaginatedTransactions,
   PendingReturn,
   RoleMeta,
+  StagingInventoryItem,
   StockRequest,
   StockRequestStatus,
   StockRequestType,
   Transaction,
   User,
+  FeishuUserBrief,
 } from "./types";
 
 let reauthPromise: Promise<void> | null = null;
@@ -55,14 +61,6 @@ function cacheSet(path: string, data: unknown): void {
   try {
     localStorage.setItem(cacheKey(path), JSON.stringify({ data, ts: Date.now() }));
   } catch { /* 满了就跳过 */ }
-}
-
-function cacheClearLike(pattern: string): void {
-  const prefix = `lf_cache:/api/${pattern}`;
-  for (let i = localStorage.length - 1; i >= 0; i--) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(prefix)) localStorage.removeItem(key);
-  }
 }
 
 function cacheTtl(path: string): number {
@@ -177,11 +175,11 @@ async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized 
     throw new Error(body.message || detail || `请求失败 (${resp.status})`);
   }
 
-  // GET 成功 → 写入缓存；写操作 → 清关联缓存
+  // GET 成功 → 写入缓存；写操作 → 清关联缓存并通知列表刷新
   if (isGet) {
     cacheSet(path, body.data);
   } else {
-    cacheClearLike(path.split("/")[1] || "materials");
+    invalidateAfterApiWrite(path);
   }
 
   return body.data;
@@ -189,6 +187,13 @@ async function request<T>(path: string, init?: RequestInit, retryOnUnauthorized 
 
 export function getMe() {
   return request<{ user: User; role_meta?: RoleMeta | null }>("/me");
+}
+
+export function searchFeishuUsers(q = "", limit = 20) {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set("q", q.trim());
+  params.set("limit", String(limit));
+  return request<FeishuUserBrief[]>(`/users/search?${params.toString()}`);
 }
 
 export function listCategories() {
@@ -589,6 +594,55 @@ export function listPendingReturns(borrower?: string) {
   if (borrower?.trim()) params.set("borrower", borrower.trim());
   const qs = params.toString();
   return request<PendingReturn[]>(`/returns/pending${qs ? `?${qs}` : ""}`);
+}
+
+export function listStagingInventory() {
+  return request<StagingInventoryItem[]>("/inventory/staging");
+}
+
+export function listClosureRequests(opts?: { status?: DispositionStatus }) {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  const qs = params.toString();
+  return request<LoanClosureRequest[]>(`/returns/closure-requests${qs ? `?${qs}` : ""}`);
+}
+
+export function createClosureRequest(payload: {
+  source_tx_id: string;
+  quantity: number;
+  disposition_type: DispositionType;
+  note?: string;
+}) {
+  return request<LoanClosureRequest>("/returns/closure-requests", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function approveClosureRequest(id: string) {
+  return request<LoanClosureRequest>(`/returns/closure-requests/${id}/approve`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function rejectClosureRequest(id: string, reason: string) {
+  return request<LoanClosureRequest>(`/returns/closure-requests/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function directCloseBorrow(payload: {
+  source_tx_id: string;
+  quantity: number;
+  disposition_type: DispositionType;
+  note?: string;
+}) {
+  return request<{ transaction_id: string }>("/returns/close", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function postInbound(payload: {

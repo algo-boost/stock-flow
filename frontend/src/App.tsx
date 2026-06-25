@@ -27,6 +27,10 @@ function TransferRedirect() {
   return <Navigate to={`/stock?${next.toString()}`} replace />;
 }
 
+function StagingRedirect() {
+  return <Navigate to="/stock?tab=staging" replace state={{ materialBackTo: "/" }} />;
+}
+
 function StockRedirect({ tab }: { tab?: "inbound" | "outbound" }) {
   const [params] = useSearchParams();
   const next = new URLSearchParams();
@@ -64,6 +68,7 @@ export default function App() {
             <Route path="/outbound" element={<StockRedirect />} />
             <Route path="/inbound" element={<StockRedirect tab="inbound" />} />
             <Route path="/transfer" element={<TransferRedirect />} />
+            <Route path="/staging" element={<StagingRedirect />} />
             <Route path="/purchase" element={<PurchasePage />} />
             <Route path="/manage" element={<ManagePage />} />
             <Route path="/shelves" element={<ShelfListRedirect />} />

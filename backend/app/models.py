@@ -186,6 +186,64 @@ class PendingReturn(BaseModel):
     overdue: bool = False
 
 
+class DispositionType(str, Enum):
+    CONSUMED = "已消耗"
+    LOST = "已丢失"
+    SCRAPPED = "已报废"
+
+
+class DispositionStatus(str, Enum):
+    PENDING = "待确认"
+    APPROVED = "已确认"
+    REJECTED = "已拒绝"
+
+
+class LoanClosureRequest(BaseModel):
+    id: str
+    source_tx_id: str
+    material_id: str
+    material_name: str | None = None
+    location_id: str
+    location_name: str | None = None
+    quantity: int
+    disposition_type: DispositionType
+    status: DispositionStatus
+    requester_open_id: str
+    requester_name: str
+    approver_open_id: str | None = None
+    approver_name: str | None = None
+    note: str | None = None
+    reject_reason: str | None = None
+    disposition_tx_id: str | None = None
+    created_at: datetime
+    reviewed_at: datetime | None = None
+
+
+class StagingInventoryItem(InventoryItem):
+    material_name: str | None = None
+    material_code: str | None = None
+    unit: str | None = None
+    location_type: str | None = None
+
+
+class LoanClosureCreate(BaseModel):
+    source_tx_id: str = Field(min_length=1, max_length=128)
+    quantity: int = Field(gt=0, le=10000)
+    disposition_type: DispositionType
+    note: str | None = Field(default=None, max_length=500)
+
+
+class LoanClosureReject(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class LoanClosureDirect(BaseModel):
+    source_tx_id: str = Field(min_length=1, max_length=128)
+    quantity: int = Field(gt=0, le=10000)
+    disposition_type: DispositionType
+    note: str | None = Field(default=None, max_length=500)
+
+
 class StockRequest(BaseModel):
     id: str
     type: StockRequestType
@@ -248,6 +306,8 @@ class InboundCreate(BaseModel):
     spec: str | None = Field(default=None, max_length=200)
     row: int | None = Field(default=None, ge=1, le=99)
     column: int | None = Field(default=None, ge=1, le=99)
+    applicant_open_id: str | None = Field(default=None, max_length=128)
+    applicant_name: str | None = Field(default=None, max_length=100)
 
 
 class InventorySlotUpdate(BaseModel):
@@ -295,6 +355,8 @@ class OutboundCreate(BaseModel):
     return_due_at: date | None = None
     row: int | None = Field(default=None, ge=1, le=99)
     column: int | None = Field(default=None, ge=1, le=99)
+    applicant_open_id: str | None = Field(default=None, max_length=128)
+    applicant_name: str | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")
     def validate_outbound(self) -> "OutboundCreate":
@@ -302,7 +364,7 @@ class OutboundCreate(BaseModel):
             raise ValueError("return_policy_required")
         if self.return_required and not self.return_due_at:
             raise ValueError("return_due_required")
-        if (self.row is None) ^ (self.column is None):
+        if self.column is not None and self.row is None:
             raise ValueError("slot_incomplete")
         return self
 
@@ -319,6 +381,8 @@ class StockRequestCreate(BaseModel):
     return_due_at: date | None = None
     row: int | None = Field(default=None, ge=1, le=99)
     column: int | None = Field(default=None, ge=1, le=99)
+    applicant_open_id: str | None = Field(default=None, max_length=128)
+    applicant_name: str | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")
     def validate_request(self) -> "StockRequestCreate":
@@ -329,7 +393,7 @@ class StockRequestCreate(BaseModel):
                 raise ValueError("return_policy_required")
             if self.return_required and not self.return_due_at:
                 raise ValueError("return_due_required")
-            if (self.row is None) ^ (self.column is None):
+            if self.column is not None and self.row is None:
                 raise ValueError("slot_incomplete")
         return self
 
@@ -382,6 +446,11 @@ class TransferResult(BaseModel):
 class MeResponse(BaseModel):
     user: User
     role_meta: dict[str, Any] | None = None
+
+
+class FeishuUserBrief(BaseModel):
+    open_id: str
+    name: str
 
 
 class BulkSyncRequest(BaseModel):

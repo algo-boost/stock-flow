@@ -43,6 +43,7 @@ from app.models import (
     Transaction,
     TransactionType,
     TransactionUpdate,
+    User,
 )
 from app.utils.categories import category_descendant_ids, derive_category_levels, derive_location_levels
 from app.utils.inventory_display import format_inventory_slot, format_inventory_summary
@@ -56,6 +57,8 @@ from app.utils.inventory_keys import (
     resolve_outbound_slot,
 )
 from app.utils.request_remark import format_request_remark, parse_request_remark
+from app.utils.applicant import build_proxy_remark
+from app.utils.slot_rules import validate_and_normalize_slot, validate_transfer_slots
 
 _TABLE_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 _TABLE_INFLIGHT: dict[tuple[str, str], asyncio.Task[list[dict[str, Any]]]] = {}
@@ -1295,17 +1298,16 @@ class BitableRepository:
         row: int | None = None,
         column: int | None = None,
     ) -> str:
-        if self._slots_enabled() and ((row is None) ^ (column is None)):
-            raise ValueError("slot_incomplete")
         s = self.settings
         key = self._inv_key(material_id, location_id, row, column)
         inv_fields: dict[str, Any] = {
             s.bitable_f_inventory_quantity: qty,
             s.bitable_f_inventory_updated: updated_at,
         }
-        if self._slots_enabled() and row is not None and column is not None:
+        if self._slots_enabled() and row is not None:
             inv_fields[s.bitable_f_inventory_row] = row
-            inv_fields[s.bitable_f_inventory_column] = column
+            if column is not None:
+                inv_fields[s.bitable_f_inventory_column] = column
         if key in inv_records:
             record_id = inv_records[key]["record_id"]
             await self.client.update_record(
@@ -1712,6 +1714,8 @@ class BitableRepository:
         payload: StockRequestCreate,
         requester_open_id: str,
         requester_name: str,
+        *,
+        actor: User | None = None,
     ) -> StockRequest:
         self._require_requests_table()
         material = await self.get_material(payload.material_id)
@@ -1727,6 +1731,8 @@ class BitableRepository:
 
         s = self.settings
         remark = format_request_remark(payload)
+        if actor:
+            remark = build_proxy_remark(remark, actor, requester_open_id) or remark
         fields: dict[str, Any] = {
             s.bitable_f_request_type: payload.type.value,
             s.bitable_f_request_status: StockRequestStatus.PENDING.value,
@@ -1961,8 +1967,10 @@ class BitableRepository:
         locations = await self._load_locations()
         if location_id not in locations:
             raise ValueError("location_not_found")
-        if self._slots_enabled() and ((row is None) ^ (column is None)):
-            raise ValueError("slot_incomplete")
+        loc = locations[location_id]
+        row, column = validate_and_normalize_slot(
+            loc, row, column, slots_enabled=self._slots_enabled()
+        )
 
         inv_records = await self._load_inventory_records()
         key = self._inv_key(material_id, location_id, row, column)
@@ -2098,6 +2106,52 @@ class BitableRepository:
             created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
         )
 
+    async def apply_disposition_audit(
+        self,
+        material_id: str,
+        location_id: str,
+        operator_open_id: str,
+        operator_name: str,
+        remark: str,
+    ) -> Transaction:
+        """写入结案审计流水，不修改库存。"""
+        if not await self.get_material(material_id):
+            raise ValueError("material_not_found")
+        locations = await self._load_locations()
+        if location_id not in locations:
+            raise ValueError("location_not_found")
+
+        s = self.settings
+        tx_fields = self._build_tx_fields(
+            s.bitable_v_tx_outbound,
+            material_id,
+            location_id,
+            0,
+            operator_open_id,
+            operator_name,
+            remark,
+        )
+        tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+        self._upsert_cached_record(
+            s.bitable_table_transactions,
+            tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
+        )
+        material = (await self._load_materials())[material_id]
+        loc = locations[location_id]
+        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
+        return Transaction(
+            id=tx_rec.get("record_id", "tx_disposition"),
+            type=TransactionType.OUTBOUND,
+            material_id=material_id,
+            material_name=material.name,
+            location_id=location_id,
+            location_name=loc.name,
+            quantity=0,
+            operator=operator_name,
+            remark=remark,
+            created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
+        )
+
     async def apply_transfer(
         self,
         material_id: str,
@@ -2116,13 +2170,19 @@ class BitableRepository:
             raise ValueError("same_location")
         if not await self.get_material(material_id):
             raise ValueError("material_not_found")
-        if self._slots_enabled():
-            if (from_row is None) ^ (from_column is None) or (to_row is None) ^ (to_column is None):
-                raise ValueError("slot_incomplete")
-
         locations = await self._load_locations()
         if from_location_id not in locations or to_location_id not in locations:
             raise ValueError("location_not_found")
+        if self._slots_enabled():
+            from_row, from_column, to_row, to_column = validate_transfer_slots(
+                locations[from_location_id],
+                locations[to_location_id],
+                from_row,
+                from_column,
+                to_row,
+                to_column,
+                slots_enabled=True,
+            )
 
         inv_records = await self._load_inventory_records()
         inv_map = self._inventory_map_from_records(inv_records)

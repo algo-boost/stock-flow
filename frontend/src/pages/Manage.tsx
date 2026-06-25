@@ -59,6 +59,7 @@ function ManageContent() {
   const [editQty, setEditQty] = useState(1);
   const [editRemark, setEditRemark] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+  const [keeperTab, setKeeperTab] = useState("locations");
 
   // ── 操作菜单（修改/删除，仅 ADMIN） ──
   const [menuTarget, setMenuTarget] = useState<{ type: "tx" | "req"; item: Transaction | StockRequest } | null>(null);
@@ -168,12 +169,12 @@ function ManageContent() {
   if (!canApprove) {
     return (
       <Layout title="管理">
-        <Tabs defaultActiveKey="locations" className="compact-tabs manage-tabs sticky-page-tabs">
+        <Tabs activeKey={keeperTab} onChange={setKeeperTab} className="compact-tabs manage-tabs sticky-page-tabs">
           <Tabs.Tab title="库位" key="locations">
-            <LocationManagePanel />
+            <LocationManagePanel active={keeperTab === "locations"} />
           </Tabs.Tab>
           <Tabs.Tab title="分类" key="categories">
-            <CategoryManagePanel />
+            <CategoryManagePanel active={keeperTab === "categories"} />
           </Tabs.Tab>
           <Tabs.Tab title="同步" key="sync">
             <AdminSystemPanel />
@@ -203,11 +204,11 @@ function ManageContent() {
         </Tabs.Tab>
 
         <Tabs.Tab title="库位" key="locations">
-          <LocationManagePanel />
+          <LocationManagePanel active={activeTab === "locations"} />
         </Tabs.Tab>
 
         <Tabs.Tab title="分类" key="categories">
-          <CategoryManagePanel />
+          <CategoryManagePanel active={activeTab === "categories"} />
         </Tabs.Tab>
 
         <Tabs.Tab title="系统" key="system">

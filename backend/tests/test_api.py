@@ -42,6 +42,33 @@ def test_health():
     assert resp.json()["status"] == "ok"
 
 
+def test_search_feishu_users_mock():
+    resp = client.get("/api/users/search?q=张", headers=HEADERS_KEEPER)
+    assert resp.status_code == 200
+    items = resp.json()["data"]
+    assert any(item["name"] == "张工" for item in items)
+
+
+def test_inbound_with_applicant_proxy():
+    resp = client.post(
+        "/api/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_02",
+            "qty": 1,
+            "idempotency_key": "proxy-inbound-1",
+            "row": 1,
+            "applicant_open_id": "user_zhang",
+            "applicant_name": "张工",
+        },
+    )
+    assert resp.status_code == 200
+    txs_body = client.get("/api/transactions", headers=HEADERS_ADMIN).json()["data"]
+    txs = txs_body["items"]
+    assert any(tx.get("operator") == "张工" and tx.get("type") == "入库" for tx in txs)
+
+
 def test_bitable_list_records_treats_null_items_as_empty(monkeypatch):
     bitable = BYTableClient(
         Settings(
@@ -615,6 +642,41 @@ def test_inbound_keeps_separate_cabinet_slots():
     assert detail["total_quantity"] == 10
 
 
+def test_inbound_rack_row_only():
+    resp = client.post(
+        "/api/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_02",
+            "qty": 3,
+            "idempotency_key": "rack-row-only-1",
+            "note": "货架层入库",
+            "row": 2,
+        },
+    )
+    assert resp.status_code == 200
+    detail = client.get("/api/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
+    rack_items = [item for item in detail["inventory"] if item["location_id"] == "loc_02"]
+    assert any(item["row"] == 2 and item["column"] is None and item["quantity"] == 3 for item in rack_items)
+
+
+def test_inbound_cabinet_row_without_column_rejected():
+    resp = client.post(
+        "/api/inbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_001",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "cabinet-incomplete",
+            "row": 2,
+        },
+    )
+    assert resp.status_code == 400
+    assert "行号" in resp.json()["message"]
+
+
 def test_update_second_inventory_slot():
     client.post(
         "/api/inbound",
@@ -985,6 +1047,49 @@ def test_admin_overview_contains_statistics():
     assert "location_distribution" in data
     assert "category_distribution" in data
     assert "pending_requests_list" in data
+
+
+def test_direct_close_clears_pending_return():
+    client.post(
+        "/api/outbound",
+        headers=HEADERS_KEEPER,
+        json={
+            "material_id": "mat_realsense",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "closure-out-001",
+            "note": "借用测试",
+            "return_required": True,
+            "return_due_at": "2026-07-01",
+        },
+    )
+    pending = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN).json()["data"]
+    assert len(pending) == 1
+    source_tx_id = pending[0]["source_tx_id"]
+
+    close_resp = client.post(
+        "/api/returns/close",
+        headers=HEADERS_ADMIN,
+        json={
+            "source_tx_id": source_tx_id,
+            "quantity": 1,
+            "disposition_type": "已消耗",
+            "note": "装机交付",
+        },
+    )
+    assert close_resp.status_code == 200
+
+    cleared = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN).json()["data"]
+    assert cleared == []
+
+
+def test_staging_inventory_lists_staging_location_only():
+    resp = client.get("/api/inventory/staging", headers=HEADERS_KEEPER)
+    assert resp.status_code == 200
+    items = resp.json()["data"]
+    assert isinstance(items, list)
+    if items:
+        assert all("location_name" in item for item in items)
 
 
 def test_pending_returns_lists_borrow_and_clears_after_return_inbound():

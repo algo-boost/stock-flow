@@ -32,6 +32,14 @@ declare global {
         success?: (res: { result?: string; code?: string }) => void;
         fail?: (err: unknown) => void;
       }) => void;
+      chooseContact?: (opts: {
+        multi?: boolean;
+        ignore?: boolean;
+        enableChooseDepartment?: boolean;
+        externalContact?: boolean;
+        success?: (res: { data?: Array<Record<string, unknown>> }) => void;
+        fail?: (err: unknown) => void;
+      }) => void;
       setNavigationBar?: (opts: Record<string, unknown>) => void;
       onLeftNavigationBarClick?: (opts: Record<string, unknown>) => void;
       setNavigationBarColor?: (opts: Record<string, unknown>) => void;
@@ -226,6 +234,7 @@ const JSAPI_LIST = [
   "onLeftNavigationBarClick",
   "setNavigationBarColor",
   "scanCode",
+  "chooseContact",
 ];
 
 /** 完成 JSAPI 鉴权，供导航栏等能力调用 */

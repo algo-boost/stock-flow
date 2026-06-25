@@ -5,6 +5,8 @@ import { listPendingReturns } from "../api";
 import type { PendingReturn } from "../api/types";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard } from "./ui";
+import { ClosureRequestDialog, DirectCloseDialog } from "./PendingClosuresPanel";
+import { useDataMutationRefetch } from "../utils/dataMutation";
 import { openMaterialDetail, openStockPage } from "../utils/detailNavigation";
 import { formatHistoryDate } from "../utils/historyDisplay";
 
@@ -23,6 +25,8 @@ export function PendingReturnsPanel({
   const [items, setItems] = useState<PendingReturn[]>([]);
   const [borrowerFilter, setBorrowerFilter] = useState("");
   const [loading, setLoading] = useState(false);
+  const [closureTarget, setClosureTarget] = useState<PendingReturn | null>(null);
+  const [directCloseTarget, setDirectCloseTarget] = useState<PendingReturn | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,6 +46,8 @@ export function PendingReturnsPanel({
     if (!active) return;
     void load();
   }, [load, active]);
+
+  useDataMutationRefetch(["returns", "inventory"], load, active);
 
   useEffect(() => {
     if (!active) return;
@@ -143,19 +149,46 @@ export function PendingReturnsPanel({
                 {item.return_due_at ? ` · 预计归还 ${item.return_due_at}` : " · 需归还"}
               </div>
               {item.note && <div className="tx-meta">说明：{item.note}</div>}
-              <div className="actions single" style={{ marginTop: 10 }}>
+              <div className="request-actions" style={{ marginTop: 10 }}>
                 <Button color="primary" fill="outline" onClick={() => goReturn(item)}>
                   {canInbound ? "去入库归还" : "申请归还"}
                 </Button>
+                {!canInbound && (
+                  <Button fill="outline" onClick={() => setClosureTarget(item)}>
+                    申请结案
+                  </Button>
+                )}
+                {showBorrowerFilter && canInbound && (
+                  <Button fill="outline" onClick={() => setDirectCloseTarget(item)}>
+                    直接结案
+                  </Button>
+                )}
               </div>
             </div>
           ))
         )}
       </SectionCard>
 
+      <ClosureRequestDialog
+        visible={closureTarget !== null}
+        sourceTxId={closureTarget?.source_tx_id ?? ""}
+        maxQty={closureTarget?.quantity ?? 1}
+        materialName={closureTarget?.material_name}
+        onClose={() => setClosureTarget(null)}
+        onSubmitted={() => void load()}
+      />
+      <DirectCloseDialog
+        visible={directCloseTarget !== null}
+        sourceTxId={directCloseTarget?.source_tx_id ?? ""}
+        maxQty={directCloseTarget?.quantity ?? 1}
+        materialName={directCloseTarget?.material_name}
+        onClose={() => setDirectCloseTarget(null)}
+        onSubmitted={() => void load()}
+      />
+
       {!showBorrowerFilter && (
         <div className="stock-hint" style={{ padding: "0 12px 12px" }}>
-          归还时请在本页点击「申请归还」，并在说明中填写「归还」及项目/原因，管理员审批上架后此处会自动消失。
+          实物回库请点「申请归还」，库管审批时指定库位；不归还（交付/丢失/报废）请点「申请结案」。
         </div>
       )}
     </>

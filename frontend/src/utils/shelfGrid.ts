@@ -93,3 +93,14 @@ export function buildShelfCells(location: Location, inventory: InventoryItem[]):
 
   return { cells, unslotted, previewDistributed };
 }
+
+export function cellMaterialQty(cell: ShelfCell, materialId?: string): number {
+  if (!materialId) return 0;
+  return cell.items
+    .filter((item) => item.material_id === materialId)
+    .reduce((sum, item) => sum + item.quantity, 0);
+}
+
+export function cellHasMaterial(cell: ShelfCell, materialId?: string): boolean {
+  return cellMaterialQty(cell, materialId) > 0;
+}

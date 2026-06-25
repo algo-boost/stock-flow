@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Dialog, Form, Input, Selector, Stepper, Toast, ActionSheet } from "antd-mobile";
-import { approveStockRequest, listApprovalRequests, rejectStockRequest, updateStockRequest, deleteStockRequest } from "../api";
-import type { StockRequest, StockRequestStatus } from "../api/types";
+import { approveStockRequest, listApprovalRequests, listLocations, rejectStockRequest, updateStockRequest, deleteStockRequest } from "../api";
+import type { Location, StockRequest, StockRequestStatus } from "../api/types";
 import { formatReturnPlan } from "../utils/requestDisplay";
 import { useAuth } from "./AuthGate";
+import {
+  ApprovalLocationForm,
+  buildApprovalLocationPayload,
+  isApprovalLocationComplete,
+  type ApprovalLocationValue,
+} from "./ApprovalLocationForm";
+import { useDataMutationRefetch } from "../utils/dataMutation";
 import { EmptyState, SectionCard, TxBadge } from "./ui";
 import { FeishuIcon } from "./FeishuIcon";
 
@@ -94,21 +101,81 @@ export function ApprovalRecords({ active = true }: { active?: boolean }) {
   const [rejectTarget, setRejectTarget] = useState<StockRequest | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  const handleApprove = async (item: StockRequest) => {
+  const [approveTarget, setApproveTarget] = useState<StockRequest | null>(null);
+  const [approveLocation, setApproveLocation] = useState<ApprovalLocationValue>({ location_id: "" });
+  const [locations, setLocations] = useState<Location[]>([]);
+
+  const loadLocations = useCallback(async () => {
+    try {
+      setLocations(await listLocations());
+    } catch {
+      setLocations([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLocations();
+  }, [loadLocations]);
+
+  useDataMutationRefetch(["locations"], loadLocations);
+
+  const approveLocationObj = useMemo(
+    () => locations.find((loc) => loc.id === approveLocation.location_id),
+    [approveLocation.location_id, locations],
+  );
+
+  const closeApprove = () => {
+    setApproveTarget(null);
+    setApproveLocation({ location_id: "" });
+  };
+
+  const handleApprove = (item: StockRequest) => {
+    if (item.type === "入库" && !item.location_id) {
+      setApproveTarget(item);
+      setApproveLocation({ location_id: "", row: undefined, column: undefined });
+      return;
+    }
+    void submitApprove(item, buildApprovalLocationPayload(item.type, item.location_id, { location_id: item.location_id ?? "" }));
+  };
+
+  const submitApprove = async (
+    item: StockRequest,
+    payload?: { location_id?: string; row?: number; column?: number },
+  ) => {
+    if (item.type === "入库" && !item.location_id && !payload?.location_id) {
+      Toast.show({ content: "入库审批必须指定目标库位" });
+      return;
+    }
     const confirmed = await Dialog.confirm({
       content: `通过「${item.material_name ?? item.id}」${item.type}申请 ×${item.quantity}？`,
     });
     if (!confirmed) return;
     setEditBusy(true);
     try {
-      await approveStockRequest(item.id, item.location_id ? { location_id: item.location_id, row: item.row ?? undefined, column: item.column ?? undefined } : undefined);
+      await approveStockRequest(item.id, payload);
       Toast.show({ icon: "success", content: "已通过" });
+      closeApprove();
       void load();
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "审批失败" });
     } finally {
       setEditBusy(false);
     }
+  };
+
+  const confirmApproveWithLocation = () => {
+    if (!approveTarget) return;
+    if (!isApprovalLocationComplete(approveLocation, approveLocationObj)) {
+      Toast.show({ content: "请选择目标库位与具体格位" });
+      return;
+    }
+    const payload = buildApprovalLocationPayload(
+      approveTarget.type,
+      approveTarget.location_id,
+      approveLocation,
+      approveLocationObj,
+    );
+    void submitApprove(approveTarget, payload);
   };
 
   const submitReject = async () => {
@@ -149,6 +216,8 @@ export function ApprovalRecords({ active = true }: { active?: boolean }) {
     if (!active) return;
     void load();
   }, [load, active]);
+
+  useDataMutationRefetch(["requests", "inventory"], load, active);
 
   const pendingCount = useMemo(
     () => items.filter((i) => i.status === "待审批").length,
@@ -211,7 +280,7 @@ export function ApprovalRecords({ active = true }: { active?: boolean }) {
               </div>
               {item.status === "待审批" && isAdmin && (
                 <div className="request-actions">
-                  <Button size="mini" color="primary" disabled={editBusy} onClick={() => void handleApprove(item)}>
+                  <Button size="mini" color="primary" disabled={editBusy} onClick={() => handleApprove(item)}>
                     通过
                   </Button>
                   <Button
@@ -238,6 +307,36 @@ export function ApprovalRecords({ active = true }: { active?: boolean }) {
           ))}
         </div>
       )}
+
+      <Dialog
+        visible={approveTarget !== null}
+        title="审批入库 — 指定库位"
+        onClose={closeApprove}
+        actions={[
+          { key: "cancel", text: "取消", onClick: closeApprove },
+          {
+            key: "save",
+            text: editBusy ? "提交中…" : "确认通过",
+            bold: true,
+            onClick: confirmApproveWithLocation,
+          },
+        ]}
+        content={
+          approveTarget ? (
+            <>
+              <div className="stock-hint" style={{ marginBottom: 8 }}>
+                {approveTarget.material_name} × {approveTarget.quantity} · 归还上架由库管指定库位/格位
+              </div>
+              <ApprovalLocationForm
+                required
+                materialId={approveTarget.material_id}
+                value={approveLocation}
+                onChange={setApproveLocation}
+              />
+            </>
+          ) : null
+        }
+      />
 
       <Dialog
         visible={rejectTarget !== null}

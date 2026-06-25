@@ -24,9 +24,18 @@ from app.models import (
     OutboundCreate,
     PaginatedMaterials,
     PaginatedTransactions,
+    PendingReturn,
     PurchaseInboundCreate,
     RequestApprove,
     RequestReject,
+    DispositionStatus,
+    DispositionType,
+    LoanClosureCreate,
+    LoanClosureDirect,
+    LoanClosureReject,
+    LoanClosureRequest,
+    Role,
+    StagingInventoryItem,
     StockRequest,
     StockRequestCreate,
     StockRequestStatus,
@@ -37,12 +46,29 @@ from app.models import (
     User,
 )
 from app.services.pending_returns import compute_pending_returns
+from app.services.loan_closure_store import get_loan_closure_store
 from app.utils.categories import attach_category_stats
+from app.utils.disposition_remark import format_disposition_remark
 from app.utils.inventory_display import format_inventory_summary
 from app.utils.request_remark import format_outbound_remark
+from app.utils.applicant import build_proxy_remark, resolve_subject_user
+from app.utils.staging_location import is_staging_location
 from app.utils.response import AppError
 
 logger = logging.getLogger("stock-flow.inventory")
+
+
+def _allow_applicant_proxy(user: User) -> bool:
+    return user.role in {Role.KEEPER, Role.ADMIN}
+
+
+def _map_applicant_error(exc: ValueError) -> AppError | None:
+    msg = str(exc)
+    if msg == "applicant_incomplete":
+        return AppError(1001, "请选择完整的飞书申请人", 400)
+    if msg == "applicant_proxy_forbidden":
+        return AppError(1003, "仅库管/管理员可代他人提交申请", 403)
+    return None
 
 
 def _wrap_bitable_error(exc: Exception) -> AppError:
@@ -397,6 +423,202 @@ class InventoryService:
         except ValueError as exc:
             raise AppError(5003, f"Bitable 流水表数据格式错误: {exc}", 500) from exc
 
+    async def list_staging_inventory(self) -> list[StagingInventoryItem]:
+        locations = await self.list_locations()
+        staging_ids = {loc.id for loc in locations if is_staging_location(loc)}
+        if not staging_ids:
+            return []
+        loc_map = {loc.id: loc for loc in locations}
+        materials = await self.list_material_catalog(stock_only=False)
+        material_map = {item.material.id: item.material for item in materials}
+        items: list[StagingInventoryItem] = []
+        for loc_id in staging_ids:
+            inv_items = await self.list_inventory(None, loc_id)
+            for inv in inv_items:
+                material = material_map.get(inv.material_id)
+                loc = loc_map.get(loc_id)
+                items.append(
+                    StagingInventoryItem(
+                        **inv.model_dump(),
+                        material_name=material.name if material else None,
+                        material_code=material.code if material else None,
+                        unit=material.unit if material else None,
+                        location_type=loc.type if loc else None,
+                    )
+                )
+        items.sort(key=lambda item: (item.location_name or "", item.material_name or ""))
+        return items
+
+    async def list_closure_requests(
+        self,
+        user: User,
+        *,
+        status: DispositionStatus | None = None,
+    ) -> list[LoanClosureRequest]:
+        store = get_loan_closure_store()
+        if user.role == Role.USER:
+            return store.list(status=status, requester_open_id=user.open_id)
+        return store.list(status=status)
+
+    async def _resolve_pending_return(self, source_tx_id: str, quantity: int) -> PendingReturn:
+        pending = await self.list_pending_returns()
+        matched = next((item for item in pending if item.source_tx_id == source_tx_id), None)
+        if not matched:
+            raise ValueError("pending_return_not_found")
+        if quantity > matched.quantity:
+            raise ValueError(f"closure_qty_exceeds_pending:{matched.quantity}")
+        return matched
+
+    async def create_closure_request(
+        self, payload: LoanClosureCreate, user: User
+    ) -> LoanClosureRequest:
+        try:
+            matched = await self._resolve_pending_return(payload.source_tx_id, payload.quantity)
+            if user.role == Role.USER and matched.borrower != user.name:
+                raise ValueError("closure_not_allowed")
+            return get_loan_closure_store().create(
+                source_tx_id=payload.source_tx_id,
+                material_id=matched.material_id,
+                material_name=matched.material_name,
+                location_id=matched.location_id,
+                location_name=matched.location_name,
+                quantity=payload.quantity,
+                disposition_type=payload.disposition_type,
+                requester_open_id=user.open_id,
+                requester_name=user.name,
+                note=payload.note,
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "pending_return_not_found":
+                raise AppError(4004, "待归还记录未找到或已结案", 404) from exc
+            if msg == "closure_not_allowed":
+                raise AppError(1003, "只能对自己的领用申请结案", 403) from exc
+            if msg == "closure_request_exists":
+                raise AppError(1001, "该领用已有待确认的结案申请", 400) from exc
+            if msg.startswith("closure_qty_exceeds_pending:"):
+                available = msg.split(":", 1)[1]
+                raise AppError(1001, f"结案数量不能超过待归还数量 {available}", 400) from exc
+            raise
+
+    async def _execute_disposition_close(
+        self,
+        *,
+        source_tx_id: str,
+        material_id: str,
+        location_id: str,
+        quantity: int,
+        disposition_type: DispositionType,
+        operator: User,
+        note: str | None,
+    ) -> Transaction:
+        remark = format_disposition_remark(
+            disposition_type.value,
+            source_tx_id,
+            quantity,
+            note,
+        )
+        if self.repo:
+            return await self.repo.apply_disposition_audit(
+                material_id,
+                location_id,
+                operator.open_id,
+                operator.name,
+                remark,
+            )
+        return self.store.apply_disposition_audit(
+            material_id,
+            location_id,
+            operator.name,
+            remark,
+        )
+
+    async def approve_closure_request(
+        self, request_id: str, user: User
+    ) -> LoanClosureRequest:
+        store = get_loan_closure_store()
+        req = store.get(request_id)
+        if not req:
+            raise AppError(4004, "结案申请未找到", 404)
+        if req.status != DispositionStatus.PENDING:
+            raise AppError(1001, "结案申请已处理", 400)
+        try:
+            await self._resolve_pending_return(req.source_tx_id, req.quantity)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "pending_return_not_found":
+                raise AppError(4004, "对应待归还记录已不存在", 404) from exc
+            if msg.startswith("closure_qty_exceeds_pending:"):
+                raise AppError(1001, "结案数量超过待归还数量", 400) from exc
+            raise
+        try:
+            tx = await self._execute_disposition_close(
+                source_tx_id=req.source_tx_id,
+                material_id=req.material_id,
+                location_id=req.location_id,
+                quantity=req.quantity,
+                disposition_type=req.disposition_type,
+                operator=user,
+                note=req.note,
+            )
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+        return store.mark_reviewed(
+            request_id,
+            status=DispositionStatus.APPROVED,
+            approver_open_id=user.open_id,
+            approver_name=user.name,
+            disposition_tx_id=tx.id,
+        )
+
+    async def reject_closure_request(
+        self, request_id: str, payload: LoanClosureReject, user: User
+    ) -> LoanClosureRequest:
+        store = get_loan_closure_store()
+        req = store.get(request_id)
+        if not req:
+            raise AppError(4004, "结案申请未找到", 404)
+        if req.status != DispositionStatus.PENDING:
+            raise AppError(1001, "结案申请已处理", 400)
+        try:
+            return store.mark_reviewed(
+                request_id,
+                status=DispositionStatus.REJECTED,
+                approver_open_id=user.open_id,
+                approver_name=user.name,
+                reject_reason=payload.reason,
+            )
+        except ValueError as exc:
+            if str(exc) == "closure_request_already_reviewed":
+                raise AppError(1001, "结案申请已处理", 400) from exc
+            raise
+
+    async def direct_close_borrow(
+        self, payload: LoanClosureDirect, user: User
+    ) -> Transaction:
+        try:
+            matched = await self._resolve_pending_return(payload.source_tx_id, payload.quantity)
+        except ValueError as exc:
+            msg = str(exc)
+            if msg == "pending_return_not_found":
+                raise AppError(4004, "待归还记录未找到或已结案", 404) from exc
+            if msg.startswith("closure_qty_exceeds_pending:"):
+                available = msg.split(":", 1)[1]
+                raise AppError(1001, f"结案数量不能超过待归还数量 {available}", 400) from exc
+            raise
+        try:
+            return await self._execute_disposition_close(
+                source_tx_id=payload.source_tx_id,
+                material_id=matched.material_id,
+                location_id=matched.location_id,
+                quantity=payload.quantity,
+                disposition_type=payload.disposition_type,
+                operator=user,
+                note=payload.note,
+            )
+        except RuntimeError as exc:
+            raise _wrap_bitable_error(exc) from exc
+
     async def list_pending_returns(self, *, borrower: str | None = None):
         try:
             if self.repo:
@@ -495,14 +717,21 @@ class InventoryService:
 
     async def inbound(self, payload: InboundCreate, user: User) -> Transaction:
         try:
+            subject_open_id, subject_name = resolve_subject_user(
+                user,
+                payload.applicant_open_id,
+                payload.applicant_name,
+                allow_proxy=_allow_applicant_proxy(user),
+            )
+            remark = build_proxy_remark(payload.note, user, subject_open_id)
             if self.repo:
                 tx = await self.repo.apply_inbound(
                     payload.material_id,
                     payload.location_id,
                     payload.qty,
-                    user.open_id,
-                    user.name,
-                    payload.note,
+                    subject_open_id,
+                    subject_name,
+                    remark,
                     row=payload.row,
                     column=payload.column,
                 )
@@ -511,8 +740,8 @@ class InventoryService:
                     payload.material_id,
                     payload.location_id,
                     payload.qty,
-                    user.name,
-                    payload.note,
+                    subject_name,
+                    remark,
                     row=payload.row,
                     column=payload.column,
                 )
@@ -521,6 +750,9 @@ class InventoryService:
                 await self.update_material(payload.material_id, MaterialUpdate(spec=spec_value))
             return tx
         except ValueError as exc:
+            mapped = _map_applicant_error(exc)
+            if mapped:
+                raise mapped from exc
             msg = str(exc)
             if msg == "material_not_found":
                 raise AppError(4004, "物料未找到", 404) from exc
@@ -528,6 +760,8 @@ class InventoryService:
                 raise AppError(1001, "库位未找到", 400) from exc
             if msg == "slot_incomplete":
                 raise AppError(1001, "货柜格位需同时填写行号和列号", 400) from exc
+            if msg == "slot_row_required":
+                raise AppError(1001, "货架需填写层号", 400) from exc
             raise
         except RuntimeError as exc:
             raise _wrap_bitable_error(exc) from exc
@@ -627,8 +861,20 @@ class InventoryService:
             ) from exc
 
     async def outbound(self, payload: OutboundCreate, user: User) -> Transaction:
+        try:
+            subject_open_id, subject_name = resolve_subject_user(
+                user,
+                payload.applicant_open_id,
+                payload.applicant_name,
+                allow_proxy=_allow_applicant_proxy(user),
+            )
+        except ValueError as exc:
+            mapped = _map_applicant_error(exc)
+            if mapped:
+                raise mapped from exc
+            raise
         remark = format_outbound_remark(
-            payload.note,
+            build_proxy_remark(payload.note, user, subject_open_id),
             return_required=payload.return_required or False,
             return_due_at=payload.return_due_at,
             row=payload.row,
@@ -640,8 +886,8 @@ class InventoryService:
                     payload.material_id,
                     payload.location_id,
                     payload.qty,
-                    user.open_id,
-                    user.name,
+                    subject_open_id,
+                    subject_name,
                     remark,
                     row=payload.row,
                     column=payload.column,
@@ -650,7 +896,7 @@ class InventoryService:
                 payload.material_id,
                 payload.location_id,
                 payload.qty,
-                user.name,
+                subject_name,
                 remark,
                 row=payload.row,
                 column=payload.column,
@@ -668,10 +914,26 @@ class InventoryService:
 
     async def create_request(self, payload: StockRequestCreate, user: User) -> StockRequest:
         try:
+            subject_open_id, subject_name = resolve_subject_user(
+                user,
+                payload.applicant_open_id,
+                payload.applicant_name,
+                allow_proxy=_allow_applicant_proxy(user),
+            )
             if self.repo:
-                request = await self.repo.create_request(payload, user.open_id, user.name)
+                request = await self.repo.create_request(
+                    payload,
+                    subject_open_id,
+                    subject_name,
+                    actor=user,
+                )
             else:
-                request = self.store.create_request(payload, user.open_id, user.name)
+                request = self.store.create_request(
+                    payload,
+                    subject_open_id,
+                    subject_name,
+                    actor=user,
+                )
 
             # 同步创建飞书审批实例（不阻塞主流程）
             if self.settings.feishu_approval_enabled and self.settings.feishu_approval_code:
@@ -679,6 +941,9 @@ class InventoryService:
 
             return request
         except ValueError as exc:
+            mapped = _map_applicant_error(exc)
+            if mapped:
+                raise mapped from exc
             msg = str(exc)
             if msg == "material_not_found":
                 raise AppError(4004, "物料未找到", 404) from exc
@@ -814,6 +1079,8 @@ class InventoryService:
                 raise AppError(1001, "源库位和目标库位不能相同", 400) from exc
             if msg == "slot_incomplete":
                 raise AppError(1001, "目标格位需同时填写行号和列号", 400) from exc
+            if msg == "slot_row_required":
+                raise AppError(1001, "目标货架需填写层号", 400) from exc
             if msg.startswith("insufficient_stock:"):
                 available = msg.split(":", 1)[1]
                 raise AppError(4002, f"源库位库存不足: 当前可用 {available}", 400) from exc

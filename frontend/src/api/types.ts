@@ -39,6 +39,11 @@ export interface User {
   role: Role;
 }
 
+export interface FeishuUserBrief {
+  open_id: string;
+  name: string;
+}
+
 export interface ApiEnvelope<T> {
   code: number;
   message: string;
@@ -112,6 +117,37 @@ export interface PendingReturn {
   return_due_at?: string | null;
   note?: string | null;
   overdue: boolean;
+}
+
+export type DispositionType = "已消耗" | "已丢失" | "已报废";
+export type DispositionStatus = "待确认" | "已确认" | "已拒绝";
+
+export interface LoanClosureRequest {
+  id: string;
+  source_tx_id: string;
+  material_id: string;
+  material_name?: string | null;
+  location_id: string;
+  location_name?: string | null;
+  quantity: number;
+  disposition_type: DispositionType;
+  status: DispositionStatus;
+  requester_open_id: string;
+  requester_name: string;
+  approver_open_id?: string | null;
+  approver_name?: string | null;
+  note?: string | null;
+  reject_reason?: string | null;
+  disposition_tx_id?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+}
+
+export interface StagingInventoryItem extends InventoryItem {
+  material_name?: string | null;
+  material_code?: string | null;
+  unit?: string | null;
+  location_type?: string | null;
 }
 
 export type StockRequestType = "入库" | "出库";

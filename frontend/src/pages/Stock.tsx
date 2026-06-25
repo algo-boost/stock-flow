@@ -5,31 +5,38 @@ import { getMaterial } from "../api";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { LocationTransferPanel } from "../components/LocationTransferPanel";
+import { StagingShelvePanel } from "../components/StagingShelvePanel";
 import { StockInboundPanel } from "../components/StockInboundPanel";
 import { StockOutboundPanel } from "../components/StockOutboundPanel";
 import { PageHeader } from "../components/ui";
 import { readStockNavState } from "../utils/detailNavigation";
 
-type StockTabKey = "outbound" | "inbound" | "transfer";
+type StockTabKey = "outbound" | "inbound" | "transfer" | "staging";
 
 function resolveInitialMounted(tab: string, canInbound: boolean): Record<StockTabKey, boolean> {
-  const key = (tab === "inbound" || tab === "transfer" ? tab : "outbound") as StockTabKey;
+  const key = (
+    tab === "inbound" || tab === "transfer" || tab === "staging" ? tab : "outbound"
+  ) as StockTabKey;
   return {
     outbound: key === "outbound",
     inbound: key === "inbound",
     transfer: canInbound && key === "transfer",
+    staging: canInbound && key === "staging",
   };
+}
+
+function resolveActiveTab(tab: string | null, canInbound: boolean): StockTabKey {
+  if (tab === "inbound") return "inbound";
+  if (canInbound && tab === "transfer") return "transfer";
+  if (canInbound && tab === "staging") return "staging";
+  return "outbound";
 }
 
 export default function StockPage() {
   const { canInbound } = useAuth();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = (searchParams.get("tab") === "inbound"
-    ? "inbound"
-    : searchParams.get("tab") === "transfer" && canInbound
-      ? "transfer"
-      : "outbound") as StockTabKey;
+  const activeTab = resolveActiveTab(searchParams.get("tab"), canInbound);
   const materialId = searchParams.get("material_id") ?? "";
   const stockState = readStockNavState(location.state, materialId || undefined);
   const backTo = stockState.materialBackTo;
@@ -72,6 +79,7 @@ export default function StockPage() {
       <Tabs activeKey={activeTab} onChange={onTabChange} className="compact-tabs sticky-page-tabs stock-page-tabs">
         <Tabs.Tab title={canInbound ? "出库" : "申请出库"} key="outbound" />
         <Tabs.Tab title={canInbound ? "入库" : "申请入库"} key="inbound" />
+        {canInbound && <Tabs.Tab title="暂存上架" key="staging" />}
         {canInbound && <Tabs.Tab title="移动" key="transfer" />}
       </Tabs>
 
@@ -84,6 +92,11 @@ export default function StockPage() {
         {everMounted.inbound && (
           <div className="stock-tab-pane" hidden={activeTab !== "inbound"}>
             <StockInboundPanel active={activeTab === "inbound"} />
+          </div>
+        )}
+        {canInbound && everMounted.staging && (
+          <div className="stock-tab-pane" hidden={activeTab !== "staging"}>
+            <StagingShelvePanel active={activeTab === "staging"} />
           </div>
         )}
         {canInbound && everMounted.transfer && (

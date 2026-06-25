@@ -10,6 +10,7 @@ import {
 } from "../api";
 import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import { useAuth } from "./AuthGate";
+import { useDataMutationRefetch } from "../utils/dataMutation";
 import {
   navigateAfterStockSubmit,
   readStockNavState,
@@ -17,6 +18,10 @@ import {
 import { EmptyState, SectionCard, StockFormShell } from "./ui";
 import { ScanBarcodeButton } from "./ScanBarcodeButton";
 import { newIdempotencyKey } from "../utils/idempotency";
+import { emptySlotSelection, LocationSlotPicker } from "./LocationSlotPicker";
+import { buildSlotPayload, type SlotSelection } from "../utils/inventorySlot";
+import { isGridCapableLocation } from "../utils/shelfGrid";
+import { applicantPayload, FeishuUserPicker, type ApplicantSelection } from "./FeishuUserPicker";
 
 export function StockInboundPanel({ active = true }: { active?: boolean }) {
   const pageSize = 20;
@@ -46,10 +51,11 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
   const [note, setNote] = useState("");
   const [inboundSpec, setInboundSpec] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [slotRow, setSlotRow] = useState(1);
-  const [slotColumn, setSlotColumn] = useState(1);
-  const { canInbound } = useAuth();
+  const [slotSelection, setSlotSelection] = useState<SlotSelection>(emptySlotSelection());
+  const [applicant, setApplicant] = useState<ApplicantSelection | null>(null);
+  const { canInbound, user } = useAuth();
   const isDirectInbound = canInbound;
+  const currentApplicant = user ? { open_id: user.open_id, name: user.name } : null;
   const listLoadedRef = useRef(false);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
@@ -89,11 +95,20 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
     void loadMeta();
   }, [active, loadMaterials, loadMeta]);
 
+  useDataMutationRefetch(["locations", "inventory", "materials"], () => {
+    void loadMeta();
+    void loadMaterials(keyword, 1);
+  }, active);
+
   useEffect(() => {
     if (!active || !shouldLoadPreset) return;
     if (presetLocationId) setLocationId(presetLocationId);
-    if (Number.isFinite(presetRow) && presetRow > 0) setSlotRow(presetRow);
-    if (Number.isFinite(presetColumn) && presetColumn > 0) setSlotColumn(presetColumn);
+    if (Number.isFinite(presetRow) && presetRow > 0) {
+      setSlotSelection({
+        row: presetRow,
+        column: Number.isFinite(presetColumn) && presetColumn > 0 ? presetColumn : null,
+      });
+    }
     if (!presetMaterialId) return;
     void (async () => {
       try {
@@ -128,19 +143,25 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
     return selected.inventory.find((i) => i.location_id === locationId)?.quantity ?? 0;
   }, [selected, locationId]);
 
-  const canSubmit = Boolean(
-    selected &&
-      qty > 0 &&
-      !loading &&
-      (isDirectInbound ? locationId : true),
-  );
-  const hasMore = items.length < total;
-
   const selectedLocation = useMemo(
     () => locations.find((loc) => loc.id === locationId),
     [locationId, locations],
   );
-  const showCabinetSlot = isDirectInbound && selectedLocation?.type === "货柜";
+
+  const showGridSlot = Boolean(isDirectInbound && selectedLocation && isGridCapableLocation(selectedLocation));
+  const slotPayload = useMemo(
+    () => buildSlotPayload(selectedLocation, [], slotSelection),
+    [selectedLocation, slotSelection],
+  );
+
+  const canSubmit = Boolean(
+    selected &&
+      qty > 0 &&
+      !loading &&
+      (isDirectInbound ? locationId : true) &&
+      (!showGridSlot || Object.keys(slotPayload).length > 0),
+  );
+  const hasMore = items.length < total;
 
   const selectMaterial = async (item: MaterialSearchItem) => {
     setLoading(true);
@@ -153,8 +174,8 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
       setQty(1);
       setNote("");
       setInboundSpec(detail.material.spec ?? "");
-      setSlotRow(1);
-      setSlotColumn(1);
+      setSlotSelection(emptySlotSelection());
+      setApplicant(null);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
     } finally {
@@ -167,8 +188,7 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
     setQty(1);
     setNote("");
     setInboundSpec("");
-    setSlotRow(1);
-    setSlotColumn(1);
+    setSlotSelection(emptySlotSelection());
   };
 
   const onSearch = (val: string) => {
@@ -201,8 +221,8 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
           idempotency_key: newIdempotencyKey(),
           note: effectiveNote || undefined,
           spec: inboundSpec.trim() || undefined,
-          row: showCabinetSlot ? slotRow : undefined,
-          column: showCabinetSlot ? slotColumn : undefined,
+          ...slotPayload,
+          ...applicantPayload(applicant, currentApplicant),
         });
         Toast.show({ icon: "success", content: isReturnInbound ? "归还入库成功" : "入库成功" });
         navigateAfterStockSubmit(navigate, selected.material.id, stockState);
@@ -213,6 +233,7 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
           qty,
           idempotency_key: newIdempotencyKey(),
           note: note.trim() || undefined,
+          ...applicantPayload(applicant, currentApplicant),
         });
         Toast.show({ icon: "success", content: "已提交入库申请" });
         navigateAfterStockSubmit(navigate, selected.material.id, stockState);
@@ -257,26 +278,38 @@ export function StockInboundPanel({ active = true }: { active?: boolean }) {
                   <Selector
                     options={locationOptions}
                     value={locationId ? [locationId] : []}
-                    onChange={(arr) => setLocationId(arr[0] ?? "")}
+                    onChange={(arr) => {
+                      setLocationId(arr[0] ?? "");
+                      setSlotSelection(emptySlotSelection());
+      setApplicant(null);
+                    }}
                   />
                 </Form.Item>
                 {locationId && selectedStock !== null && (
                   <div className="stock-hint">该库位当前库存：{selectedStock}</div>
                 )}
-                {showCabinetSlot && (
-                  <>
-                    <Form.Item label="货柜行号">
-                      <Stepper min={1} max={20} value={slotRow} onChange={setSlotRow} />
-                    </Form.Item>
-                    <Form.Item label="货柜列号">
-                      <Stepper min={1} max={20} value={slotColumn} onChange={setSlotColumn} />
-                    </Form.Item>
-                  </>
+                {showGridSlot && selectedLocation && (
+                  <LocationSlotPicker
+                    location={selectedLocation}
+                    materialId={selected.material.id}
+                    value={slotSelection}
+                    onChange={setSlotSelection}
+                  />
                 )}
               </>
             ) : (
-              <div className="stock-hint">归还目标库位与货柜格位由库管审批时指定，您只需填写数量与说明。</div>
+              <div className="stock-hint">归还目标库位与具体格位由库管审批时指定，您只需填写数量与说明。</div>
             )}
+            <Form.Item label={isDirectInbound ? "领用/归还人（可选）" : "申请人"}>
+              <FeishuUserPicker
+                label={isDirectInbound ? "实际操作对象" : "申请人"}
+                value={applicant}
+                onChange={setApplicant}
+                allowProxy={canInbound}
+                currentUser={user ? { open_id: user.open_id, name: user.name } : null}
+                placeholder="搜索姓名，如：张工"
+              />
+            </Form.Item>
             <Form.Item label="入库数量">
               <Stepper min={1} value={qty} onChange={setQty} />
             </Form.Item>

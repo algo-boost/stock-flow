@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ActionSheet, Toast } from "antd-mobile";
 import { createCategory, deleteCategory, listCategories, updateCategory } from "../api";
 import type { Category } from "../api/types";
+import { useLiveListData } from "../utils/dataMutation";
 import { getRootCategories } from "../utils/categoryTree";
 import { CategoryTree } from "./CategoryTree";
 import { FeishuIcon } from "./FeishuIcon";
 import { MaterialCreateDialog } from "./MaterialCreatePanel";
 import { EmptyState, SectionCard } from "./ui";
 
-export function CategoryManagePanel() {
+export function CategoryManagePanel({ active = true }: { active?: boolean }) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,9 +29,7 @@ export function CategoryManagePanel() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadCategories();
-  }, [loadCategories]);
+  useLiveListData(loadCategories, { scopes: ["categories", "materials"], active });
 
   const rootCount = useMemo(() => getRootCategories(categories).length, [categories]);
 

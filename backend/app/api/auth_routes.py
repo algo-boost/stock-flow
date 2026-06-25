@@ -25,6 +25,29 @@ def _map_feishu_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=502, detail=msg)
 
 
+@router.get("/users/search")
+async def search_users(
+    q: str = Query(default="", max_length=100),
+    limit: int = Query(default=20, ge=1, le=50),
+    user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    del user
+    if settings.mock_auth_enabled:
+        from app.utils.mock_directory import search_mock_directory_users
+
+        items = search_mock_directory_users(q, limit=limit)
+    elif settings.feishu_configured:
+        client = FeishuClient(settings)
+        try:
+            items = await client.list_directory_users(q, limit=limit)
+        finally:
+            await client.close()
+    else:
+        items = []
+    return success(items)
+
+
 @router.get("/me")
 async def me(
     user: User = Depends(get_current_user),

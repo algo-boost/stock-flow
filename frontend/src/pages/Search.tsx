@@ -4,8 +4,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { searchMaterials } from "../api";
 import type { Category, InventoryItem, Location, MaterialSearchItem } from "../api/types";
 import { fetchHomeBrowseMetaCached, fetchInboundMaterialIdsCached, fetchInventoryCached } from "../utils/cachedApi";
+import { useDataMutationRefetch } from "../utils/dataMutation";
 import { CategoryFolderBrowser } from "../components/CategoryFolderBrowser";
 import { ScanBarcodeButton } from "../components/ScanBarcodeButton";
+import { KeeperQuickActions } from "../components/KeeperQuickActions";
 import { StorageUnitPicker } from "../components/StorageUnitPicker";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
@@ -384,6 +386,12 @@ export default function SearchPage() {
       .finally(() => setMetaLoading(false));
   }, [location.pathname, loadCategories]);
 
+  useDataMutationRefetch(["locations", "categories", "inventory"], () => {
+    if (location.pathname !== "/") return;
+    void loadCategories();
+    if (browseBy === "location") void loadInventoryForLocationBrowse();
+  });
+
   useEffect(() => {
     if (location.pathname !== "/" || browseBy !== "location") return;
     if (allInventory.length > 0 || inventoryLoading) return;
@@ -635,6 +643,7 @@ export default function SearchPage() {
   return (
     <Layout title="首页">
       <p className="home-scene-hint">搜名字找物料 · 点货架找位置</p>
+      {canInbound && <KeeperQuickActions isAdmin={isAdmin} />}
       <SectionCard className="flush-body home-search-card sticky-subnav sticky-subnav-card">
         {searchAndFilters}
         {!hasSearchQuery && (

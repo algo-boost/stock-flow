@@ -54,6 +54,8 @@ def resolve_outbound_slot(
         return None, None
     if row is not None and column is not None:
         return row, column
+    if row is not None:
+        return row, column
 
     candidates: list[tuple[Optional[int], Optional[int], int]] = []
     for key, quantity in inventory_qty.items():
@@ -70,7 +72,7 @@ def resolve_outbound_slot(
             return None, None
 
     slotted = sorted(
-        [(r, c, available) for r, c, available in candidates if r is not None and c is not None],
+        [(r, c, available) for r, c, available in candidates if r is not None],
         key=lambda item: (-item[2], item[0] or 0, item[1] or 0),
     )
     for r, c, available in slotted:
@@ -91,4 +93,8 @@ def inventory_item_matches_slot(
         return False
     if not slots_enabled:
         return True
+    if row is None and column is None:
+        return item.row is None and item.column is None
+    if column is None:
+        return item.row == row and item.column is None
     return item.row == row and item.column == column

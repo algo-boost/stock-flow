@@ -9,11 +9,13 @@ export function InventorySlotEditor({
   item,
   canEdit,
   onUpdated,
+  variant = "card",
 }: {
   materialId: string;
   item: InventoryItem;
   canEdit: boolean;
   onUpdated: (item: InventoryItem, fromKey: string) => void;
+  variant?: "card" | "inline" | "keeper-correction";
 }) {
   const [editing, setEditing] = useState(false);
   const [row, setRow] = useState(item.row ?? 1);
@@ -26,6 +28,7 @@ export function InventorySlotEditor({
   }, [item.row, item.column]);
 
   const hasSlot = item.row != null && item.column != null;
+  const hasRowOnly = item.row != null && item.column == null;
 
   const onSave = async () => {
     const fromKey = inventorySlotKey(item);
@@ -46,6 +49,85 @@ export function InventorySlotEditor({
       setSaving(false);
     }
   };
+
+  if (variant === "keeper-correction") {
+    if (!canEdit) return null;
+    return (
+      <div className="detail-slot-correction">
+        {!editing ? (
+          <button type="button" className="detail-slot-correction-toggle" onClick={() => setEditing(true)}>
+            格位标注纠错
+          </button>
+        ) : (
+          <div className="inventory-slot-editor detail-loc-slot-editor">
+            <div className="inventory-slot-field">
+              <span>层</span>
+              <Stepper min={1} max={20} value={row} onChange={setRow} />
+            </div>
+            <div className="inventory-slot-field">
+              <span>列</span>
+              <Stepper min={1} max={20} value={column} onChange={setColumn} />
+            </div>
+            <div className="actions two">
+              <Button size="small" onClick={() => setEditing(false)}>
+                取消
+              </Button>
+              <Button size="small" color="primary" loading={saving} onClick={() => void onSave()}>
+                保存
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (variant === "inline") {
+    return (
+      <div className="detail-loc-head">
+        <div className="detail-loc-head-main">
+          <div className="detail-loc-name">{item.location_name ?? item.location_id}</div>
+          <div className="detail-loc-meta">
+            {hasSlot ? (
+              <span>{item.row} 层 · {item.column} 列</span>
+            ) : hasRowOnly ? (
+              <span>第 {item.row} 层</span>
+            ) : (
+              <span className="detail-loc-meta-muted">格位未设置</span>
+            )}
+          </div>
+        </div>
+        <div className="detail-loc-head-side">
+          <span className="detail-loc-qty">{item.quantity} 件</span>
+          {canEdit && !editing && (
+            <button type="button" className="detail-loc-edit-btn" onClick={() => setEditing(true)}>
+              {hasSlot || hasRowOnly ? "改格位" : "设格位"}
+            </button>
+          )}
+        </div>
+        {canEdit && editing && (
+          <div className="inventory-slot-editor detail-loc-slot-editor">
+            <div className="inventory-slot-field">
+              <span>行</span>
+              <Stepper min={1} max={20} value={row} onChange={setRow} />
+            </div>
+            <div className="inventory-slot-field">
+              <span>列</span>
+              <Stepper min={1} max={20} value={column} onChange={setColumn} />
+            </div>
+            <div className="actions two">
+              <Button size="small" onClick={() => setEditing(false)}>
+                取消
+              </Button>
+              <Button size="small" color="primary" loading={saving} onClick={() => void onSave()}>
+                保存
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="location-card location-inventory-card">

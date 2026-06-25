@@ -26,6 +26,7 @@ from app.models import (
     Transaction,
     TransactionType,
     TransactionUpdate,
+    User,
 )
 from app.data.category_taxonomy import (
     LAB_CATEGORY_TAXONOMY,
@@ -34,6 +35,8 @@ from app.data.category_taxonomy import (
 )
 from app.utils.categories import category_descendant_ids, derive_category_levels, derive_location_levels
 from app.utils.inventory_display import format_inventory_summary
+from app.utils.applicant import build_proxy_remark
+from app.utils.slot_rules import validate_and_normalize_slot, validate_transfer_slots
 
 
 def _utcnow() -> datetime:
@@ -708,6 +711,8 @@ class MockStore:
         payload: StockRequestCreate,
         requester_open_id: str,
         requester_name: str,
+        *,
+        actor: User | None = None,
     ) -> StockRequest:
         if payload.material_id not in self.materials:
             raise ValueError("material_not_found")
@@ -719,6 +724,7 @@ class MockStore:
         elif payload.location_id and not location:
             raise ValueError("location_not_found")
         request_id = f"req_{len(self.requests) + 1:04d}"
+        remark = build_proxy_remark(payload.note, actor, requester_open_id) if actor else payload.note
         req = StockRequest(
             id=request_id,
             type=payload.type,
@@ -730,7 +736,7 @@ class MockStore:
             quantity=payload.qty,
             requester_open_id=requester_open_id,
             requester_name=requester_name,
-            remark=payload.note,
+            remark=remark,
             return_required=payload.return_required,
             return_due_at=payload.return_due_at,
             row=payload.row,
@@ -875,10 +881,9 @@ class MockStore:
             raise ValueError("material_not_found")
         if location_id not in self.locations:
             raise ValueError("location_not_found")
-        if (row is None) ^ (column is None):
-            raise ValueError("slot_incomplete")
-        key = inv_key(material_id, location_id, row, column)
         loc = self.locations[location_id]
+        row, column = validate_and_normalize_slot(loc, row, column, slots_enabled=True)
+        key = inv_key(material_id, location_id, row, column)
         now = _utcnow()
         if key in self.inventory:
             item = self.inventory[key]
@@ -990,6 +995,36 @@ class MockStore:
             )
         return self.inventory[new_key]
 
+    def apply_disposition_audit(
+        self,
+        material_id: str,
+        location_id: str,
+        operator: str,
+        remark: str,
+    ) -> Transaction:
+        if material_id not in self.materials:
+            raise ValueError("material_not_found")
+        if location_id not in self.locations:
+            raise ValueError("location_not_found")
+        material = self.materials[material_id]
+        loc = self.locations[location_id]
+        now = _utcnow()
+        tx_id = f"tx_disp_{len(self.transactions) + 1:03d}"
+        tx = Transaction(
+            id=tx_id,
+            type=TransactionType.OUTBOUND,
+            material_id=material_id,
+            material_name=material.name,
+            location_id=location_id,
+            location_name=loc.name,
+            quantity=0,
+            operator=operator,
+            remark=remark,
+            created_at=now,
+        )
+        self.transactions[tx_id] = tx
+        return tx
+
     def apply_transfer(
         self,
         material_id: str,
@@ -1012,13 +1047,22 @@ class MockStore:
         if from_location_id not in self.locations or to_location_id not in self.locations:
             raise ValueError("location_not_found")
 
+        from_loc = self.locations[from_location_id]
+        to_loc = self.locations[to_location_id]
+        from_row, from_column, to_row, to_column = validate_transfer_slots(
+            from_loc,
+            to_loc,
+            from_row,
+            from_column,
+            to_row,
+            to_column,
+            slots_enabled=True,
+        )
+
         source_key = inv_key(material_id, from_location_id, from_row, from_column)
         if source_key not in self.inventory or self.inventory[source_key].quantity < qty:
             available = self.inventory[source_key].quantity if source_key in self.inventory else 0
             raise ValueError(f"insufficient_stock:{available}")
-
-        if (to_row is None) ^ (to_column is None):
-            raise ValueError("slot_incomplete")
 
         now = _utcnow()
         source_item = self.inventory[source_key]

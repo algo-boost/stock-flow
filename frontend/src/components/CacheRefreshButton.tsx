@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Toast } from "antd-mobile";
 import { invalidateDataCache } from "../utils/dataCache";
+import { clearLocalGetCache, notifyDataMutation } from "../utils/dataMutation";
 import { refreshBitableCache } from "../api";
 import { FeishuIcon } from "./FeishuIcon";
 
@@ -13,6 +14,8 @@ export function CacheRefreshButton({ onRefreshed }: { onRefreshed?: () => Promis
     try {
       invalidateDataCache("meta:");
       invalidateDataCache("tx:");
+      clearLocalGetCache();
+      notifyDataMutation("all");
       const result = await refreshBitableCache();
       const summary = result.message
         || (Object.entries(result.tables ?? {})

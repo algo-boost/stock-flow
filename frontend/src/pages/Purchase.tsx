@@ -3,6 +3,7 @@ import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } fr
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getMaterial, listLocations, postPurchaseInbound, searchMaterials } from "../api";
 import type { MaterialDetail, MaterialSearchItem } from "../api/types";
+import { useLiveListData } from "../utils/dataMutation";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHeader, SectionCard } from "../components/ui";
@@ -52,10 +53,12 @@ export function PurchaseForm() {
     }
   }, []);
 
-  useEffect(() => {
+  const reloadPageData = useCallback(() => {
     void loadMaterials("", 1);
     void loadLocations();
   }, [loadLocations, loadMaterials]);
+
+  useLiveListData(reloadPageData, { scopes: ["locations", "materials", "inventory"] });
 
   useEffect(() => {
     if (!presetMaterialId) return;

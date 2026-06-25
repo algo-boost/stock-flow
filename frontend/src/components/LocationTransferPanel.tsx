@@ -10,12 +10,16 @@ import {
   parseInventorySlotKey,
 } from "../utils/inventoryDisplay";
 import { showUndo } from "./UndoToast";
+import { useDataMutationRefetch } from "../utils/dataMutation";
 import {
   navigateAfterStockSubmit,
   readStockNavState,
 } from "../utils/detailNavigation";
 import { EmptyState, SectionCard, StockFormShell } from "./ui";
 import { newIdempotencyKey } from "../utils/idempotency";
+import { buildSlotPayload, type SlotSelection } from "../utils/inventorySlot";
+import { isGridCapableLocation } from "../utils/shelfGrid";
+import { emptySlotSelection, LocationSlotPicker } from "./LocationSlotPicker";
 
 export function LocationTransferPanel({ active = true }: { active?: boolean }) {
   const pageSize = 20;
@@ -33,8 +37,7 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
   const [fromSlotKey, setFromSlotKey] = useState("");
   const [toLocationId, setToLocationId] = useState("");
-  const [toSlotRow, setToSlotRow] = useState(1);
-  const [toSlotColumn, setToSlotColumn] = useState(1);
+  const [toSlotSelection, setToSlotSelection] = useState<SlotSelection>(emptySlotSelection());
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -69,6 +72,18 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
     void loadLocations();
   }, [active, loadLocations, loadMaterials]);
 
+  useDataMutationRefetch(["locations", "inventory", "materials"], () => {
+    void loadLocations();
+    void loadMaterials(keyword, 1);
+    if (selected) {
+      void getMaterial(selected.material.id).then((detail) => {
+        setSelected(detail);
+        const first = detail.inventory[0];
+        if (first) setFromSlotKey(inventorySlotKey(first));
+      }).catch(() => {});
+    }
+  }, active);
+
   useEffect(() => {
     if (!active || !presetMaterialId) return;
     void (async () => {
@@ -78,8 +93,7 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
         const first = detail.inventory[0];
         setFromSlotKey(first ? inventorySlotKey(first) : "");
         setToLocationId(locations.find((loc) => loc.id !== first?.location_id)?.id ?? "");
-        setToSlotRow(1);
-        setToSlotColumn(1);
+        setToSlotSelection(emptySlotSelection());
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
@@ -110,7 +124,11 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
     () => locations.find((loc) => loc.id === toLocationId),
     [locations, toLocationId],
   );
-  const showTargetCabinetSlot = selectedToLocation?.type === "货柜";
+  const showTargetGridSlot = Boolean(selectedToLocation && isGridCapableLocation(selectedToLocation));
+  const toSlotPayload = useMemo(
+    () => buildSlotPayload(selectedToLocation, [], toSlotSelection),
+    [selectedToLocation, toSlotSelection],
+  );
   const maxQty = selectedSource?.quantity ?? 0;
   const canSubmit = Boolean(
     selected &&
@@ -118,7 +136,8 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
       toLocationId &&
       fromParsed.location_id !== toLocationId &&
       qty > 0 &&
-      qty <= maxQty,
+      qty <= maxQty &&
+      (!showTargetGridSlot || Object.keys(toSlotPayload).length > 0),
   );
 
   const selectMaterial = async (item: MaterialSearchItem) => {
@@ -129,8 +148,7 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
       setSelected(detail);
       setFromSlotKey(first ? inventorySlotKey(first) : "");
       setToLocationId(locations.find((loc) => loc.id !== first?.location_id)?.id ?? "");
-      setToSlotRow(1);
-      setToSlotColumn(1);
+      setToSlotSelection(emptySlotSelection());
       setQty(1);
       setNote("");
     } catch (e) {
@@ -155,8 +173,7 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
     setSelected(null);
     setFromSlotKey("");
     setToLocationId("");
-    setToSlotRow(1);
-    setToSlotColumn(1);
+    setToSlotSelection(emptySlotSelection());
     setQty(1);
     setNote("");
   };
@@ -188,8 +205,8 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
         note: note.trim() || undefined,
         from_row: fromParsed.row,
         from_column: fromParsed.column,
-        to_row: showTargetCabinetSlot ? toSlotRow : undefined,
-        to_column: showTargetCabinetSlot ? toSlotColumn : undefined,
+        to_row: toSlotPayload.row,
+        to_column: toSlotPayload.column,
       };
       await postTransfer(payload);
       const materialName = selected.material.name;
@@ -264,20 +281,17 @@ export function LocationTransferPanel({ active = true }: { active?: boolean }) {
                 value={toLocationId ? [toLocationId] : []}
                 onChange={(arr) => {
                   setToLocationId(arr[0] ?? "");
-                  setToSlotRow(1);
-                  setToSlotColumn(1);
+                  setToSlotSelection(emptySlotSelection());
                 }}
               />
             </Form.Item>
-            {showTargetCabinetSlot && (
-              <>
-                <Form.Item label="目标货柜行号">
-                  <Stepper min={1} max={20} value={toSlotRow} onChange={setToSlotRow} />
-                </Form.Item>
-                <Form.Item label="目标货柜列号">
-                  <Stepper min={1} max={20} value={toSlotColumn} onChange={setToSlotColumn} />
-                </Form.Item>
-              </>
+            {showTargetGridSlot && selectedToLocation && (
+              <LocationSlotPicker
+                location={selectedToLocation}
+                materialId={selected.material.id}
+                value={toSlotSelection}
+                onChange={setToSlotSelection}
+              />
             )}
             <Form.Item label="移动数量">
               <Stepper min={1} max={maxQty || 1} value={qty} onChange={(v) => setQty(Math.min(v, maxQty || v))} />

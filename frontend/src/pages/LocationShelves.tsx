@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Popup, Toast } from "antd-mobile";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { fetchShelfMetaCached } from "../utils/cachedApi";
+import { useLiveListData } from "../utils/dataMutation";
 import type { InventoryItem, Location, MaterialSearchItem } from "../api/types";
 import { useAuth } from "../components/AuthGate";
 import { LocationShelfGrid } from "../components/LocationShelfGrid";
@@ -73,9 +74,7 @@ export default function LocationShelvesPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useLiveListData(load, { scopes: ["locations", "inventory", "materials"] });
 
   useEffect(() => {
     if (!loading && !locationId) {
@@ -228,6 +227,8 @@ export default function LocationShelvesPage() {
           location={activeLocation}
           inventory={inventory}
           materialNames={new Map([...materialMap.entries()].map(([id, m]) => [id, m.name]))}
+          showLegend
+          legendMode="view"
           onCellClick={(cell) => {
             setSlotPanel(cell);
             const next = new URLSearchParams(searchParams);

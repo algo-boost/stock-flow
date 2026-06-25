@@ -74,3 +74,12 @@ async def list_inventory(
 ):
     items = await service.list_inventory(material_id, location_id)
     return success([i.model_dump(mode="json") for i in items])
+
+
+@router.get("/inventory/staging")
+async def list_staging_inventory(
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    items = await service.list_staging_inventory()
+    return success([i.model_dump(mode="json") for i in items])

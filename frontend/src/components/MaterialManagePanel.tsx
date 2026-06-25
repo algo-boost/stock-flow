@@ -9,9 +9,118 @@ type Props = {
   hasTransactions: boolean;
   onUpdated: (material: Material) => void;
   onDeleted: () => void;
+  /** 详情页底部弹层内使用：表单内联展示，避免 Dialog 嵌套错位 */
+  embedded?: boolean;
 };
 
-export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDeleted }: Props) {
+function MaterialEditForm({
+  name,
+  setName,
+  code,
+  setCode,
+  majorCategory,
+  setMajorCategory,
+  midCategory,
+  setMidCategory,
+  categoryId,
+  setCategoryId,
+  unit,
+  setUnit,
+  spec,
+  setSpec,
+  supplier,
+  setSupplier,
+  minStock,
+  setMinStock,
+  majorOptions,
+  midOptions,
+  subOptions,
+}: {
+  name: string;
+  setName: (v: string) => void;
+  code: string;
+  setCode: (v: string) => void;
+  majorCategory: string;
+  setMajorCategory: (v: string) => void;
+  midCategory: string;
+  setMidCategory: (v: string) => void;
+  categoryId: string;
+  setCategoryId: (v: string) => void;
+  unit: string;
+  setUnit: (v: string) => void;
+  spec: string;
+  setSpec: (v: string) => void;
+  supplier: string;
+  setSupplier: (v: string) => void;
+  minStock: number;
+  setMinStock: (v: number) => void;
+  majorOptions: Array<{ label: string; value: string }>;
+  midOptions: Array<{ label: string; value: string }>;
+  subOptions: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <Form layout="vertical" className="form-card material-manage-form">
+      <Form.Item label="物料名称">
+        <Input value={name} onChange={setName} />
+      </Form.Item>
+      <Form.Item label="物料编码">
+        <Input value={code} onChange={setCode} />
+      </Form.Item>
+      <Form.Item label="大类">
+        <Selector
+          options={majorOptions}
+          value={majorCategory ? [majorCategory] : []}
+          onChange={(arr) => {
+            const next = arr[0] ?? "";
+            setMajorCategory(next);
+            setMidCategory("");
+            setCategoryId("");
+          }}
+        />
+      </Form.Item>
+      {midOptions.length > 0 && (
+        <Form.Item label="中类">
+          <Selector
+            options={midOptions}
+            value={midCategory ? [midCategory] : []}
+            onChange={(arr) => {
+              const next = arr[0] ?? "";
+              setMidCategory(next);
+              setCategoryId("");
+            }}
+          />
+        </Form.Item>
+      )}
+      <Form.Item label="子类">
+        <Selector
+          options={subOptions}
+          value={categoryId ? [categoryId] : []}
+          onChange={(arr) => setCategoryId(arr[0] ?? categoryId)}
+        />
+      </Form.Item>
+      <Form.Item label="单位">
+        <Input value={unit} onChange={setUnit} />
+      </Form.Item>
+      <Form.Item label="规格型号">
+        <Input value={spec} onChange={setSpec} placeholder="可选" />
+      </Form.Item>
+      <Form.Item label="供货商">
+        <Input value={supplier} onChange={setSupplier} placeholder="可选" />
+      </Form.Item>
+      <Form.Item label="安全库存">
+        <Stepper min={0} max={9999} value={minStock} onChange={setMinStock} />
+      </Form.Item>
+    </Form>
+  );
+}
+
+export function MaterialManagePanel({
+  detail,
+  hasTransactions,
+  onUpdated,
+  onDeleted,
+  embedded = false,
+}: Props) {
   const { material, total_quantity } = detail;
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -42,6 +151,7 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
     setSpec(material.spec ?? "");
     setSupplier(material.supplier ?? "");
     setMinStock(material.min_stock ?? 5);
+    setEditing(false);
   }, [material]);
 
   const majorOptions = useMemo(() => {
@@ -75,6 +185,30 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
   );
 
   const canDelete = total_quantity === 0 && !hasTransactions;
+
+  const formProps = {
+    name,
+    setName,
+    code,
+    setCode,
+    majorCategory,
+    setMajorCategory,
+    midCategory,
+    setMidCategory,
+    categoryId,
+    setCategoryId,
+    unit,
+    setUnit,
+    spec,
+    setSpec,
+    supplier,
+    setSupplier,
+    minStock,
+    setMinStock,
+    majorOptions,
+    midOptions,
+    subOptions,
+  };
 
   const onSave = async () => {
     if (!name.trim()) {
@@ -124,6 +258,60 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
     });
   };
 
+  const hint = !canDelete ? (
+    <div className="form-hint material-manage-hint">
+      {total_quantity > 0
+        ? `当前仍有库存 ${total_quantity}，请先出库后再删除。`
+        : hasTransactions
+          ? "已有出入库流水，不能删除；可修改名称/分类等信息。"
+          : null}
+    </div>
+  ) : null;
+
+  if (embedded) {
+    return (
+      <div className="material-manage-embedded">
+        <p className="material-manage-summary">
+          <strong>{material.name}</strong>
+          <span className="material-manage-summary-code">{material.code}</span>
+        </p>
+        <p className="material-manage-subtitle">纠错新增错误的物料；有库存或流水时不可删除</p>
+
+        {!editing ? (
+          <>
+            <div className="material-manage-actions">
+              <Button color="primary" fill="outline" onClick={() => setEditing(true)} disabled={saving}>
+                修改资料
+              </Button>
+              <Button
+                color="danger"
+                fill="outline"
+                disabled={!canDelete || saving}
+                onClick={onDelete}
+              >
+                删除物料
+              </Button>
+            </div>
+            {hint}
+          </>
+        ) : (
+          <div className="material-manage-edit-sheet">
+            <div className="material-manage-edit-head">修改物料资料</div>
+            <MaterialEditForm {...formProps} />
+            <div className="material-manage-form-actions">
+              <Button block fill="outline" onClick={() => setEditing(false)} disabled={saving}>
+                取消
+              </Button>
+              <Button block color="primary" loading={saving} onClick={() => void onSave()}>
+                保存
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <SectionCard title="主数据维护" subtitle="纠错新增错误的物料；有库存或流水时不可删除">
       <div className="material-manage-actions">
@@ -140,73 +328,12 @@ export function MaterialManagePanel({ detail, hasTransactions, onUpdated, onDele
           删除
         </Button>
       </div>
-      {!canDelete && (
-        <div className="form-hint" style={{ marginTop: 8 }}>
-          {total_quantity > 0
-            ? `当前仍有库存 ${total_quantity}，请先出库后再删除。`
-            : hasTransactions
-              ? "已有出入库流水，不能删除；可修改名称/分类等信息。"
-              : null}
-        </div>
-      )}
+      {hint}
 
       <Dialog
         visible={editing}
         title="修改物料"
-        content={
-          <Form layout="vertical" className="form-card">
-            <Form.Item label="物料名称">
-              <Input value={name} onChange={setName} />
-            </Form.Item>
-            <Form.Item label="物料编码">
-              <Input value={code} onChange={setCode} />
-            </Form.Item>
-            <Form.Item label="大类">
-              <Selector
-                options={majorOptions}
-                value={majorCategory ? [majorCategory] : []}
-                onChange={(arr) => {
-                  const next = arr[0] ?? "";
-                  setMajorCategory(next);
-                  setMidCategory("");
-                  setCategoryId("");
-                }}
-              />
-            </Form.Item>
-            {midOptions.length > 0 && (
-              <Form.Item label="中类">
-                <Selector
-                  options={midOptions}
-                  value={midCategory ? [midCategory] : []}
-                  onChange={(arr) => {
-                    const next = arr[0] ?? "";
-                    setMidCategory(next);
-                    setCategoryId("");
-                  }}
-                />
-              </Form.Item>
-            )}
-            <Form.Item label="子类">
-              <Selector
-                options={subOptions}
-                value={categoryId ? [categoryId] : []}
-                onChange={(arr) => setCategoryId(arr[0] ?? categoryId)}
-              />
-            </Form.Item>
-            <Form.Item label="单位">
-              <Input value={unit} onChange={setUnit} />
-            </Form.Item>
-            <Form.Item label="规格型号">
-              <Input value={spec} onChange={setSpec} placeholder="可选" />
-            </Form.Item>
-            <Form.Item label="供货商">
-              <Input value={supplier} onChange={setSupplier} placeholder="可选" />
-            </Form.Item>
-            <Form.Item label="安全库存">
-              <Stepper min={0} max={9999} value={minStock} onChange={setMinStock} />
-            </Form.Item>
-          </Form>
-        }
+        content={<MaterialEditForm {...formProps} />}
         actions={[
           { key: "cancel", text: "取消", onClick: () => setEditing(false) },
           { key: "save", text: saving ? "保存中…" : "保存", bold: true, onClick: () => void onSave() },

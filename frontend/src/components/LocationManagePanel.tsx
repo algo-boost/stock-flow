@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Button, Dialog, Toast } from "antd-mobile";
 import { useNavigate } from "react-router-dom";
 import { deleteLocation, listInventory, listLocations } from "../api";
 import type { InventoryItem, Location } from "../api/types";
+import { useLiveListData } from "../utils/dataMutation";
 import { EmptyState, SectionCard } from "./ui";
 
-export function LocationManagePanel() {
+interface LocationManagePanelProps {
+  active?: boolean;
+}
+
+export function LocationManagePanel({ active = true }: LocationManagePanelProps) {
   const navigate = useNavigate();
   const [locations, setLocations] = useState<Location[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -25,9 +30,7 @@ export function LocationManagePanel() {
     }
   }, []);
 
-  useEffect(() => {
-    void loadData();
-  }, [loadData]);
+  useLiveListData(loadData, { scopes: ["locations", "inventory"], active });
 
   const stockByLocation = useMemo(() => {
     const result = new Map<string, number>();

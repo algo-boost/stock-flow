@@ -1,22 +1,20 @@
-import { useEffect, useState } from "react";
-import { ActionSheet, Button, Popup, Toast } from "antd-mobile";
-import type { Action } from "antd-mobile/es/components/action-sheet";
+import { useEffect, useMemo, useState } from "react";
+import { Popup, Toast } from "antd-mobile";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { getMaterial, getMaterialTransactions } from "../api";
-import type { InventoryItem, MaterialDetail, Transaction } from "../api/types";
+import type { InventoryItem, Location, MaterialDetail, Transaction } from "../api/types";
 import { useAuth } from "../components/AuthGate";
-import { InventorySlotEditor } from "../components/InventorySlotEditor";
+import { DetailBottomActions, type DetailActionItem } from "../components/DetailBottomActions";
+import { DetailLocationBlock } from "../components/DetailLocationBlock";
 import { MaterialManagePanel } from "../components/MaterialManagePanel";
 import { Layout } from "../components/Layout";
 import { CardSkeleton, EmptyState, SectionCard, StatCard, TxBadge } from "../components/ui";
 import { inventorySlotKey } from "../utils/inventoryDisplay";
+import { fetchShelfMetaCached } from "../utils/cachedApi";
 import {
   openStockForMaterial,
-  persistShelfNav,
   readDetailNavState,
   resolveDetailBack,
-  type DetailNavState,
-  type ShelfNavState,
 } from "../utils/detailNavigation";
 import { formatHistoryDate } from "../utils/historyDisplay";
 
@@ -29,14 +27,21 @@ export default function DetailPage() {
   const { canInbound, canApprove } = useAuth();
   const [detail, setDetail] = useState<MaterialDetail | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
-  const [actionsOpen, setActionsOpen] = useState(false);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [allInventory, setAllInventory] = useState<InventoryItem[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
 
   const reloadDetail = async () => {
-    const [d, t] = await Promise.all([getMaterial(id), getMaterialTransactions(id)]);
+    const [d, t, shelfMeta] = await Promise.all([
+      getMaterial(id),
+      getMaterialTransactions(id),
+      fetchShelfMetaCached(),
+    ]);
     setDetail(d);
     setTxs(t);
+    setLocations(shelfMeta.locations);
+    setAllInventory(shelfMeta.inventory);
   };
 
   useEffect(() => {
@@ -61,31 +66,80 @@ export default function DetailPage() {
       }
       return { ...current, inventory };
     });
+    setAllInventory((current) =>
+      current.map((item) =>
+        item.material_id === updated.material_id && inventorySlotKey(item) === fromKey ? updated : item,
+      ),
+    );
   };
 
-  const openShelf = (inv: InventoryItem) => {
-    const params = new URLSearchParams();
-    if (inv.row != null && inv.row > 0) params.set("row", String(inv.row));
-    if (inv.column != null) params.set("column", String(inv.column));
-    const qs = params.toString();
-    const slotLabel = [
-      inv.location_name ?? inv.location_id,
-      inv.row != null && inv.column != null ? `${inv.row}层${inv.column}格` : null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    const shelfState = {
-      backTo: `/materials/${material.id}`,
-      backState: {
-        backTo: navState.backTo,
-        backState: navState.backState,
-        fromLabel: navState.fromLabel,
-      },
-      fromLabel: slotLabel,
-    } satisfies ShelfNavState & DetailNavState;
-    persistShelfNav(inv.location_id, shelfState);
-    navigate(`/shelves/${inv.location_id}${qs ? `?${qs}` : ""}`, { state: shelfState });
-  };
+  const locationMap = useMemo(() => new Map(locations.map((loc) => [loc.id, loc])), [locations]);
+
+  const bottomActions = useMemo((): DetailActionItem[] => {
+    if (!detail) return [];
+
+    const { material, total_quantity } = detail;
+    const isEmpty = total_quantity <= 0;
+    const preferInbound = isEmpty;
+    const outboundLabel = canInbound ? "出库" : "申请出库";
+    const inboundLabel = canInbound ? "入库" : "申请入库";
+
+    const goStock = (tab: "outbound" | "inbound" | "transfer") => {
+      openStockForMaterial(navigate, material.id, tab, navState);
+    };
+
+    const actions: DetailActionItem[] = [];
+
+    if (!preferInbound) {
+      actions.push({
+        key: "outbound",
+        label: outboundLabel,
+        onClick: () => goStock("outbound"),
+      });
+    }
+
+    actions.push({
+      key: "inbound",
+      label: inboundLabel,
+      onClick: () => goStock("inbound"),
+    });
+
+    if (canInbound) {
+      if (!preferInbound) {
+        actions.push({
+          key: "transfer",
+          label: "移动",
+          onClick: () => goStock("transfer"),
+        });
+      }
+      if (canApprove) {
+        actions.push({
+          key: "purchase",
+          label: "进货",
+          onClick: () => {
+            navigate(`/purchase?material_id=${material.id}`, {
+              state: { materialBackTo: `/materials/${material.id}`, ...navState },
+            });
+          },
+        });
+      }
+      actions.push({
+        key: "manage",
+        label: "维护",
+        onClick: () => setManageOpen(true),
+      });
+    }
+
+    if (preferInbound && !isEmpty) {
+      actions.push({
+        key: "outbound",
+        label: outboundLabel,
+        onClick: () => goStock("outbound"),
+      });
+    }
+
+    return actions;
+  }, [canApprove, canInbound, detail, navigate, navState]);
 
   if (!detail) {
     return (
@@ -100,63 +154,10 @@ export default function DetailPage() {
   const { material, inventory, total_quantity } = detail;
   const isLowStock = total_quantity < (material.min_stock ?? 5);
   const isEmpty = total_quantity <= 0;
-  const preferInbound = isEmpty;
   const recentTxs = txs.slice(0, 3);
   const categoryLabel = [material.major_category, material.sub_category ?? material.category_name]
     .filter(Boolean)
     .join(" / ");
-
-  const actionItems: Action[] = [
-    ...(preferInbound
-      ? []
-      : [
-          {
-            text: canInbound ? "出库" : "申请出库",
-            key: "outbound",
-          },
-        ]),
-    {
-      text: canInbound ? "入库" : "申请入库",
-      key: "inbound",
-    },
-    ...(canInbound
-      ? [
-          { text: "移动", key: "transfer" },
-          ...(canApprove ? [{ text: "进货", key: "purchase" }] : []),
-          { text: "维护物料资料", key: "manage" },
-        ]
-      : []),
-    ...(preferInbound && canInbound
-      ? [{ text: "仍要出库", key: "outbound" }]
-      : preferInbound && !canInbound
-        ? [{ text: "申请出库", key: "outbound" }]
-        : []),
-  ];
-
-  const onAction = (action: Action) => {
-    setActionsOpen(false);
-    const mid = material.id;
-    const ctx = navState;
-    switch (action.key) {
-      case "outbound":
-        openStockForMaterial(navigate, mid, "outbound", ctx);
-        break;
-      case "inbound":
-        openStockForMaterial(navigate, mid, "inbound", ctx);
-        break;
-      case "transfer":
-        openStockForMaterial(navigate, mid, "transfer", ctx);
-        break;
-      case "purchase":
-        navigate(`/purchase?material_id=${mid}`, {
-          state: { materialBackTo: `/materials/${mid}`, ...ctx },
-        });
-        break;
-      case "manage":
-        setManageOpen(true);
-        break;
-    }
-  };
 
   const goHistoryForMaterial = () => {
     const q = encodeURIComponent(material.name);
@@ -170,55 +171,63 @@ export default function DetailPage() {
           <p className="detail-source-hint">来自 · {navState.fromLabel}</p>
         )}
 
-        <div className="detail-summary-line">
-          <span className="detail-summary-code">{material.code}</span>
-          {categoryLabel && <span className="detail-summary-sep">·</span>}
-          {categoryLabel && <span>{categoryLabel}</span>}
-          {material.spec && (
-            <>
-              <span className="detail-summary-sep">·</span>
-              <span>{material.spec}</span>
-            </>
+        <div className="detail-hero">
+          <div className="detail-summary-line">
+            <span className="detail-summary-code">{material.code}</span>
+            {categoryLabel && <span className="detail-summary-sep">·</span>}
+            {categoryLabel && <span>{categoryLabel}</span>}
+            {material.spec && (
+              <>
+                <span className="detail-summary-sep">·</span>
+                <span>{material.spec}</span>
+              </>
+            )}
+          </div>
+
+          <div className="stat-grid stat-grid-compact">
+            <StatCard
+              label="库存"
+              value={total_quantity}
+              unit={material.unit}
+              tone={isLowStock ? "warning" : "primary"}
+            />
+            <StatCard label="库位" value={inventory.length} unit="个" />
+          </div>
+
+          {isLowStock && (
+            <div className="low-stock-alert">
+              {isEmpty ? "当前无库存" : `低于安全库存 ${material.min_stock ?? 5}`}
+            </div>
           )}
         </div>
 
-        <div className="stat-grid stat-grid-compact">
-          <StatCard label="库存" value={total_quantity} unit={material.unit} tone={isLowStock ? "warning" : "primary"} />
-          <StatCard label="库位" value={inventory.length} unit="个" />
-        </div>
-        {isLowStock && (
-          <div className="low-stock-alert">
-            {isEmpty ? "当前无库存" : `低于安全库存 ${material.min_stock ?? 5}`}
-          </div>
-        )}
-
-        <SectionCard>
+        <SectionCard className="detail-info-card">
           <button type="button" className="collapse-trigger" onClick={() => setInfoOpen((v) => !v)}>
             更多资料 {infoOpen ? "▲" : "▼"}
           </button>
           {infoOpen && (
-            <>
-              <div className="info-row">
-                <span className="info-row-label">单位</span>
-                <span className="info-row-value">{material.unit}</span>
-              </div>
-              {material.supplier && (
+            <div className="detail-info-rows">
                 <div className="info-row">
-                  <span className="info-row-label">供货商</span>
-                  <span className="info-row-value">{material.supplier}</span>
+                  <span className="info-row-label">单位</span>
+                  <span className="info-row-value">{material.unit}</span>
                 </div>
-              )}
-              {material.barcode && (
-                <div className="info-row">
-                  <span className="info-row-label">条码</span>
-                  <span className="info-row-value">{material.barcode}</span>
-                </div>
-              )}
-            </>
+                {material.supplier && (
+                  <div className="info-row">
+                    <span className="info-row-label">供货商</span>
+                    <span className="info-row-value">{material.supplier}</span>
+                  </div>
+                )}
+                {material.barcode && (
+                  <div className="info-row">
+                    <span className="info-row-label">条码</span>
+                    <span className="info-row-value">{material.barcode}</span>
+                  </div>
+                )}
+            </div>
           )}
         </SectionCard>
 
-        <SectionCard title="库位库存">
+        <SectionCard title="库位库存" className="detail-inventory-card">
           {inventory.length === 0 ? (
             <EmptyState
               icon="tag"
@@ -226,31 +235,31 @@ export default function DetailPage() {
               hint={canInbound ? "可点击下方「入库」上架" : "可提交入库申请"}
             />
           ) : (
-            inventory.map((inv) => (
-              <div
-                key={inventorySlotKey(inv)}
-                className="detail-inventory-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => openShelf(inv)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openShelf(inv);
-                  }
-                }}
-              >
-                <div className="detail-inventory-editor" onClick={(e) => e.stopPropagation()}>
-                  <InventorySlotEditor
+            <div className="detail-loc-list">
+              {inventory.map((inv) => {
+                const loc = locationMap.get(inv.location_id);
+                if (!loc) {
+                  return (
+                    <div key={inventorySlotKey(inv)} className="detail-loc-block detail-loc-block-fallback">
+                      <p className="detail-loc-name">{inv.location_name ?? inv.location_id}</p>
+                      <p className="detail-loc-meta-muted">{inv.quantity} 件 · 格位信息加载中</p>
+                    </div>
+                  );
+                }
+                return (
+                  <DetailLocationBlock
+                    key={inventorySlotKey(inv)}
+                    location={loc}
                     materialId={material.id}
+                    materialName={material.name}
                     item={inv}
+                    locationInventory={allInventory.filter((row) => row.location_id === loc.id)}
                     canEdit={canInbound}
                     onUpdated={onInventoryUpdated}
                   />
-                </div>
-                <span className="detail-shelf-link">格位图 ›</span>
-              </div>
-            ))
+                );
+              })}
+            </div>
           )}
         </SectionCard>
 
@@ -283,60 +292,29 @@ export default function DetailPage() {
         )}
       </div>
 
-      <div className="detail-bottom-bar">
-        {preferInbound ? (
-          <>
-            <Button
-              color="primary"
-              className="detail-bottom-primary"
-              onClick={() => openStockForMaterial(navigate, material.id, "inbound", navState)}
-            >
-              {canInbound ? "入库" : "申请入库"}
-            </Button>
-            <Button
-              fill="outline"
-              disabled={isEmpty && canInbound}
-              onClick={() => openStockForMaterial(navigate, material.id, "outbound", navState)}
-            >
-              {canInbound ? "出库" : "申请出库"}
-            </Button>
-            {canInbound && (
-              <Button fill="outline" onClick={() => setActionsOpen(true)}>
-                更多
-              </Button>
-            )}
-          </>
-        ) : (
-          <>
-            <Button
-              color="primary"
-              className="detail-bottom-primary"
-              onClick={() => openStockForMaterial(navigate, material.id, "outbound", navState)}
-            >
-              {canInbound ? "出库" : "申请出库"}
-            </Button>
-            <Button fill="outline" onClick={() => setActionsOpen(true)}>
-              更多
-            </Button>
-          </>
-        )}
-      </div>
-
-      <ActionSheet
-        visible={actionsOpen}
-        actions={actionItems}
-        onClose={() => setActionsOpen(false)}
-        onAction={onAction}
-        cancelText="取消"
-      />
+      <DetailBottomActions actions={bottomActions} />
 
       <Popup
         visible={manageOpen}
         onMaskClick={() => setManageOpen(false)}
-        bodyStyle={{ borderTopLeftRadius: 12, borderTopRightRadius: 12, maxHeight: "85vh", overflow: "auto" }}
+        onClose={() => setManageOpen(false)}
+        destroyOnClose
+        showCloseButton
+        bodyClassName="detail-manage-popup-body"
+        bodyStyle={{
+          borderTopLeftRadius: 16,
+          borderTopRightRadius: 16,
+          maxHeight: "min(88vh, 720px)",
+          paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))",
+        }}
       >
-        <div className="popup-panel">
+        <div className="popup-panel detail-manage-panel">
+          <div className="popup-panel-head">
+            <strong>物料维护</strong>
+            <span className="detail-manage-popup-sub">{material.code}</span>
+          </div>
           <MaterialManagePanel
+            embedded
             detail={detail}
             hasTransactions={txs.length > 0}
             onUpdated={(updated) => {
@@ -348,9 +326,6 @@ export default function DetailPage() {
               resolveDetailBack(navigate, navState);
             }}
           />
-          <Button block fill="outline" onClick={() => setManageOpen(false)}>
-            关闭
-          </Button>
         </div>
       </Popup>
     </Layout>

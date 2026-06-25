@@ -437,6 +437,81 @@ class FeishuClient:
             else "IM 权限已通，但机器人未加入该群；请将应用机器人拉入 ADMIN/KEEPER/USER 角色群",
         }
 
+    def _configured_chat_ids(self) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for chat_id in (
+            self.settings.feishu_group_admin,
+            self.settings.feishu_group_keeper,
+            self.settings.feishu_group_user,
+        ):
+            cid = (chat_id or "").strip()
+            if cid and cid not in seen:
+                seen.add(cid)
+                result.append(cid)
+        return result
+
+    async def _list_chat_members(self, chat_id: str, tenant_token: str) -> list[dict[str, str]]:
+        members: list[dict[str, str]] = []
+        page_token: str | None = None
+        http = await self._ensure_http()
+        while True:
+            params: dict[str, Any] = {"member_id_type": "open_id", "page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            try:
+                resp = await http.get(
+                    f"{FEISHU_BASE}/im/v1/chats/{chat_id}/members",
+                    headers={"Authorization": f"Bearer {tenant_token}"},
+                    params=params,
+                )
+                payload = resp.json()
+            except Exception as exc:
+                logger.warning("群成员列表失败 chat_id=%s: %s", chat_id, exc)
+                break
+            if payload.get("code") != 0:
+                err = self._parse_im_error(payload)
+                logger.warning("群成员 API 错误 chat_id=%s: %s", chat_id, err.get("message"))
+                break
+            data = payload.get("data", {})
+            for item in data.get("items", []):
+                open_id = item.get("member_id") or item.get("open_id") or ""
+                if not open_id:
+                    continue
+                name = (item.get("name") or item.get("member_name") or "").strip()
+                members.append({"open_id": open_id, "name": name or open_id})
+            if not data.get("has_more"):
+                break
+            page_token = data.get("page_token")
+        return members
+
+    async def list_directory_users(self, query: str = "", *, limit: int = 20) -> list[dict[str, str]]:
+        """从角色群成员中搜索可选飞书用户（申请人/领用人）。"""
+        chat_ids = self._configured_chat_ids()
+        if not chat_ids:
+            return []
+
+        tenant_token = await self.get_tenant_access_token()
+        merged: dict[str, str] = {}
+        for chat_id in chat_ids:
+            for member in await self._list_chat_members(chat_id, tenant_token):
+                open_id = member["open_id"]
+                if open_id not in merged or (merged[open_id] == open_id and member["name"] != open_id):
+                    merged[open_id] = member["name"]
+
+        items = [{"open_id": oid, "name": name} for oid, name in merged.items()]
+        items.sort(key=lambda item: item["name"])
+
+        q = query.strip().lower()
+        if q:
+            items = [
+                item
+                for item in items
+                if q in item["name"].lower() or q in item["open_id"].lower()
+            ]
+
+        return items[: max(1, min(limit, 50))]
+
     async def build_jsapi_config(self, url: str) -> dict[str, Any]:
         tenant_token = await self.get_tenant_access_token()
         ticket = await self._get_jsapi_ticket(tenant_token)
@@ -472,48 +547,6 @@ class FeishuClient:
             ticket = data["ticket"]
             _jsapi_ticket_cache[cache_key] = (ticket, time.time() + data.get("expire_in", 7200))
             return ticket
-
-    # ── 消息通知 ──
-
-    async def send_card_message(
-        self,
-        open_id: str,
-        title: str,
-        content_lines: list[str],
-        link_url: str = "",
-        link_text: str = "查看详情",
-    ) -> bool:
-        """通过飞书机器人给指定用户发卡片消息。"""
-        tenant_token = await self.get_tenant_access_token()
-        http = await self._ensure_http()
-
-        elements: list[dict[str, Any]] = []
-        for line in content_lines:
-            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line}})
-        if link_url:
-            elements.append({
-                "tag": "action", "actions": [{
-                    "tag": "button", "text": {"tag": "lark_md", "content": link_text},
-                    "url": link_url, "type": "default",
-                }],
-            })
-
-        card = {"header": {"title": {"tag": "plain_text", "content": title}, "template": "blue"}, "elements": elements}
-
-        try:
-            resp = await self._timed(f"send_card_message", http.post(
-                f"{FEISHU_BASE}/im/v1/messages?receive_id_type=open_id",
-                headers={"Authorization": f"Bearer {tenant_token}", "Content-Type": "application/json"},
-                json={"receive_id": open_id, "msg_type": "interactive", "content": json.dumps(card)},
-            ))
-            data = resp.json()
-            if data.get("code") != 0:
-                logger.warning("飞书消息发送失败 code=%s", data.get("code"))
-                return False
-            return True
-        except Exception:
-            logger.warning("飞书消息发送异常 open_id=%s", open_id, exc_info=True)
-            return False
 
     async def list_group_members(self, chat_id: str) -> list[str]:
         """获取群聊所有成员的 open_id 列表。"""

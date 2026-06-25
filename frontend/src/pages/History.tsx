@@ -21,6 +21,7 @@ import { openMaterialDetail } from "../utils/detailNavigation";
 import { useAuth } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { PendingReturnsPanel } from "../components/PendingReturnsPanel";
+import { PendingClosuresPanel } from "../components/PendingClosuresPanel";
 import { ApprovalRecords } from "../components/ApprovalRecords";
 import { EmptyState, SectionCard, TxBadge } from "../components/ui";
 
@@ -31,8 +32,8 @@ interface SearchSuggestion {
 }
 
 type RequestView = StockRequestStatus | "ALL";
-type StaffHistoryView = "transactions" | "returns" | "approvals";
-type UserHistoryView = "requests" | "returns" | "transactions";
+type StaffHistoryView = "transactions" | "returns" | "approvals" | "closures";
+type UserHistoryView = "requests" | "returns" | "transactions" | "closures";
 
 const REQUEST_VIEW_OPTIONS: Array<{ label: string; value: RequestView }> = [
   { label: "进行中", value: "待审批" },
@@ -76,19 +77,24 @@ export default function HistoryPage() {
       });
     }
     opts.push({ label: "流水", value: "transactions" });
-    if (canInbound) opts.push({ label: "待归还", value: "returns" });
+    if (canInbound) {
+      opts.push({ label: "待归还", value: "returns" });
+      opts.push({ label: "结案", value: "closures" });
+    }
     return opts;
   }, [canInbound, canApprove, pendingCount]);
 
   const userHistoryOptions: Array<{ label: string; value: UserHistoryView }> = [
     { label: "我的申请", value: "requests" },
     { label: "待归还", value: "returns" },
+    { label: "结案申请", value: "closures" },
     { label: "流水", value: "transactions" },
   ];
 
   const resolveStaffView = (): StaffHistoryView => {
     const view = searchParams.get("view");
     if (view === "returns") return "returns";
+    if (view === "closures") return "closures";
     if (view === "approvals" && canApprove) return "approvals";
     if (view === "transactions") return "transactions";
     if (canApprove && pendingCount > 0) return "approvals";
@@ -98,6 +104,7 @@ export default function HistoryPage() {
   const resolveUserView = (): UserHistoryView => {
     const view = searchParams.get("view");
     if (view === "returns") return "returns";
+    if (view === "closures") return "closures";
     if (view === "transactions") return "transactions";
     return "requests";
   };
@@ -122,6 +129,7 @@ export default function HistoryPage() {
     requests: !canInbound,
     approvals: canApprove && pendingCount > 0,
     returns: false,
+    closures: false,
   }));
 
   useEffect(() => {
@@ -143,6 +151,8 @@ export default function HistoryPage() {
     setStaffView(view);
     if (view === "returns") {
       setSearchParams({ view: "returns" }, { replace: true });
+    } else if (view === "closures") {
+      setSearchParams({ view: "closures" }, { replace: true });
     } else if (view === "approvals") {
       setSearchParams({ view: "approvals" }, { replace: true });
     } else {
@@ -154,6 +164,8 @@ export default function HistoryPage() {
     setUserView(view);
     if (view === "returns") {
       setSearchParams({ view: "returns" }, { replace: true });
+    } else if (view === "closures") {
+      setSearchParams({ view: "closures" }, { replace: true });
     } else if (view === "transactions") {
       setSearchParams({ view: "transactions" }, { replace: true });
     } else {
@@ -162,6 +174,8 @@ export default function HistoryPage() {
   };
 
   const showReturnsView = (canInbound && staffView === "returns") || (!canInbound && userView === "returns");
+  const showClosuresView =
+    (canInbound && staffView === "closures") || (!canInbound && userView === "closures");
   const showUserRequests = !canInbound && userView === "requests";
   const showUserTransactions = !canInbound && userView === "transactions";
   const showStaffTransactions = canInbound && staffView === "transactions";
@@ -426,6 +440,12 @@ export default function HistoryPage() {
       {everMounted.returns && (
         <div className="history-tab-pane" hidden={!showReturnsView}>
           <PendingReturnsPanel active={showReturnsView} showBorrowerFilter={canInbound} />
+        </div>
+      )}
+
+      {everMounted.closures && (
+        <div className="history-tab-pane" hidden={!showClosuresView}>
+          <PendingClosuresPanel active={showClosuresView} showActions={canInbound} />
         </div>
       )}
 

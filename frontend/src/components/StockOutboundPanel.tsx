@@ -13,11 +13,14 @@ import { showUndo } from "./UndoToast";
 import { useAuth } from "./AuthGate";
 import { EmptyState, SectionCard, CardSkeleton, StockFormShell } from "./ui";
 import { ScanBarcodeButton } from "./ScanBarcodeButton";
+import { useDataMutationRefetch } from "../utils/dataMutation";
 import {
   navigateAfterStockSubmit,
   readStockNavState,
 } from "../utils/detailNavigation";
+import { OutboundSlotPicker, pickDefaultOutboundLocation } from "./OutboundSlotPicker";
 import { newIdempotencyKey } from "../utils/idempotency";
+import { applicantPayload, FeishuUserPicker, type ApplicantSelection } from "./FeishuUserPicker";
 
 function applyLocalOutbound(
   items: MaterialSearchItem[],
@@ -49,13 +52,16 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
   const [keyword, setKeyword] = useState("");
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
   const [slotKey, setSlotKey] = useState("");
+  const [outboundLocationId, setOutboundLocationId] = useState("");
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
   const [returnPolicy, setReturnPolicy] = useState<"" | "required" | "not_required">("");
   const [returnDueDate, setReturnDueDate] = useState("");
+  const [applicant, setApplicant] = useState<ApplicantSelection | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const { canInbound } = useAuth();
+  const { canInbound, user } = useAuth();
   const isDirectOutbound = canInbound;
+  const currentApplicant = user ? { open_id: user.open_id, name: user.name } : null;
   const listLoadedRef = useRef(false);
 
   const loadMaterials = useCallback(async (q = "", nextPage = 1, append = false) => {
@@ -81,13 +87,22 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
     void loadMaterials("", 1);
   }, [active, loadMaterials]);
 
+  useDataMutationRefetch(["inventory", "materials"], () => {
+    void loadMaterials(keyword, 1);
+    if (selected) {
+      void getMaterial(selected.material.id).then(setSelected).catch(() => {});
+    }
+  }, active);
+
   useEffect(() => {
     if (!active || !presetMaterialId || !shouldLoadPreset) return;
     void (async () => {
       try {
         const detail = await getMaterial(presetMaterialId);
         setSelected(detail);
-        setSlotKey(detail.inventory[0] ? inventorySlotKey(detail.inventory[0]) : "");
+        const firstKey = detail.inventory[0] ? inventorySlotKey(detail.inventory[0]) : "";
+        setSlotKey(firstKey);
+        setOutboundLocationId(pickDefaultOutboundLocation(detail.inventory, firstKey));
         setQty(1);
         setNote("");
         setReturnPolicy("");
@@ -102,13 +117,15 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
     setLoading(true);
     try {
       const detail = await getMaterial(item.id);
-      setSelected(detail);
       const first = detail.inventory[0];
+      setSelected(detail);
       setSlotKey(first ? inventorySlotKey(first) : "");
+      setOutboundLocationId(first ? first.location_id : "");
       setQty(1);
       setNote("");
       setReturnPolicy("");
       setReturnDueDate("");
+      setApplicant(null);
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
     } finally {
@@ -130,10 +147,12 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
   const backToList = () => {
     setSelected(null);
     setSlotKey("");
+    setOutboundLocationId("");
     setQty(1);
     setNote("");
     setReturnPolicy("");
     setReturnDueDate("");
+    setApplicant(null);
   };
 
   const locationOptions = useMemo(
@@ -144,6 +163,16 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
       })),
     [selected],
   );
+
+  const handleOutboundLocationChange = (locationId: string) => {
+    if (!selected) return;
+    setOutboundLocationId(locationId);
+    const first = selected.inventory.find((item) => item.location_id === locationId);
+    if (first) {
+      setSlotKey(inventorySlotKey(first));
+      setQty(1);
+    }
+  };
 
   const selectedInventory = selected ? findInventoryBySlotKey(selected.inventory, slotKey) : undefined;
   const maxQty = selectedInventory?.quantity ?? 0;
@@ -189,6 +218,7 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
           return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
           row: slotParsed.row,
           column: slotParsed.column,
+          ...applicantPayload(applicant, currentApplicant),
         };
         await postOutbound(outboundPayload);
         const materialName = selected.material.name;
@@ -219,6 +249,7 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
           return_due_at: returnPolicy === "required" ? returnDueDate : undefined,
           row: slotParsed.row,
           column: slotParsed.column,
+          ...applicantPayload(applicant, currentApplicant),
         });
         Toast.show({ icon: "success", content: "已提交出库申请" });
       }
@@ -261,11 +292,32 @@ export function StockOutboundPanel({ active = true }: { active?: boolean }) {
             <EmptyState icon="tag" text="该物料暂无库存" hint="请联系库管入库" />
           ) : (
             <Form layout="vertical" className="form-card">
-              <Form.Item label="出库库位 / 格位">
-                <Selector
-                  options={locationOptions}
-                  value={slotKey ? [slotKey] : []}
-                  onChange={(arr) => setSlotKey(arr[0] ?? "")}
+              <Form.Item label="出库库位与格位">
+                <OutboundSlotPicker
+                  materialId={selected.material.id}
+                  materialInventory={selected.inventory}
+                  locationId={outboundLocationId || pickDefaultOutboundLocation(selected.inventory, slotKey)}
+                  slotKey={slotKey}
+                  onLocationChange={handleOutboundLocationChange}
+                  onSlotKeyChange={(key) => {
+                    setSlotKey(key);
+                    setQty(1);
+                  }}
+                />
+              </Form.Item>
+              {locationOptions.length > 1 && (
+                <p className="stock-hint">
+                  当前选中：{selectedInventory ? formatInventorySlot(selectedInventory, false) : "—"} · 可用 {maxQty} 件
+                </p>
+              )}
+              <Form.Item label={isDirectOutbound ? "领用人（可选）" : "申请人"}>
+                <FeishuUserPicker
+                  label={isDirectOutbound ? "领用人" : "申请人"}
+                  value={applicant}
+                  onChange={setApplicant}
+                  allowProxy={canInbound}
+                  currentUser={user ? { open_id: user.open_id, name: user.name } : null}
+                  placeholder="搜索姓名选择领用人"
                 />
               </Form.Item>
               <Form.Item label="出库数量">
