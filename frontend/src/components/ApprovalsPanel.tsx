@@ -153,9 +153,9 @@ export function ApprovalsPanel({ onReviewed }: { onReviewed?: () => void }) {
       </SectionCard>
 
       {loading ? (
-        <EmptyState icon="⏳" text="加载中…" />
+        <EmptyState icon="loading" text="加载中…" />
       ) : items.length === 0 ? (
-        <EmptyState icon="📋" text="暂无申请" hint={keyword ? "试试清空搜索" : "暂无待审批的出入库申请"} />
+        <EmptyState icon="list" text="暂无申请" hint={keyword ? "试试清空搜索" : "暂无待审批的出入库申请"} />
       ) : (
         <div className="tx-list">
           {items.map((item) => (

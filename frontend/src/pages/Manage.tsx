@@ -9,7 +9,6 @@ import { AdminSystemPanel } from "../components/AdminSystemPanel";
 import { CategoryManagePanel } from "../components/CategoryManagePanel";
 import { LocationManagePanel } from "../components/LocationManagePanel";
 import { EmptyState, SectionCard, TxBadge } from "../components/ui";
-import { FeishuIcon } from "../components/FeishuIcon";
 import {
   resolveDashboardPeriod,
   WarehouseDashboard,
@@ -85,7 +84,7 @@ function ManageContent() {
         if (type === "tx") await deleteTransaction(item.id);
         else await deleteStockRequest(item.id);
         Toast.show({ icon: "success", content: "已删除" });
-        void load();
+        void loadDashboard({ silent: true });
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "删除失败" });
       } finally { setEditBusy(false); }
@@ -252,7 +251,7 @@ function ManageContent() {
               </div>
             </SectionCard>
           )}
-          <ApprovalsPanel onReviewed={() => void load()} />
+          <ApprovalsPanel onReviewed={() => void loadDashboard({ silent: true })} />
         </Tabs.Tab>
       </Tabs>
 

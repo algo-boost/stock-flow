@@ -32,20 +32,24 @@ export function useFeishuPageChrome({
     let disposed = false;
 
     const clearNativeChrome = () => {
-      document.body.classList.remove("feishu-native-chrome", "feishu-hide-app-navbar");
+      try {
+        document.body.classList.remove("feishu-native-chrome", "feishu-hide-app-navbar");
+      } catch { /* ignore */ }
     };
 
-    void getFeishuJsapiReady().then((ready) => {
-      if (disposed) return;
-      if (!ready || !window.tt?.setNavigationBar) {
-        clearNativeChrome();
-        return;
-      }
-
-      runWhenFeishuReady(() => {
+    try {
+      void getFeishuJsapiReady().then((ready) => {
         if (disposed) return;
+        if (!ready || !window.tt?.setNavigationBar) {
+          clearNativeChrome();
+          return;
+        }
 
-        window.tt?.setNavigationBar?.({
+        runWhenFeishuReady(() => {
+          if (disposed) return;
+
+          try {
+            window.tt?.setNavigationBar?.({
           title,
           navigationBarBackgroundColor: "#ffffff",
           navigationBarFrontColor: "black",
@@ -70,8 +74,10 @@ export function useFeishuPageChrome({
           },
           fail: () => undefined,
         } as Record<string, unknown>);
+          } catch { clearNativeChrome(); }
       });
-    });
+    }).catch(() => clearNativeChrome());
+    } catch { /* JSAPI blocked by Feishu security */ }
 
     return () => {
       disposed = true;
