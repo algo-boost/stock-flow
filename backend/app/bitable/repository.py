@@ -1286,6 +1286,9 @@ class BitableRepository:
         if not self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id):
             effective_remark = append_operator_label(effective_remark, operator_name)
         fields[s.bitable_f_tx_remark] = effective_remark
+        # 写入创建时间（毫秒时间戳），避免读回时因缺少该列而落入 epoch 0 兜底
+        if s.bitable_f_tx_created:
+            fields[s.bitable_f_tx_created] = int(datetime.now(timezone.utc).timestamp() * 1000)
         return fields
 
     async def _write_inventory_quantity(
@@ -1662,7 +1665,13 @@ class BitableRepository:
         record_ts = rec.get("created_time")
         if isinstance(record_ts, (int, float)):
             return datetime.fromtimestamp(record_ts / 1000, tz=timezone.utc)
-        return datetime.fromtimestamp(0, tz=timezone.utc)
+        # SQLite 缓存中 created_time 存为 TEXT，兼容字符串毫秒时间戳
+        if isinstance(record_ts, str) and record_ts.strip().isdigit():
+            try:
+                return datetime.fromtimestamp(int(record_ts) / 1000, tz=timezone.utc)
+            except (ValueError, OSError):
+                pass
+        return datetime.now(timezone.utc)
 
     def _parse_request(self, rec: dict[str, Any], materials: dict[str, Material], locations: dict[str, Location]) -> StockRequest:
         s = self.settings
