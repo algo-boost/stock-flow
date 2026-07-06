@@ -26,6 +26,9 @@ HEADERS_USER = {"X-Mock-Role": "USER", "X-Mock-User": "test_user"}
 HEADERS_KEEPER = {"X-Mock-Role": "KEEPER", "X-Mock-User": "test_keeper"}
 HEADERS_ADMIN = {"X-Mock-Role": "ADMIN", "X-Mock-User": "test_admin"}
 
+CABINET_SLOT = {"row": 1, "column": 1}
+CABINET_SLOT_ALT = {"row": 2, "column": 3}
+
 
 @pytest.fixture(autouse=True)
 def reset_idempotency():
@@ -398,6 +401,7 @@ def test_purchase_inbound_admin_only_updates_supplier_and_inventory():
             "idempotency_key": "test-purchase-admin-001",
             "supplier": "管理员供货商",
             "note": "补货测试",
+            **CABINET_SLOT_ALT,
         },
     )
     assert resp.status_code == 200
@@ -451,6 +455,7 @@ def test_low_stock_alerts_less_than_threshold_only():
             "qty": 5,
             "idempotency_key": "test-low-stock-fill",
             "supplier": "边界供货商",
+            **CABINET_SLOT,
         },
     )
     assert purchase_resp.status_code == 200
@@ -783,7 +788,11 @@ def test_outbound_request_approval_uses_cabinet_slot():
     assert create_resp.status_code == 200
     request_id = create_resp.json()["data"]["request_id"]
 
-    approve_resp = client.post(f"/api/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    approve_resp = client.post(
+        f"/api/requests/{request_id}/approve",
+        headers=HEADERS_ADMIN,
+        json={"row": 1, "column": 6},
+    )
     assert approve_resp.status_code == 200
 
     detail = client.get("/api/materials/mat_001", headers=HEADERS_KEEPER).json()["data"]
@@ -795,7 +804,7 @@ def test_outbound_request_approval_uses_cabinet_slot():
     assert slots[(1, 6)] == 4
 
 
-def test_outbound_request_approval_auto_picks_slot_when_missing():
+def test_outbound_request_approval_requires_slot_when_missing():
     client.post(
         "/api/inbound",
         headers=HEADERS_KEEPER,
@@ -826,7 +835,8 @@ def test_outbound_request_approval_auto_picks_slot_when_missing():
     request_id = create_resp.json()["data"]["request_id"]
 
     approve_resp = client.post(f"/api/requests/{request_id}/approve", headers=HEADERS_ADMIN)
-    assert approve_resp.status_code == 200
+    assert approve_resp.status_code == 400
+    assert "格位" in approve_resp.json()["message"]
 
 
 def test_inbound_forbidden_for_user():
@@ -854,6 +864,7 @@ def test_inbound_success_for_keeper():
             "qty": 2,
             "idempotency_key": "test-inbound-keeper-001",
             "note": "采购入库",
+            **CABINET_SLOT_ALT,
         },
     )
     assert resp.status_code == 200
@@ -871,6 +882,7 @@ def test_inbound_updates_material_spec_for_keeper():
             "idempotency_key": "test-inbound-spec-001",
             "note": "补型号",
             "spec": "D435i 新版",
+            **CABINET_SLOT_ALT,
         },
     )
     assert resp.status_code == 200
@@ -906,6 +918,8 @@ def test_transfer_success_for_keeper():
             "qty": 1,
             "idempotency_key": key,
             "note": "快递暂存上架",
+            "from_row": 1,
+            "from_column": 1,
         },
     )
     assert resp.status_code == 200
@@ -924,6 +938,8 @@ def test_transfer_success_for_keeper():
             "qty": 1,
             "idempotency_key": key,
             "note": "快递暂存上架",
+            "from_row": 1,
+            "from_column": 1,
         },
     )
     assert resp2.json()["data"]["transaction_ids"] == tx_ids
@@ -984,6 +1000,7 @@ def test_delete_inbound_transaction_reverts_inventory():
             "qty": 2,
             "idempotency_key": "test-delete-inbound-setup",
             "note": "删除冲正测试",
+            **CABINET_SLOT_ALT,
         },
     )
     assert inbound.status_code == 200
@@ -1122,6 +1139,7 @@ def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
             "note": "项目借用",
             "return_required": True,
             "return_due_at": "2026-07-01",
+            **CABINET_SLOT,
         },
     )
     pending_keeper = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)
@@ -1140,6 +1158,7 @@ def test_pending_returns_lists_borrow_and_clears_after_return_inbound():
             "qty": 1,
             "idempotency_key": "pending-return-in-001",
             "note": "项目结束归还",
+            **CABINET_SLOT,
         },
     )
     cleared = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.bitable.fields import append_operator_label, extract_person_label_from_remark, field_link_id, field_link_ids, field_number, is_feishu_user_id, normalize_tx_type, resolve_person_name
+from app.bitable.fields import append_operator_label, extract_person_label_from_remark, field_link_id, field_link_ids, field_number, is_feishu_user_id, normalize_tx_type, prepare_fields_for_bitable_write, resolve_person_name
 
 
 def test_field_link_ids_feishu_record_ids_format():
@@ -50,6 +50,7 @@ def test_extract_person_label_from_remark():
 def test_resolve_person_name_from_remark():
     assert resolve_person_name(None, "测试；操作人: 研发用户", remark_prefix="操作人") == "研发用户"
     assert resolve_person_name([{"name": "杨忠银"}], "备注", remark_prefix="操作人") == "杨忠银"
+    assert resolve_person_name([{"id": "ou_abc1234567890"}], "测试；操作人: 研发用户", remark_prefix="操作人") == "研发用户"
     assert (
         resolve_person_name(
             None,
@@ -58,3 +59,16 @@ def test_resolve_person_name_from_remark():
         )
         == "研发用户"
     )
+
+
+def test_prepare_fields_for_bitable_write():
+    raw = {
+        "库存数量": "2",
+        "行": 3,
+        "列": 4,
+        "物料ID": [{"record_ids": ["recMat"], "table_id": "tbl", "text": "1", "type": "text"}],
+    }
+    out = prepare_fields_for_bitable_write(raw)
+    assert out["库存数量"] == 2
+    assert out["行"] == 3
+    assert out["物料ID"] == ["recMat"]

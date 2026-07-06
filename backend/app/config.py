@@ -51,10 +51,14 @@ class Settings(BaseSettings):
     bitable_cache_ttl_seconds: int = 300
     bitable_warmup_on_startup: bool = True
 
-    # SQLite 本地镜像缓存（real 模式下启用，毫秒级读取）
+    # SQLite 本地主库（real 模式下启用）
     sqlite_cache_enabled: bool = True
-    # SQLite 缓存后台自动全量同步间隔（秒），0=关闭自动同步
-    sqlite_cache_sync_interval: int = 3600
+    # SQLite 优先：先写本地，异步同步 Bitable（不破坏已有 Bitable 记录）
+    sqlite_first_enabled: bool = True
+    # outbox 后台同步间隔（秒）
+    bitable_sync_interval_seconds: int = 5
+    # 旧：定时全量从 Bitable 拉取；sqlite_first 下建议关闭，改用手动 reconcile
+    sqlite_cache_sync_interval: int = 0
 
     # 飞书审批集成（需在飞书管理后台创建审批定义，填写其 approval_code）
     feishu_approval_enabled: bool = False

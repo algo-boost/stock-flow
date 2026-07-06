@@ -2,13 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Form, Input, SearchBar, Selector, Stepper, TextArea, Toast } from "antd-mobile";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getMaterial, listLocations, postPurchaseInbound, searchMaterials } from "../api";
-import type { MaterialDetail, MaterialSearchItem } from "../api/types";
+import type { Location, MaterialDetail, MaterialSearchItem } from "../api/types";
 import { useLiveListData } from "../utils/dataMutation";
 import { AuthGate } from "../components/AuthGate";
 import { Layout } from "../components/Layout";
 import { EmptyState, PageHeader, SectionCard } from "../components/ui";
+import { emptySlotSelection, LocationSlotPicker } from "../components/LocationSlotPicker";
 import { openMaterialDetail } from "../utils/detailNavigation";
 import { newIdempotencyKey } from "../utils/idempotency";
+import { buildSlotPayload, type SlotSelection } from "../utils/inventorySlot";
+import { isGridCapableLocation } from "../utils/shelfGrid";
 
 /** 纯内容，不含 Layout，可嵌入其他页面 */
 export function PurchaseForm() {
@@ -19,11 +22,13 @@ export function PurchaseForm() {
   const [items, setItems] = useState<MaterialSearchItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [locationOptions, setLocationOptions] = useState<{ label: string; value: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [selected, setSelected] = useState<MaterialDetail | null>(null);
   const [locationId, setLocationId] = useState("");
+  const [slotSelection, setSlotSelection] = useState<SlotSelection>(emptySlotSelection());
   const [qty, setQty] = useState(1);
   const [supplier, setSupplier] = useState("");
   const [note, setNote] = useState("");
@@ -46,6 +51,7 @@ export function PurchaseForm() {
   const loadLocations = useCallback(async () => {
     try {
       const locs = await listLocations();
+      setLocations(locs);
       setLocationOptions(locs.map((loc) => ({ label: `${loc.name}（${loc.code}）`, value: loc.id })));
       setLocationId((current) => current || locs[0]?.id || "");
     } catch (e) {
@@ -69,18 +75,32 @@ export function PurchaseForm() {
         setSupplier(detail.material.supplier ?? "");
         const defaultLoc = detail.material.default_location_id ?? detail.inventory[0]?.location_id ?? locationId;
         if (defaultLoc) setLocationId(defaultLoc);
+        setSlotSelection(emptySlotSelection());
       } catch (e) {
         Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
       }
     })();
   }, [locationId, presetMaterialId]);
 
+  const selectedLocation = useMemo(
+    () => locations.find((loc) => loc.id === locationId),
+    [locationId, locations],
+  );
+
+  const showGridSlot = Boolean(selectedLocation && isGridCapableLocation(selectedLocation));
+  const slotPayload = useMemo(
+    () => buildSlotPayload(selectedLocation, selected?.inventory ?? [], slotSelection),
+    [selected?.inventory, selectedLocation, slotSelection],
+  );
+
   const selectedStock = useMemo(() => {
     if (!selected || !locationId) return null;
     return selected.inventory.find((i) => i.location_id === locationId)?.quantity ?? 0;
   }, [selected, locationId]);
 
-  const canSubmit = Boolean(selected && locationId && qty > 0 && !loading);
+  const canSubmit = Boolean(
+    selected && locationId && qty > 0 && !loading && (!showGridSlot || Object.keys(slotPayload).length > 0),
+  );
   const hasMore = items.length < total;
 
   const selectMaterial = async (item: MaterialSearchItem) => {
@@ -93,6 +113,7 @@ export function PurchaseForm() {
       if (defaultLoc) setLocationId(defaultLoc);
       setQty(1);
       setNote("");
+      setSlotSelection(emptySlotSelection());
     } catch (e) {
       Toast.show({ icon: "fail", content: e instanceof Error ? e.message : "加载物料失败" });
     } finally {
@@ -105,6 +126,7 @@ export function PurchaseForm() {
     setQty(1);
     setSupplier("");
     setNote("");
+    setSlotSelection(emptySlotSelection());
   };
 
   const onSearch = (val: string) => {
@@ -114,7 +136,7 @@ export function PurchaseForm() {
 
   const onSubmit = async () => {
     if (!selected || !canSubmit) {
-      Toast.show({ content: "请填写物料、库位和数量" });
+      Toast.show({ content: "请选择物料、库位、格位并填写数量" });
       return;
     }
     setSubmitting(true);
@@ -126,6 +148,7 @@ export function PurchaseForm() {
         idempotency_key: newIdempotencyKey(),
         supplier: supplier.trim() || undefined,
         note: note.trim() || undefined,
+        ...slotPayload,
       });
       Toast.show({ icon: "success", content: "进货已入库" });
       openMaterialDetail(navigate, selected.material.id, {
@@ -157,11 +180,22 @@ export function PurchaseForm() {
               <Selector
                 options={locationOptions}
                 value={locationId ? [locationId] : []}
-                onChange={(arr) => setLocationId(arr[0] ?? "")}
+                onChange={(arr) => {
+                  setLocationId(arr[0] ?? "");
+                  setSlotSelection(emptySlotSelection());
+                }}
               />
             </Form.Item>
             {locationId && selectedStock !== null && (
-              <div className="stock-hint">该库位库存：{selectedStock}</div>
+              <div className="stock-hint">该库位当前库存：{selectedStock}</div>
+            )}
+            {showGridSlot && selectedLocation && (
+              <LocationSlotPicker
+                location={selectedLocation}
+                materialId={selected.material.id}
+                value={slotSelection}
+                onChange={setSlotSelection}
+              />
             )}
             <Form.Item label="数量">
               <Stepper min={1} value={qty} onChange={setQty} />

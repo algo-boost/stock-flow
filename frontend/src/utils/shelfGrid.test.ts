@@ -26,10 +26,16 @@ describe("shelfGrid", () => {
     expect(isGridCapableLocation({ ...shelf, grid_rows: null, type: "区域" })).toBe(false);
   });
 
-  it("resolveGridSize 空柜默认至少 4 层", () => {
+  it("resolveGridSize 已配置层数时尊重设定", () => {
     const size = resolveGridSize(cabinet, []);
-    expect(size.rows).toBe(4);
+    expect(size.rows).toBe(2);
     expect(size.columns).toBe(3);
+  });
+
+  it("resolveGridSize 未配置时空柜默认 4 层", () => {
+    const size = resolveGridSize({ ...cabinet, grid_rows: null, grid_columns: null }, []);
+    expect(size.rows).toBe(4);
+    expect(size.columns).toBe(6);
   });
 
   it("buildShelfCells 生成格位矩阵", () => {

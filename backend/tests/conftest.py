@@ -20,6 +20,10 @@ HEADERS_USER = {"X-Mock-Role": "USER", "X-Mock-User": "test_user"}
 HEADERS_KEEPER = {"X-Mock-Role": "KEEPER", "X-Mock-User": "test_keeper"}
 HEADERS_ADMIN = {"X-Mock-Role": "ADMIN", "X-Mock-User": "test_admin"}
 
+# mock A柜（loc_01）测试用格位
+CABINET_SLOT = {"row": 1, "column": 1}
+CABINET_SLOT_ALT = {"row": 2, "column": 3}
+
 
 @pytest.fixture
 def client() -> TestClient:

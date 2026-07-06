@@ -184,7 +184,7 @@ function LocationFormContent() {
             <div className="shelf-form-grid">
               <div className="shelf-form-row">
                 <span>层数</span>
-                <Stepper min={1} max={20} value={form.grid_rows} onChange={(v) => setForm((s) => ({ ...s, grid_rows: v }))} />
+                <Stepper min={1} max={99} value={form.grid_rows} onChange={(v) => setForm((s) => ({ ...s, grid_rows: v }))} />
               </div>
               <div className="shelf-form-row">
                 <span>有列格位</span>
@@ -196,7 +196,7 @@ function LocationFormContent() {
               {form.use_columns && (
                 <div className="shelf-form-row">
                   <span>列数</span>
-                  <Stepper min={1} max={20} value={form.grid_columns} onChange={(v) => setForm((s) => ({ ...s, grid_columns: v }))} />
+                  <Stepper min={1} max={99} value={form.grid_columns} onChange={(v) => setForm((s) => ({ ...s, grid_columns: v }))} />
                 </div>
               )}
               <p className="shelf-form-hint">

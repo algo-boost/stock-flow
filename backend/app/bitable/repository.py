@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timezone
 import time
@@ -13,6 +14,7 @@ from app.bitable.fields import (
     field_text,
     field_user_id,
     field_user_name,
+    merge_bitable_field_values,
     normalize_tx_type,
     write_link,
     append_operator_label,
@@ -56,12 +58,13 @@ from app.utils.inventory_keys import (
     key_row,
     resolve_outbound_slot,
 )
-from app.utils.request_remark import format_approved_outbound_remark, format_request_remark, parse_request_remark
+from app.utils.request_remark import format_request_remark, parse_request_remark
 from app.utils.applicant import build_proxy_remark
-from app.utils.slot_rules import validate_and_normalize_slot, validate_transfer_slots
+from app.utils.slot_rules import is_grid_capable_location, validate_and_normalize_slot, validate_transfer_slots
 
 _TABLE_CACHE: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
 _TABLE_INFLIGHT: dict[tuple[str, str], asyncio.Task[list[dict[str, Any]]]] = {}
+logger = logging.getLogger("stock-flow.bitable")
 
 
 def _optional_grid_number(fields: dict[str, Any], key: str) -> int | None:
@@ -95,6 +98,47 @@ class BitableRepository:
     def _slots_enabled(self) -> bool:
         return self.settings.inventory_slots_enabled
 
+    def _sqlite_first(self) -> bool:
+        return (
+            self.settings.bitable_mode == "real"
+            and self.settings.sqlite_cache_enabled
+            and self.settings.sqlite_first_enabled
+        )
+
+    def _sync_service(self):
+        from app.bitable.bitable_sync import get_sync_service
+        return get_sync_service(self.settings, self.client)
+
+    async def _gw_create(self, table_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        if self._sqlite_first():
+            rec = await self._sync_service().create_local(table_id, fields)
+            normalized = self._normalize_bitable_record(rec)
+            self._upsert_cached_record(table_id, normalized)
+            return normalized
+        rec = await self.client.create_record(table_id, fields)
+        return await self._cache_record_after_write(table_id, rec, write_fields=fields)
+
+    async def _gw_update(self, table_id: str, record_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        if self._sqlite_first():
+            rec = await self._sync_service().update_local(table_id, record_id, fields)
+            normalized = self._normalize_bitable_record(rec)
+            self._upsert_cached_record(table_id, normalized)
+            return normalized
+        rec = await self.client.update_record(table_id, record_id, fields)
+        cached = rec if rec.get("fields") else self._cached_record(record_id, fields)
+        self._upsert_cached_record(table_id, cached)
+        return cached
+
+    async def _gw_delete(self, table_id: str, record_id: str) -> None:
+        if self._sqlite_first():
+            await self._sync_service().delete_local(table_id, record_id)
+            self._remove_cached_record(table_id, record_id)
+            self._invalidate_table_cache(table_id)
+            return
+        await self.client.delete_record(table_id, record_id)
+        self._invalidate_table_cache(table_id)
+        self._remove_cached_record(table_id, record_id)
+
     def _inv_key(
         self,
         material_id: str,
@@ -118,9 +162,7 @@ class BitableRepository:
         col_val = field_number(fields.get(s.bitable_f_inventory_column))
         row = row_val if row_val > 0 else None
         col = col_val if col_val > 0 else None
-        if row is not None and col is not None:
-            return row, col
-        return None, None
+        return row, col
 
     def _slot_from_key_or_fields(
         self, key: InventoryKey, fields: dict[str, Any]
@@ -181,7 +223,7 @@ class BitableRepository:
         loc = locations.get(lid)
         if self._slots_enabled():
             field_row, field_col = self._read_inventory_slot(fields)
-            if field_row is not None and field_col is not None:
+            if field_row is not None or field_col is not None:
                 row, column = field_row, field_col
             else:
                 row, column = key_row(key), key_column(key)
@@ -200,6 +242,8 @@ class BitableRepository:
     async def _list_all(self, table_id: str) -> list[dict[str, Any]]:
         if not table_id:
             return []
+        if self._sqlite_first():
+            return await self._list_all_sqlite_first(table_id)
         ttl = max(self.settings.bitable_cache_ttl_seconds, 0)
 
         # 1. 内存缓存（最快）
@@ -248,17 +292,38 @@ class BitableRepository:
 
         return records
 
+    async def _list_all_sqlite_first(self, table_id: str) -> list[dict[str, Any]]:
+        """SQLite 主读：有数据直接返回；空表时只读导入 Bitable（不覆盖 pending）。"""
+        from app.bitable.sqlite_cache import get_sqlite_cache
+
+        sqlite = get_sqlite_cache()
+        cache_key = (self.settings.bitable_app_token, table_id)
+        records = sqlite.get_records(table_id)
+        if records:
+            normalized = [self._normalize_bitable_record(r) for r in records]
+            _TABLE_CACHE[cache_key] = (time.monotonic(), normalized)
+            return normalized
+        remote = await self.client.list_records(table_id)
+        normalized = [self._normalize_bitable_record(rec) for rec in remote]
+        await self._sync_service().import_from_bitable(table_id, normalized)
+        _TABLE_CACHE[cache_key] = (time.monotonic(), normalized)
+        return normalized
+
     async def _background_refresh(self, table_id: str, cache_key: tuple[str, str]) -> None:
+        """sqlite_first 模式下不自动从 Bitable 覆盖本地。"""
+        if self._sqlite_first():
+            return
         """后台静默从 Bitable 拉取最新数据，更新内存和 SQLite 缓存。"""
         try:
             records = await self.client.list_records(table_id)
             if records:
-                _TABLE_CACHE[cache_key] = (time.monotonic(), records)
+                normalized = [self._normalize_bitable_record(rec) for rec in records]
+                _TABLE_CACHE[cache_key] = (time.monotonic(), normalized)
                 if self.settings.sqlite_cache_enabled:
                     from app.bitable.sqlite_cache import get_sqlite_cache
-                    get_sqlite_cache().upsert_records(table_id, records)
+                    get_sqlite_cache().upsert_records(table_id, normalized)
         except Exception:
-            pass  # 静默失败，下次请求继续用 SQLite 旧数据
+            logger.warning("后台刷新 Bitable 表失败 table=%s", table_id, exc_info=True)
 
     def _invalidate_table_cache(self, *table_ids: str) -> None:
         app_token = self.settings.bitable_app_token
@@ -289,16 +354,17 @@ class BitableRepository:
                     **record,
                     "created_time": record.get("created_time") or item.get("created_time"),
                     "last_modified_time": record.get("last_modified_time") or item.get("last_modified_time"),
-                    "fields": {
-                        **item.get("fields", {}),
-                        **record.get("fields", {}),
-                    },
+                    "fields": merge_bitable_field_values(
+                        item.get("fields", {}),
+                        record.get("fields", {}),
+                    ),
                 }
                 next_records.append(merged)
                 replaced = True
             else:
                 next_records.append(item)
         if not replaced:
+            record = self._normalize_bitable_record(record)
             if not record.get("created_time"):
                 now_ms = int(time.time() * 1000)
                 record = {
@@ -308,6 +374,83 @@ class BitableRepository:
                 }
             next_records.append(record)
         _TABLE_CACHE[cache_key] = (cached_at, next_records)
+
+    def _normalize_bitable_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        """把业务时间列同步到 record.created_time，供 SQLite 排序与解析。"""
+        if not record:
+            return record
+        fields = dict(record.get("fields") or {})
+        ts_ms = self._extract_created_time_ms(record, fields)
+        normalized = {**record, "fields": fields}
+        if ts_ms is not None:
+            normalized["created_time"] = ts_ms
+            if not normalized.get("last_modified_time"):
+                normalized["last_modified_time"] = ts_ms
+        return normalized
+
+    def _extract_created_time_ms(self, rec: dict[str, Any], fields: dict[str, Any]) -> int | None:
+        s = self.settings
+        field_names = [s.bitable_f_tx_created, "创建时间", "交易时间"]
+        seen: set[str] = set()
+        for name in field_names:
+            key = (name or "").strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            parsed = self._parse_bitable_datetime(fields.get(key))
+            if parsed:
+                return int(parsed.timestamp() * 1000)
+        record_ts = rec.get("created_time")
+        if isinstance(record_ts, (int, float)):
+            return int(record_ts)
+        return None
+
+    async def _cache_record_after_write(
+        self,
+        table_id: str,
+        record: dict[str, Any],
+        write_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """写 Bitable 后回读完整记录再落 SQLite，避免缓存只有 open_id / 无时间。"""
+        rid = record.get("record_id", "")
+        hydrated = record
+        if rid and self.settings.bitable_mode == "real":
+            try:
+                fetched = await self.client.get_record(table_id, rid)
+                if fetched.get("fields"):
+                    hydrated = fetched
+            except Exception:
+                logger.debug("回读 Bitable 记录失败 table=%s id=%s", table_id, rid, exc_info=True)
+        if write_fields:
+            merged_fields = merge_bitable_field_values(
+                hydrated.get("fields", {}) if hydrated.get("fields") else {},
+                write_fields,
+            )
+            if not hydrated.get("fields"):
+                hydrated = self._cached_record(rid, merged_fields)
+            else:
+                hydrated = {**hydrated, "fields": merged_fields}
+        normalized = self._normalize_bitable_record(hydrated)
+        self._upsert_cached_record(table_id, normalized)
+        return normalized
+
+    async def _persist_transaction_record(
+        self,
+        tx_rec: dict[str, Any],
+        tx_fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._sqlite_first():
+            seed = tx_rec if tx_rec.get("record_id") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
+            return self._normalize_bitable_record(seed)
+        s = self.settings
+        seed = tx_rec if tx_rec.get("record_id") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
+        if not seed.get("record_id"):
+            seed = self._cached_record(tx_rec.get("record_id", "tx_new"), tx_fields)
+        return await self._cache_record_after_write(
+            s.bitable_table_transactions,
+            seed,
+            write_fields=tx_fields,
+        )
 
     def _remove_cached_record(self, table_id: str, record_id: str) -> None:
         if not table_id or not record_id:
@@ -364,10 +507,12 @@ class BitableRepository:
         self._locations_cache = None
 
     async def refresh_core_tables(self, smart: bool = True) -> dict[str, Any]:
-        """手动刷新缓存，用于 Bitable 直接改表后的同步。
-        
-        smart=True 时自动跳过近 60s 内已刷新的表，避免重复全量拉取。
+        """刷新数据。
+        sqlite_first：只读合并 Bitable → SQLite（不覆盖 pending，不修改 Bitable）。
+        传统模式：全量拉取 Bitable 覆盖缓存。
         """
+        if self._sqlite_first():
+            return await self._reconcile_from_bitable(smart=smart)
         table_ids = self._core_table_ids()
         skipped: list[str] = []
         if smart and self.settings.sqlite_cache_enabled:
@@ -394,6 +539,62 @@ class BitableRepository:
             "skipped": skipped,
             "failed": failures,
         }
+
+    async def _reconcile_from_bitable(self, *, smart: bool = True) -> dict[str, Any]:
+        """只读对账：飞书 → SQLite，跳过 pending 行，不写入 outbox。"""
+        table_ids = self._core_table_ids()
+        skipped: list[str] = []
+        if smart and self.settings.sqlite_cache_enabled:
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            sqlite = get_sqlite_cache()
+            now = time.monotonic()
+            smart_ttl = 60
+            active_ids = []
+            for tid in table_ids:
+                age = sqlite.get_cache_age(tid)
+                if age is not None and (now - age) < smart_ttl:
+                    skipped.append(tid)
+                else:
+                    active_ids.append(tid)
+            table_ids = active_ids
+        refreshed: list[str] = []
+        failures: dict[str, str] = {}
+        for table_id in table_ids:
+            if not table_id:
+                continue
+            try:
+                records = await self.client.list_records(table_id)
+                normalized = [self._normalize_bitable_record(rec) for rec in records]
+                await self._sync_service().import_from_bitable(table_id, normalized)
+                cache_key = (self.settings.bitable_app_token, table_id)
+                _TABLE_CACHE[cache_key] = (time.monotonic(), normalized)
+                self._clear_derived_caches()
+                refreshed.append(table_id)
+            except Exception as exc:
+                failures[table_id] = str(exc)
+        return {
+            "tables": await self.snapshot(),
+            "refreshed": refreshed,
+            "skipped": skipped,
+            "failed": failures,
+            "mode": "reconcile_from_bitable",
+        }
+
+    async def push_outbox_to_bitable(self, *, limit: int = 100) -> dict[str, Any]:
+        """将 SQLite outbox 推送到 Bitable（仅新增/本地修改过的行）。"""
+        if not self._sqlite_first():
+            return {"processed": 0, "failed": 0, "pending": 0, "mode": "bitable_first"}
+        from app.bitable.sqlite_cache import get_sqlite_cache
+
+        reset_failed = get_sqlite_cache().reset_outbox_failed()
+        stats = await self._sync_service().process_outbox(limit=limit)
+        self._clear_derived_caches()
+        return {**stats, "reset_failed": reset_failed, "mode": "push_outbox"}
+
+    def sync_status(self) -> dict[str, Any]:
+        if not self._sqlite_first():
+            return {"sqlite_first": False}
+        return self._sync_service().status_snapshot()
 
     async def _refresh_tables_best_effort(
         self,
@@ -429,12 +630,13 @@ class BitableRepository:
         if not force and cache_key in _TABLE_CACHE:
             return _TABLE_CACHE[cache_key][1]
         records = await self.client.list_records(table_id, retries=retries)
+        normalized = [self._normalize_bitable_record(rec) for rec in records]
         cached_at = time.monotonic()
         if self.settings.bitable_cache_ttl_seconds > 0:
-            _TABLE_CACHE[cache_key] = (cached_at, records)
-        if self.settings.sqlite_cache_enabled and records and self.settings.bitable_mode == "real":
-            self._sync_sqlite_upsert_all(table_id, records)
-        return records
+            _TABLE_CACHE[cache_key] = (cached_at, normalized)
+        if self.settings.sqlite_cache_enabled and normalized and self.settings.bitable_mode == "real":
+            self._sync_sqlite_upsert_all(table_id, normalized)
+        return normalized
 
     def _core_table_ids(self) -> list[str]:
         s = self.settings
@@ -557,7 +759,7 @@ class BitableRepository:
         if payload.examples:
             fields[s.bitable_f_category_examples] = payload.examples.strip()
 
-        rec = await self.client.create_record(s.bitable_table_categories, fields)
+        rec = await self._gw_create(s.bitable_table_categories, fields)
         rid = rec.get("record_id", "")
         category = Category(
             id=rid,
@@ -585,7 +787,7 @@ class BitableRepository:
                             s.bitable_f_material_category: write_link(rid),
                             s.bitable_f_material_sub_category: sub_name,
                         }
-                        await self.client.update_record(s.bitable_table_materials, mat_id, update_fields)
+                        await self._gw_update(s.bitable_table_materials, mat_id, update_fields)
                         migrated += 1
                 if migrated:
                     logger.info("新增子类 %s → 迁移了 %d 个物料到 Bitable", name, migrated)
@@ -623,7 +825,7 @@ class BitableRepository:
                 }
                 if parent_mid:
                     fields[s.bitable_f_material_mid_category] = parent_mid
-                rec = await self.client.update_record(s.bitable_table_materials, material.id, fields)
+                rec = await self._gw_update(s.bitable_table_materials, material.id, fields)
                 self._upsert_cached_record(
                     s.bitable_table_materials,
                     rec if rec.get("fields") else self._cached_record(material.id, fields),
@@ -638,7 +840,7 @@ class BitableRepository:
             return level
 
         for item_id in sorted(descendant_ids, key=depth, reverse=True):
-            await self.client.delete_record(s.bitable_table_categories, item_id)
+            await self._gw_delete(s.bitable_table_categories, item_id)
             self._remove_cached_record(s.bitable_table_categories, item_id)
         self._materials_cache = None
 
@@ -698,7 +900,7 @@ class BitableRepository:
             )
 
         if fields:
-            rec = await self.client.update_record(s.bitable_table_categories, category_id, fields)
+            rec = await self._gw_update(s.bitable_table_categories, category_id, fields)
             self._upsert_cached_record(
                 s.bitable_table_categories,
                 rec if rec.get("fields") else self._cached_record(category_id, fields),
@@ -732,7 +934,7 @@ class BitableRepository:
                 if updated.mid_name:
                     mat_fields[s.bitable_f_material_mid_category] = updated.mid_name
                 try:
-                    rec = await self.client.update_record(
+                    rec = await self._gw_update(
                         s.bitable_table_materials, material.id, mat_fields
                     )
                     self._upsert_cached_record(
@@ -944,7 +1146,7 @@ class BitableRepository:
         if payload.supplier:
             fields[s.bitable_f_material_supplier] = payload.supplier.strip()
 
-        rec = await self.client.create_record(s.bitable_table_materials, fields)
+        rec = await self._gw_create(s.bitable_table_materials, fields)
         rid = rec.get("record_id", "")
         self._materials_cache = None
         self._upsert_cached_record(
@@ -974,7 +1176,7 @@ class BitableRepository:
         supplier_value = supplier.strip() if supplier else None
         s = self.settings
         fields = {s.bitable_f_material_supplier: supplier_value or ""}
-        rec = await self.client.update_record(s.bitable_table_materials, material_id, fields)
+        rec = await self._gw_update(s.bitable_table_materials, material_id, fields)
         self._materials_cache = None
         self._upsert_cached_record(
             s.bitable_table_materials,
@@ -1039,7 +1241,7 @@ class BitableRepository:
             fields[s.bitable_f_material_min_stock] = updates["min_stock"]
 
         if fields:
-            rec = await self.client.update_record(s.bitable_table_materials, material_id, fields)
+            rec = await self._gw_update(s.bitable_table_materials, material_id, fields)
             self._materials_cache = None
             self._upsert_cached_record(
                 s.bitable_table_materials,
@@ -1082,10 +1284,10 @@ class BitableRepository:
             if key_material_id(key) == material_id:
                 record_id = rec.get("record_id")
                 if record_id:
-                    await self.client.delete_record(s.bitable_table_inventory, record_id)
+                    await self._gw_delete(s.bitable_table_inventory, record_id)
                     self._remove_cached_record(s.bitable_table_inventory, record_id)
 
-        await self.client.delete_record(s.bitable_table_materials, material_id)
+        await self._gw_delete(s.bitable_table_materials, material_id)
         self._materials_cache = None
         self._remove_cached_record(s.bitable_table_materials, material_id)
 
@@ -1161,9 +1363,10 @@ class BitableRepository:
             fields[s.bitable_f_location_mid] = mid_name
         if sub_name:
             fields[s.bitable_f_location_sub] = sub_name
-        rec = await self.client.create_record(s.bitable_table_locations, fields)
+        rec = await self._gw_create(s.bitable_table_locations, fields)
         rid = rec.get("record_id", "")
         self._locations_cache = None
+        self._invalidate_table_cache(s.bitable_table_locations)
         self._upsert_cached_record(
             s.bitable_table_locations,
             rec if rec.get("fields") else self._cached_record(rid, fields),
@@ -1216,8 +1419,9 @@ class BitableRepository:
         fields[s.bitable_f_location_mid] = mid_name or ""
         if sub_name:
             fields[s.bitable_f_location_sub] = sub_name
-        rec = await self.client.update_record(s.bitable_table_locations, location_id, fields)
+        rec = await self._gw_update(s.bitable_table_locations, location_id, fields)
         self._locations_cache = None
+        self._invalidate_table_cache(s.bitable_table_locations)
         self._upsert_cached_record(
             s.bitable_table_locations,
             rec if rec.get("fields") else self._cached_record(location_id, fields),
@@ -1255,7 +1459,7 @@ class BitableRepository:
             raise ValueError(f"location_not_empty:{occupied}")
 
         s = self.settings
-        await self.client.delete_record(s.bitable_table_locations, location_id)
+        await self._gw_delete(s.bitable_table_locations, location_id)
         self._locations_cache = None
         self._remove_cached_record(s.bitable_table_locations, location_id)
 
@@ -1277,19 +1481,18 @@ class BitableRepository:
     ) -> dict[str, Any]:
         s = self.settings
         effective_remark = remark or ""
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         fields: dict[str, Any] = {
             s.bitable_f_tx_type: tx_type,
             s.bitable_f_tx_material: write_link(material_id),
             s.bitable_f_tx_location: write_link(location_id),
             s.bitable_f_tx_quantity: qty,
         }
-        if not self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id):
-            label_prefix = "申请人" if "操作人:" in effective_remark or "操作人：" in effective_remark else "操作人"
-            effective_remark = append_operator_label(effective_remark, operator_name, prefix=label_prefix)
-        fields[s.bitable_f_tx_remark] = effective_remark
-        # 写入创建时间（毫秒时间戳），避免读回时因缺少该列而落入 epoch 0 兜底
         if s.bitable_f_tx_created:
-            fields[s.bitable_f_tx_created] = int(datetime.now(timezone.utc).timestamp() * 1000)
+            fields[s.bitable_f_tx_created] = now_ms
+        if not self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id):
+            effective_remark = append_operator_label(effective_remark, operator_name)
+        fields[s.bitable_f_tx_remark] = effective_remark
         return fields
 
     async def _write_inventory_quantity(
@@ -1314,7 +1517,7 @@ class BitableRepository:
                 inv_fields[s.bitable_f_inventory_column] = column
         if key in inv_records:
             record_id = inv_records[key]["record_id"]
-            await self.client.update_record(
+            await self._gw_update(
                 s.bitable_table_inventory,
                 record_id,
                 inv_fields,
@@ -1328,7 +1531,7 @@ class BitableRepository:
 
         inv_fields[s.bitable_f_inventory_material] = write_link(material_id)
         inv_fields[s.bitable_f_inventory_location] = write_link(location_id)
-        inv_rec = await self.client.create_record(s.bitable_table_inventory, inv_fields)
+        inv_rec = await self._gw_create(s.bitable_table_inventory, inv_fields)
         record_id = inv_rec.get("record_id", "")
         self._upsert_cached_record(
             s.bitable_table_inventory,
@@ -1369,7 +1572,7 @@ class BitableRepository:
         material_id: str,
         location_id: str,
         row: int,
-        column: int,
+        column: int | None = None,
         from_row: int | None = None,
         from_column: int | None = None,
     ) -> InventoryItem:
@@ -1380,6 +1583,10 @@ class BitableRepository:
         locations = await self._load_locations()
         if location_id not in locations:
             raise ValueError("location_not_found")
+        loc = locations[location_id]
+        row, column = validate_and_normalize_slot(
+            loc, row, column, slots_enabled=True
+        )
 
         inv_records = await self._load_inventory_records()
         try:
@@ -1398,12 +1605,13 @@ class BitableRepository:
         old_record_id = old_rec.get("record_id", "")
 
         if old_key == new_key:
-            inv_fields = {
+            inv_fields: dict[str, Any] = {
                 s.bitable_f_inventory_row: row,
-                s.bitable_f_inventory_column: column,
                 s.bitable_f_inventory_updated: updated_at,
             }
-            await self.client.update_record(s.bitable_table_inventory, old_record_id, inv_fields)
+            if column is not None:
+                inv_fields[s.bitable_f_inventory_column] = column
+            await self._gw_update(s.bitable_table_inventory, old_record_id, inv_fields)
             self._upsert_cached_record(
                 s.bitable_table_inventory,
                 self._cached_record(old_record_id, inv_fields),
@@ -1412,7 +1620,7 @@ class BitableRepository:
             target_rec = inv_records[new_key]
             target_id = target_rec.get("record_id", "")
             target_qty = field_number(target_rec.get("fields", {}).get(s.bitable_f_inventory_quantity))
-            await self.client.update_record(
+            await self._gw_update(
                 s.bitable_table_inventory,
                 target_id,
                 {
@@ -1420,15 +1628,16 @@ class BitableRepository:
                     s.bitable_f_inventory_updated: updated_at,
                 },
             )
-            await self.client.delete_record(s.bitable_table_inventory, old_record_id)
+            await self._gw_delete(s.bitable_table_inventory, old_record_id)
             self._invalidate_table_cache(s.bitable_table_inventory)
         else:
             inv_fields = {
                 s.bitable_f_inventory_row: row,
-                s.bitable_f_inventory_column: column,
                 s.bitable_f_inventory_updated: updated_at,
             }
-            await self.client.update_record(s.bitable_table_inventory, old_record_id, inv_fields)
+            if column is not None:
+                inv_fields[s.bitable_f_inventory_column] = column
+            await self._gw_update(s.bitable_table_inventory, old_record_id, inv_fields)
             self._upsert_cached_record(
                 s.bitable_table_inventory,
                 self._cached_record(old_record_id, inv_fields),
@@ -1597,7 +1806,7 @@ class BitableRepository:
         start = max(page - 1, 0) * effective_size
         return txs[start : start + effective_size], total
 
-    async def list_all_transactions_parsed(self, *, limit: int | None = None) -> list[Transaction]:
+    async def list_all_transactions_parsed(self, *, limit: int = 2000) -> list[Transaction]:
         """从本地缓存加载流水（待归还等需全量扫描的场景）。"""
         s = self.settings
         materials = await self._load_materials()
@@ -1611,46 +1820,7 @@ class BitableRepository:
             self._build_transaction_from_record(rec, materials, locations) for rec in records
         ]
         txs.sort(key=lambda t: t.created_at, reverse=True)
-        if limit is not None:
-            return txs[:limit]
-        return txs
-
-    async def get_transaction_by_id(self, transaction_id: str) -> Transaction | None:
-        s = self.settings
-        materials = await self._load_materials()
-        locations = await self._load_locations()
-        records = await self._list_all(s.bitable_table_transactions)
-        rec = next((item for item in records if item.get("record_id") == transaction_id), None)
-        if not rec:
-            return None
-        return self._build_transaction_from_record(rec, materials, locations)
-
-    async def get_transaction_operator_open_id(self, transaction_id: str) -> str | None:
-        s = self.settings
-        records = await self._list_all(s.bitable_table_transactions)
-        rec = next((item for item in records if item.get("record_id") == transaction_id), None)
-        if not rec:
-            return None
-        fields = rec.get("fields", {})
-        open_id = field_user_id(fields.get(s.bitable_f_tx_operator))
-        return open_id or None
-
-    async def find_request_by_transaction_id(self, transaction_id: str) -> StockRequest | None:
-        materials = await self._load_materials()
-        locations = await self._load_locations()
-        records = await self._list_all(self.settings.bitable_table_requests)
-        rec = next(
-            (
-                item
-                for item in records
-                if field_text(item.get("fields", {}).get(self.settings.bitable_f_request_transaction))
-                == transaction_id
-            ),
-            None,
-        )
-        if not rec:
-            return None
-        return self._parse_request(rec, materials, locations)
+        return txs[:limit]
 
     def _require_requests_table(self) -> None:
         if not self.settings.bitable_table_requests:
@@ -1705,13 +1875,7 @@ class BitableRepository:
         record_ts = rec.get("created_time")
         if isinstance(record_ts, (int, float)):
             return datetime.fromtimestamp(record_ts / 1000, tz=timezone.utc)
-        # SQLite 缓存中 created_time 存为 TEXT，兼容字符串毫秒时间戳
-        if isinstance(record_ts, str) and record_ts.strip().isdigit():
-            try:
-                return datetime.fromtimestamp(int(record_ts) / 1000, tz=timezone.utc)
-            except (ValueError, OSError):
-                pass
-        return datetime.now(timezone.utc)
+        return datetime.fromtimestamp(0, tz=timezone.utc)
 
     def _parse_request(self, rec: dict[str, Any], materials: dict[str, Material], locations: dict[str, Location]) -> StockRequest:
         s = self.settings
@@ -1798,7 +1962,7 @@ class BitableRepository:
                 prefix="申请人",
             )
 
-        rec = await self.client.create_record(s.bitable_table_requests, fields)
+        rec = await self._gw_create(s.bitable_table_requests, fields)
         self._upsert_cached_record(
             s.bitable_table_requests,
             rec if rec.get("fields") else self._cached_record(rec.get("record_id", ""), fields),
@@ -1882,9 +2046,9 @@ class BitableRepository:
         if req.status != StockRequestStatus.PENDING:
             raise ValueError("request_already_reviewed")
 
+        approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
         requester_open_id = req.requester_open_id or ""
         if req.type == StockRequestType.INBOUND:
-            approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
             target_location_id = location_id or req.location_id
             if not target_location_id or target_location_id not in locations:
                 raise ValueError("location_required_for_inbound_approval")
@@ -1902,27 +2066,13 @@ class BitableRepository:
         else:
             if not req.location_id or req.location_id not in locations:
                 raise ValueError("location_not_found")
-            inv_records = await self._load_inventory_records()
-            inv_map = self._inventory_map_from_records(inv_records)
+            loc = locations[req.location_id]
             out_row = row if row is not None else req.row
             out_column = column if column is not None else req.column
-            out_row, out_column = resolve_outbound_slot(
-                inv_map,
-                req.material_id,
-                req.location_id,
-                req.quantity,
-                out_row,
-                out_column,
-                slots_enabled=self._slots_enabled(),
-            )
-            approval_note = format_approved_outbound_remark(
-                req.remark,
-                return_required=req.return_required,
-                return_due_at=req.return_due_at,
-                row=out_row,
-                column=out_column,
-                approver_name=approver_name,
-            )
+            if self._slots_enabled() and is_grid_capable_location(loc):
+                out_row, out_column = validate_and_normalize_slot(
+                    loc, out_row, out_column, slots_enabled=True
+                )
             tx = await self.apply_outbound(
                 req.material_id,
                 req.location_id,
@@ -1945,7 +2095,7 @@ class BitableRepository:
             s.bitable_f_request_location: write_link(target_location_id),
         }
         self._maybe_set_user_field(fields, s.bitable_f_request_approver, approver_open_id)
-        updated_rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
+        updated_rec = await self._gw_update(s.bitable_table_requests, request_id, fields)
         self._upsert_cached_record(
             s.bitable_table_requests,
             updated_rec if updated_rec.get("fields") else self._cached_record(request_id, fields),
@@ -1993,7 +2143,7 @@ class BitableRepository:
                 approver_name,
                 prefix="审批人",
             )
-        updated_rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
+        updated_rec = await self._gw_update(s.bitable_table_requests, request_id, fields)
         self._upsert_cached_record(
             s.bitable_table_requests,
             updated_rec if updated_rec.get("fields") else self._cached_record(request_id, fields),
@@ -2052,19 +2202,15 @@ class BitableRepository:
             remark,
         )
         try:
-            tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+            tx_rec = await self._gw_create(s.bitable_table_transactions, tx_fields)
         except Exception:
             await self._write_inventory_quantity(
                 inv_records, material_id, location_id, current, updated_at, row=row, column=column
             )
             raise
-        self._upsert_cached_record(
-            s.bitable_table_transactions,
-            tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
-        )
+        tx_record = await self._persist_transaction_record(tx_rec, tx_fields)
         material = (await self._load_materials())[material_id]
         loc = locations[location_id]
-        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
         return Transaction(
             id=tx_rec.get("record_id", "tx_new"),
             type=TransactionType.INBOUND,
@@ -2091,17 +2237,27 @@ class BitableRepository:
     ) -> Transaction:
         if not await self.get_material(material_id):
             raise ValueError("material_not_found")
+        locations = await self._load_locations()
+        if location_id not in locations:
+            raise ValueError("location_not_found")
+        loc = locations[location_id]
         inv_records = await self._load_inventory_records()
         inv_map = self._inventory_map_from_records(inv_records)
-        out_row, out_column = resolve_outbound_slot(
-            inv_map,
-            material_id,
-            location_id,
-            qty,
-            row,
-            column,
-            slots_enabled=self._slots_enabled(),
-        )
+        if self._slots_enabled() and is_grid_capable_location(loc):
+            row, column = validate_and_normalize_slot(
+                loc, row, column, slots_enabled=True
+            )
+            out_row, out_column = row, column
+        else:
+            out_row, out_column = resolve_outbound_slot(
+                inv_map,
+                material_id,
+                location_id,
+                qty,
+                row,
+                column,
+                slots_enabled=self._slots_enabled(),
+            )
         key = self._inv_key(material_id, location_id, out_row, out_column)
         s = self.settings
         if key not in inv_records:
@@ -2131,7 +2287,7 @@ class BitableRepository:
             remark,
         )
         try:
-            tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+            tx_rec = await self._gw_create(s.bitable_table_transactions, tx_fields)
         except Exception:
             await self._write_inventory_quantity(
                 inv_records,
@@ -2143,13 +2299,9 @@ class BitableRepository:
                 column=out_column,
             )
             raise
-        self._upsert_cached_record(
-            s.bitable_table_transactions,
-            tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
-        )
+        tx_record = await self._persist_transaction_record(tx_rec, tx_fields)
         materials = await self._load_materials()
         locations = await self._load_locations()
-        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
         return Transaction(
             id=tx_rec.get("record_id", "tx_new"),
             type=TransactionType.OUTBOUND,
@@ -2158,6 +2310,48 @@ class BitableRepository:
             location_id=location_id,
             location_name=locations.get(location_id, Location(id=location_id, code="", name=location_id)).name,
             quantity=-qty,
+            operator=operator_name,
+            remark=remark,
+            created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
+        )
+
+    async def apply_disposition_audit(
+        self,
+        material_id: str,
+        location_id: str,
+        operator_open_id: str,
+        operator_name: str,
+        remark: str,
+    ) -> Transaction:
+        """写入结案审计流水，不修改库存。"""
+        if not await self.get_material(material_id):
+            raise ValueError("material_not_found")
+        locations = await self._load_locations()
+        if location_id not in locations:
+            raise ValueError("location_not_found")
+
+        s = self.settings
+        tx_fields = self._build_tx_fields(
+            s.bitable_v_tx_outbound,
+            material_id,
+            location_id,
+            0,
+            operator_open_id,
+            operator_name,
+            remark,
+        )
+        tx_rec = await self._gw_create(s.bitable_table_transactions, tx_fields)
+        tx_record = await self._persist_transaction_record(tx_rec, tx_fields)
+        material = (await self._load_materials())[material_id]
+        loc = locations[location_id]
+        return Transaction(
+            id=tx_rec.get("record_id", "tx_disposition"),
+            type=TransactionType.OUTBOUND,
+            material_id=material_id,
+            material_name=material.name,
+            location_id=location_id,
+            location_name=loc.name,
+            quantity=0,
             operator=operator_name,
             remark=remark,
             created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
@@ -2185,27 +2379,32 @@ class BitableRepository:
         if from_location_id not in locations or to_location_id not in locations:
             raise ValueError("location_not_found")
         if self._slots_enabled():
-            from_row, from_column, to_row, to_column = validate_transfer_slots(
-                locations[from_location_id],
-                locations[to_location_id],
-                from_row,
-                from_column,
-                to_row,
-                to_column,
-                slots_enabled=True,
-            )
+            from_loc = locations[from_location_id]
+            to_loc = locations[to_location_id]
+            if is_grid_capable_location(from_loc):
+                from_row, from_column = validate_and_normalize_slot(
+                    from_loc, from_row, from_column, slots_enabled=True
+                )
+            if is_grid_capable_location(to_loc):
+                to_row, to_column = validate_and_normalize_slot(
+                    to_loc, to_row, to_column, slots_enabled=True
+                )
 
         inv_records = await self._load_inventory_records()
         inv_map = self._inventory_map_from_records(inv_records)
-        out_row, out_column = resolve_outbound_slot(
-            inv_map,
-            material_id,
-            from_location_id,
-            qty,
-            from_row,
-            from_column,
-            slots_enabled=self._slots_enabled(),
-        )
+        from_loc = locations[from_location_id]
+        if self._slots_enabled() and is_grid_capable_location(from_loc):
+            out_row, out_column = from_row, from_column
+        else:
+            out_row, out_column = resolve_outbound_slot(
+                inv_map,
+                material_id,
+                from_location_id,
+                qty,
+                from_row,
+                from_column,
+                slots_enabled=self._slots_enabled(),
+            )
         source_key = self._inv_key(material_id, from_location_id, out_row, out_column)
         target_key = self._inv_key(material_id, to_location_id, to_row, to_column)
         s = self.settings
@@ -2262,7 +2461,7 @@ class BitableRepository:
             f"移动至 {target_loc.name}" + (f"；{remark}" if remark else ""),
         )
         try:
-            tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
+            tx_rec = await self._gw_create(s.bitable_table_transactions, tx_fields)
         except Exception:
             await self._write_inventory_quantity(
                 inv_records,
@@ -2284,13 +2483,9 @@ class BitableRepository:
             )
             raise
 
-        self._upsert_cached_record(
-            s.bitable_table_transactions,
-            tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
-        )
+        tx_record = await self._persist_transaction_record(tx_rec, tx_fields)
 
         material = (await self._load_materials())[material_id]
-        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
         created_at = self._parse_transaction_created_at(tx_record, tx_record.get("fields", {}))
         return [
             Transaction(
@@ -2321,7 +2516,7 @@ class BitableRepository:
         if payload.remark is not None:
             fields[s.bitable_f_tx_remark] = payload.remark
         if fields:
-            rec = await self.client.update_record(s.bitable_table_transactions, transaction_id, fields)
+            rec = await self._gw_update(s.bitable_table_transactions, transaction_id, fields)
             self._invalidate_table_cache(s.bitable_table_transactions)
         # 返回更新后的对象（简化：返回 payload 合并到原始查询）
         return Transaction(
@@ -2347,7 +2542,7 @@ class BitableRepository:
         if payload.remark is not None:
             fields[s.bitable_f_request_remark] = payload.remark
         if fields:
-            rec = await self.client.update_record(s.bitable_table_requests, request_id, fields)
+            rec = await self._gw_update(s.bitable_table_requests, request_id, fields)
             self._invalidate_table_cache(s.bitable_table_requests)
         return StockRequest(
             id=request_id,
@@ -2376,7 +2571,7 @@ class BitableRepository:
         fields = {s.bitable_f_inventory_quantity: payload.quantity}
         if payload.remark:
             fields[s.bitable_f_tx_remark] = payload.remark
-        await self.client.update_record(s.bitable_table_inventory, record_id, fields)
+        await self._gw_update(s.bitable_table_inventory, record_id, fields)
         self._invalidate_table_cache(s.bitable_table_inventory)
         return InventoryItem(
             material_id=material_id,
@@ -2399,7 +2594,7 @@ class BitableRepository:
         tx = self._record_to_transaction(rec)
         await self._revert_inventory_for_transaction(tx)
 
-        await self.client.delete_record(s.bitable_table_transactions, transaction_id)
+        await self._gw_delete(s.bitable_table_transactions, transaction_id)
         self._invalidate_table_cache(s.bitable_table_transactions)
         self._remove_cached_record(s.bitable_table_transactions, transaction_id)
 
@@ -2516,7 +2711,7 @@ class BitableRepository:
         if not found:
             raise ValueError("request_not_found")
         if s.bitable_table_requests:
-            await self.client.delete_record(s.bitable_table_requests, request_id)
+            await self._gw_delete(s.bitable_table_requests, request_id)
             self._invalidate_table_cache(s.bitable_table_requests)
             self._remove_cached_record(s.bitable_table_requests, request_id)
 
@@ -2546,7 +2741,7 @@ class BitableRepository:
             return
         try:
             from app.bitable.sqlite_cache import get_sqlite_cache
-            get_sqlite_cache().upsert_one(table_id, record)
+            get_sqlite_cache().upsert_one(table_id, self._normalize_bitable_record(record))
         except Exception:
             pass
 
@@ -2639,7 +2834,7 @@ class BitableRepository:
         for loc in locations.values():
             if loc.type == old_name:
                 try:
-                    await self.client.update_record(
+                    await self._gw_update(
                         s.bitable_table_locations, loc.id,
                         {s.bitable_f_location_type: new_name},
                     )

@@ -79,8 +79,17 @@ def field_user_name(value: Any) -> str | None:
     if isinstance(value, list) and value:
         first = value[0]
         if isinstance(first, dict):
-            return first.get("name") or first.get("en_name") or first.get("id")
-    return field_text(value)
+            name = first.get("name") or first.get("en_name")
+            if name:
+                return str(name)
+            user_id = first.get("id") or first.get("open_id") or first.get("user_id")
+            if user_id and is_feishu_user_id(str(user_id)):
+                return None
+            return str(user_id) if user_id else None
+    text = field_text(value)
+    if text and is_feishu_user_id(text):
+        return None
+    return text
 
 
 def field_user_id(value: Any) -> str | None:
@@ -133,10 +142,6 @@ def resolve_person_name(
     name = field_user_name(user_field_value)
     if name:
         return name
-    if remark_prefix == "操作人":
-        applicant = extract_person_label_from_remark(remark, "申请人")
-        if applicant and applicant != default:
-            return applicant
     fallback = extract_person_label_from_remark(remark, remark_prefix)
     if fallback and fallback != default:
         return fallback
@@ -145,6 +150,58 @@ def resolve_person_name(
         if applicant and applicant != default:
             return applicant
     return default
+
+
+def prepare_fields_for_bitable_write(fields: dict[str, Any]) -> dict[str, Any]:
+    """将 SQLite 缓存字段转为 Bitable Open API 可写入格式。"""
+    out: dict[str, Any] = {}
+    for key, val in fields.items():
+        if val is None or val == "":
+            continue
+        link_ids = field_link_ids(val)
+        if link_ids:
+            out[key] = link_ids
+            continue
+        user_id = field_user_id(val)
+        if user_id and isinstance(val, (list, dict)):
+            out[key] = write_user(user_id)
+            continue
+        if isinstance(val, bool):
+            out[key] = val
+            continue
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            out[key] = int(val) if isinstance(val, float) and val == int(val) else val
+            continue
+        if isinstance(val, str):
+            stripped = val.strip()
+            if stripped.replace(".", "", 1).isdigit():
+                out[key] = field_number(stripped)
+                continue
+            out[key] = val
+            continue
+        if isinstance(val, list) and val and isinstance(val[0], (int, float)):
+            out[key] = val
+            continue
+    return out
+
+
+def merge_bitable_field_values(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """合并 Bitable 字段：避免用写入时的残缺快照覆盖缓存里更完整的值。"""
+    merged = dict(incoming)
+    for key, old_val in existing.items():
+        if old_val is None or old_val == "":
+            continue
+        new_val = incoming.get(key)
+        if new_val is None or new_val == "":
+            merged[key] = old_val
+            continue
+        old_name = field_user_name(old_val)
+        new_name = field_user_name(new_val)
+        if old_name and not new_name:
+            merged[key] = old_val
+        elif isinstance(old_val, (int, float)) and not isinstance(new_val, (int, float)):
+            merged[key] = old_val
+    return merged
 
 
 def append_operator_label(remark: str | None, label: str, *, prefix: str = "操作人") -> str:

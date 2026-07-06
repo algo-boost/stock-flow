@@ -6,6 +6,8 @@ export function isGridCapableLocation(location: Location): boolean {
   return Boolean(location.grid_rows) || GRID_LOCATION_TYPES.has(location.type);
 }
 
+const GRID_SIZE_MAX = 99;
+
 export function resolveGridSize(
   location: Location,
   inventory: InventoryItem[],
@@ -18,12 +20,27 @@ export function resolveGridSize(
     || atLoc.some((item) => item.column != null)
     || location.type.includes("柜");
 
-  const rows = Math.min(Math.max(location.grid_rows ?? maxRow, atLoc.length > 0 ? 1 : 4), 20);
-  if (!hasColumns) {
-    return { rows: Math.max(rows, maxRow || 4), columns: null };
+  const configuredRows = location.grid_rows;
+  const configuredCols = location.grid_columns;
+
+  let rows: number;
+  if (configuredRows != null) {
+    rows = Math.min(Math.max(configuredRows, maxRow), GRID_SIZE_MAX);
+  } else if (atLoc.length > 0) {
+    rows = Math.min(Math.max(maxRow, 1), GRID_SIZE_MAX);
+  } else {
+    rows = Math.min(Math.max(4, maxRow), GRID_SIZE_MAX);
   }
-  const columns = Math.min(Math.max(location.grid_columns ?? (maxCol || 6), 1), 20);
-  return { rows: Math.max(rows, maxRow || 1), columns };
+
+  if (!hasColumns) {
+    return { rows, columns: null };
+  }
+
+  const columns =
+    configuredCols != null
+      ? Math.min(Math.max(configuredCols, maxCol), GRID_SIZE_MAX)
+      : Math.min(Math.max(maxCol || 6, 1), GRID_SIZE_MAX);
+  return { rows, columns };
 }
 
 export interface ShelfCell {

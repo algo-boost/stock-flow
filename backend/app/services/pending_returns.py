@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 
 from app.models import PendingReturn, Transaction, TransactionType
 from app.bitable.fields import extract_person_label_from_remark
+from app.utils.disposition_remark import is_disposition_remark, parse_disposition_remark
 from app.utils.request_remark import parse_request_remark
 
 
@@ -87,6 +88,22 @@ class _BorrowBucket:
     lines: deque[_BorrowLine] = field(default_factory=deque)
 
 
+def _apply_disposition_to_buckets(
+    buckets: dict[tuple[str, str], _BorrowBucket],
+    source_tx_id: str,
+    quantity: int,
+) -> None:
+    for bucket in buckets.values():
+        for index, line in enumerate(bucket.lines):
+            if line.tx.id != source_tx_id:
+                continue
+            if line.quantity <= quantity:
+                bucket.lines.remove(line)
+            else:
+                line.quantity -= quantity
+            return
+
+
 def compute_pending_returns(
     transactions: list[Transaction],
     *,
@@ -98,6 +115,13 @@ def compute_pending_returns(
     buckets: dict[tuple[str, str], _BorrowBucket] = defaultdict(_BorrowBucket)
 
     for tx in sorted(transactions, key=lambda item: item.created_at):
+        if tx.type == TransactionType.OUTBOUND and is_disposition_remark(tx.remark):
+            parsed = parse_disposition_remark(tx.remark)
+            if parsed:
+                _, source_tx_id, close_qty, _ = parsed
+                _apply_disposition_to_buckets(buckets, source_tx_id, close_qty)
+            continue
+
         if tx.type == TransactionType.INBOUND and _is_return_inbound(tx.remark):
             remaining = tx.quantity
             bucket = _find_return_bucket(buckets, tx)

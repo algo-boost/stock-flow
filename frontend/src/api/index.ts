@@ -1,4 +1,5 @@
 import { apiConfig } from "./config";
+import { invalidateDataCache } from "../utils/dataCache";
 import {
   consumePostLoginRedirect,
   feishuLoginWithRedirectFallback,
@@ -316,6 +317,9 @@ export function createLocation(payload: {
   return request<Location>("/locations", {
     method: "POST",
     body: JSON.stringify(payload),
+  }).then((location) => {
+    invalidateDataCache("meta:");
+    return location;
   });
 }
 
@@ -333,12 +337,18 @@ export function updateLocation(
   return request<Location>(`/locations/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  }).then((location) => {
+    invalidateDataCache("meta:");
+    return location;
   });
 }
 
 export function deleteLocation(id: string) {
   return request<{ deleted: boolean }>(`/locations/${id}`, {
     method: "DELETE",
+  }).then((result) => {
+    invalidateDataCache("meta:");
+    return result;
   });
 }
 
@@ -475,6 +485,8 @@ export function postPurchaseInbound(payload: {
   idempotency_key: string;
   supplier?: string;
   note?: string;
+  row?: number;
+  column?: number;
 }) {
   return request<{ transaction_id: string }>("/purchase-inbound", {
     method: "POST",

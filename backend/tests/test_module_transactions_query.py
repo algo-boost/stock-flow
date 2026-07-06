@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.conftest import HEADERS_ADMIN, HEADERS_KEEPER, HEADERS_USER
+from tests.conftest import CABINET_SLOT_ALT, HEADERS_ADMIN, HEADERS_KEEPER, HEADERS_USER
 
 
 def test_list_transactions_keyword_filter(client):
@@ -137,6 +137,7 @@ def test_delete_inbound_fails_when_stock_insufficient(client):
             "qty": 1,
             "idempotency_key": "test-delete-insufficient-in",
             "note": "待冲正",
+            **CABINET_SLOT_ALT,
         },
     )
     tx_id = inbound.json()["data"]["transaction_id"]
@@ -151,6 +152,7 @@ def test_delete_inbound_fails_when_stock_insufficient(client):
             "idempotency_key": "test-delete-insufficient-out",
             "note": "尽量出库",
             "return_required": False,
+            **CABINET_SLOT_ALT,
         },
     )
 

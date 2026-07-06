@@ -108,6 +108,28 @@ class BYTableClient:
         payload = self._parse_response(resp, f"写入表 {table_id} 失败")
         return payload.get("data", {}).get("record", {})
 
+    async def get_record(
+        self,
+        table_id: str,
+        record_id: str,
+        *,
+        user_id_type: str = "open_id",
+    ) -> dict[str, Any]:
+        if self.mode == "mock":
+            return {"record_id": record_id, "fields": {}}
+        if not table_id or not record_id:
+            return {}
+        token = await self._tenant_token()
+        resp = await self._request(
+            "GET",
+            f"{self._base}/apps/{self.settings.bitable_app_token}/tables/{table_id}/records/{record_id}",
+            token=token,
+            params={"user_id_type": user_id_type},
+            action=f"读取表 {table_id} 记录失败",
+        )
+        payload = self._parse_response(resp, f"读取表 {table_id} 记录失败")
+        return payload.get("data", {}).get("record", {})
+
     async def update_record(
         self,
         table_id: str,

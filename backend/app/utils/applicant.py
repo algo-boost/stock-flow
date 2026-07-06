@@ -27,13 +27,9 @@ def build_proxy_remark(
     remark: str | None,
     actor: User,
     subject_open_id: str,
-    *,
-    subject_name: str | None = None,
 ) -> str | None:
-    """库管代操作时，在备注中记录借用人（申请人）与实际操作人。"""
+    """库管代操作时，在备注中记录实际操作人。"""
     effective = remark or ""
     if subject_open_id != actor.open_id:
-        if subject_name:
-            effective = append_operator_label(effective, subject_name, prefix="申请人")
         effective = append_operator_label(effective, actor.name, prefix="操作人")
     return effective or None

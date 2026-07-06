@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -20,8 +21,14 @@ logger = logging.getLogger("stock-flow")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings = get_settings()
-    logger.info("启动 stock-flow API env=%s bitable=%s", settings.app_env, settings.bitable_mode)
+    logger.info(
+        "启动 stock-flow API env=%s bitable=%s sqlite_first=%s",
+        settings.app_env,
+        settings.bitable_mode,
+        settings.sqlite_first_enabled,
+    )
     _repo: BitableRepository | None = None
+    _sync_task: asyncio.Task | None = None
     if (
         settings.bitable_mode == "real"
         and settings.bitable_configured
@@ -30,14 +37,12 @@ async def lifespan(_app: FastAPI):
         try:
             repo = BitableRepository(settings)
             _repo = repo
-            # 优先从 SQLite 本地缓存预热（毫秒级）
             if settings.sqlite_cache_enabled:
                 from app.bitable.sqlite_cache import get_sqlite_cache
                 sqlite = get_sqlite_cache()
                 snap = sqlite.snapshot()
                 if snap:
-                    logger.info("SQLite 缓存命中 %d 表 (%d 条记录)，启动即用", len(snap), sum(snap.values()))
-                    # 从 SQLite 回填内存缓存，避免首次请求回源飞书 API（省 1.5-2.5s）
+                    logger.info("SQLite 主库命中 %d 表 (%d 条记录)，启动即用", len(snap), sum(snap.values()))
                     from app.bitable.repository import _TABLE_CACHE
                     now = time.monotonic()
                     for table_id, count in snap.items():
@@ -46,9 +51,8 @@ async def lifespan(_app: FastAPI):
                             if records:
                                 _TABLE_CACHE[(settings.bitable_app_token, table_id)] = (now, records)
                     logger.info("内存缓存已从 SQLite 预热完成")
-                else:
-                    # SQLite 为空 → 自动从 Bitable 全量恢复
-                    logger.info("SQLite 缓存为空，正在从 Bitable 自动恢复…")
+                elif not settings.sqlite_first_enabled:
+                    logger.info("SQLite 为空，正在从 Bitable 自动恢复…")
                     core_ids = [
                         settings.bitable_table_categories,
                         settings.bitable_table_locations,
@@ -69,6 +73,8 @@ async def lifespan(_app: FastAPI):
                         except Exception as exc:
                             logger.warning("恢复 %s 失败: %s", table_id, exc)
                     logger.info("Bitable 自动恢复完成: %d 条记录写入 SQLite", recovered)
+                else:
+                    logger.info("SQLite 为空；sqlite_first 模式下将在首次读表时只读导入 Bitable")
             else:
                 results = await repo.warmup_core_tables()
                 failures = {tid: msg for tid, msg in results.items() if msg}
@@ -76,10 +82,21 @@ async def lifespan(_app: FastAPI):
                     logger.warning("Bitable 缓存部分预热失败: %s", failures)
                 else:
                     logger.info("Bitable 五表缓存预热完成")
+            if settings.sqlite_first_enabled and settings.bitable_mode == "real":
+                from app.bitable.bitable_sync import get_sync_service
+                sync = get_sync_service(settings, repo.client)
+                interval = max(settings.bitable_sync_interval_seconds, 1)
+                _sync_task = asyncio.create_task(sync.run_loop(interval))
+                logger.info("Bitable 异步出站同步已启动 interval=%ss", interval)
         except Exception as exc:
             logger.warning("缓存预热失败，将在首次请求时按需拉取: %s", exc)
     yield
-    # 优雅关闭：释放 Bitable 连接池
+    if _sync_task is not None:
+        _sync_task.cancel()
+        try:
+            await _sync_task
+        except asyncio.CancelledError:
+            pass
     if _repo is not None:
         try:
             await _repo.close()

@@ -71,7 +71,11 @@ async def refresh_cache(
     service: InventoryService = Depends(get_service),
     settings: Settings = Depends(get_settings),
 ):
-    use_background = settings.sqlite_cache_enabled and settings.bitable_mode == "real"
+    use_background = (
+        settings.sqlite_cache_enabled
+        and settings.bitable_mode == "real"
+        and not settings.sqlite_first_enabled
+    )
     data = await service.refresh_cache(background=use_background)
     if data.get("async"):
         background_tasks.add_task(service.refresh_cache_remote)
@@ -122,6 +126,8 @@ async def admin_system(
             "mock_auth_enabled": settings.mock_auth_enabled,
             "bitable_cache_ttl_seconds": settings.bitable_cache_ttl_seconds,
             "bitable_warmup_on_startup": settings.bitable_warmup_on_startup,
+            "sqlite_first_enabled": settings.sqlite_first_enabled,
+            "bitable_sync_interval_seconds": settings.bitable_sync_interval_seconds,
             "session_ttl_seconds": settings.session_ttl_seconds,
             "role_cache_ttl_seconds": settings.feishu_role_cache_ttl_seconds,
             "role_check": get_role_check_status(),
@@ -324,10 +330,26 @@ async def sqlite_cache_status(
     snapshot = sqlite.snapshot()
     return success({
         "enabled": True,
+        "sqlite_first": settings.sqlite_first_enabled,
         "snapshot": snapshot,
         "labeled_tables": _labeled_table_rows(settings, snapshot),
-        "sync_interval": settings.sqlite_cache_sync_interval,
+        "sync_interval": settings.bitable_sync_interval_seconds,
+        "outbox_pending": sqlite.outbox_pending_count(),
+        "outbox_failed": sqlite.outbox_failed_count(),
+        "records_pending": sqlite.count_by_sync_status("pending"),
     })
+
+
+@router.post("/bitable-sync/push")
+async def push_bitable_sync(
+    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    """立即将 SQLite outbox 推送到飞书 Bitable。"""
+    if not service.repo:
+        return success({"message": "mock 模式无需同步"})
+    data = await service.repo.push_outbox_to_bitable(limit=200)
+    return success({"message": "出站同步完成", **data})
 
 
 @router.post("/sqlite-backup")

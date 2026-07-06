@@ -134,7 +134,16 @@ async def health(settings: Settings = Depends(get_settings)):
         "bitable_configured": settings.bitable_configured,
         "inventory_slots_enabled": settings.inventory_slots_enabled,
         "mock_auth_enabled": settings.mock_auth_enabled,
+        "sqlite_first_enabled": settings.sqlite_first_enabled,
     }
+    if settings.sqlite_first_enabled and settings.sqlite_cache_enabled:
+        try:
+            from app.bitable.sqlite_cache import get_sqlite_cache
+            sqlite = get_sqlite_cache()
+            result["sync_outbox_pending"] = sqlite.outbox_pending_count()
+            result["sync_outbox_failed"] = sqlite.outbox_failed_count()
+        except Exception:
+            pass
     if settings.bitable_mode == "real" and settings.bitable_configured:
         try:
             from app.bitable.client import BYTableClient
