@@ -133,6 +133,10 @@ def resolve_person_name(
     name = field_user_name(user_field_value)
     if name:
         return name
+    if remark_prefix == "操作人":
+        applicant = extract_person_label_from_remark(remark, "申请人")
+        if applicant and applicant != default:
+            return applicant
     fallback = extract_person_label_from_remark(remark, remark_prefix)
     if fallback and fallback != default:
         return fallback

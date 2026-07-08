@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.utils.applicant import resolve_subject_user
+from app.utils.applicant import build_proxy_remark, resolve_subject_user
 from app.models import Role, User
 
 
@@ -25,3 +25,11 @@ def test_resolve_subject_proxy_forbidden_for_user():
         assert False, "expected ValueError"
     except ValueError as exc:
         assert str(exc) == "applicant_proxy_forbidden"
+
+
+def test_build_proxy_remark_includes_applicant_and_operator():
+    actor = User(open_id="keeper", name="库管员", role=Role.KEEPER)
+    remark = build_proxy_remark("测试", actor, "user_zhang", subject_name="张工")
+    assert remark is not None
+    assert "申请人: 张工" in remark
+    assert "操作人: 库管员" in remark

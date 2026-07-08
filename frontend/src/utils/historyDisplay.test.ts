@@ -18,6 +18,13 @@ describe("historyDisplay", () => {
     expect(parsed.approver).toBe("管理员");
   });
 
+  it("parsePipeRemark 操作人在中间时不丢失归还计划", () => {
+    const parsed = parsePipeRemark("测试；操作人: 管理员 | 格位:2:4 | 需归还：2026-07-08");
+    expect(parsed.note).toBe("测试");
+    expect(parsed.slot).toBe("2 行 4 列");
+    expect(parsed.returnPlan).toContain("2026-07-08");
+  });
+
   it("cleanSystemRemarkLabels 去掉系统标签", () => {
     expect(cleanSystemRemarkLabels("备注；申请人: 张三；操作人: 李四")).toBe("备注");
   });

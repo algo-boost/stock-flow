@@ -251,11 +251,23 @@ export function ApprovalRecords({ active = true }: { active?: boolean }) {
         <div className="tx-list">
           {items.map((item) => (
             <div className="request-item" key={item.id}>
-              <div className="request-item-header">
-                <TxBadge type={item.type} />
-                <span className={`request-status request-status-${item.status}`}>
-                  {item.status}
-                </span>
+              <div className="request-item-top">
+                <div className="request-item-header">
+                  <TxBadge type={item.type} />
+                  <span className={`request-status request-status-${item.status}`}>
+                    {item.status}
+                  </span>
+                </div>
+                {isAdmin && item.status !== "待审批" && (
+                  <button
+                    type="button"
+                    className="request-menu-btn"
+                    aria-label="更多操作"
+                    onClick={() => openMenu(item)}
+                  >
+                    <FeishuIcon name="more-horizontal" size={18} />
+                  </button>
+                )}
               </div>
               <div className="request-title">
                 {item.material_name ?? item.material_id} ×{item.quantity}
@@ -293,13 +305,6 @@ export function ApprovalRecords({ active = true }: { active?: boolean }) {
                     }}
                   >
                     拒绝
-                  </Button>
-                </div>
-              )}
-              {isAdmin && item.status !== "待审批" && (
-                <div style={{ marginTop: 6 }}>
-                  <Button size="mini" fill="none" onClick={() => openMenu(item)}>
-                    <FeishuIcon name="more-vertical" size={18} />
                   </Button>
                 </div>
               )}

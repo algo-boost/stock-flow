@@ -9,7 +9,8 @@ _SLOT_SUFFIX = re.compile(r"\s*\|\s*格位:(\d+):(\d+)\s*$")
 _RETURN_REQUIRED = re.compile(r"\s*\|\s*需归还：(\d{4}-\d{2}-\d{2})\s*$")
 _RETURN_REQUIRED_NO_DATE = re.compile(r"\s*\|\s*需归还\s*$")
 _RETURN_NOT_REQUIRED = re.compile(r"\s*\|\s*无须归还\s*$")
-_SYSTEM_LABEL_TAIL = re.compile(r"(?:；|^)\s*(?:审批人|操作人|申请人)\s*[:：]\s*[^；]+$")
+_SYSTEM_LABEL_TAIL = re.compile(r"(?:；|^)\s*(?:审批人|操作人|申请人)\s*[:：]\s*[^；|]+$")
+_INLINE_SYSTEM_LABEL = re.compile(r"(?:；|^)\s*(?:审批人|操作人|申请人)\s*[:：]\s*[^；|]+")
 
 
 def _strip_system_labels(text: str) -> str:
@@ -20,6 +21,9 @@ def _strip_system_labels(text: str) -> str:
         text = next_text
 
 
+def _clean_user_note(text: str) -> str:
+    cleaned = _INLINE_SYSTEM_LABEL.sub("", text).strip("； ").strip()
+    return cleaned
 
 def format_outbound_remark(
     note: str | None,
@@ -41,6 +45,33 @@ def format_outbound_remark(
     else:
         parts.append("无须归还")
     return " | ".join(parts)
+
+
+def format_approved_outbound_remark(
+    note: str | None,
+    *,
+    return_required: bool | None,
+    return_due_at: date | None = None,
+    row: int | None = None,
+    column: int | None = None,
+    approver_name: str,
+) -> str:
+    """审批通过出库时写入流水的备注，含归还计划供待归还推导。"""
+    parts: list[str] = []
+    text = (note or "").strip()
+    if text:
+        parts.append(text)
+    if row is not None and column is not None:
+        parts.append(f"格位:{row}:{column}")
+    if return_required is True:
+        due = return_due_at.isoformat() if return_due_at else ""
+        parts.append(f"需归还：{due}".rstrip("："))
+    elif return_required is False:
+        parts.append("无须归还")
+    body = " | ".join(parts)
+    if body:
+        return f"{body}；审批人：{approver_name}"
+    return f"审批人：{approver_name}"
 
 
 def format_request_remark(payload: StockRequestCreate) -> str:
@@ -99,4 +130,4 @@ def parse_request_remark(remark: str | None) -> tuple[str | None, int | None, in
         if not changed:
             break
 
-    return text or None, row, column, return_required, return_due_at
+    return _clean_user_note(text) or None, row, column, return_required, return_due_at

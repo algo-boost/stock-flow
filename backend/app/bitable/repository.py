@@ -56,7 +56,7 @@ from app.utils.inventory_keys import (
     key_row,
     resolve_outbound_slot,
 )
-from app.utils.request_remark import format_request_remark, parse_request_remark
+from app.utils.request_remark import format_approved_outbound_remark, format_request_remark, parse_request_remark
 from app.utils.applicant import build_proxy_remark
 from app.utils.slot_rules import validate_and_normalize_slot, validate_transfer_slots
 
@@ -1284,7 +1284,8 @@ class BitableRepository:
             s.bitable_f_tx_quantity: qty,
         }
         if not self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id):
-            effective_remark = append_operator_label(effective_remark, operator_name)
+            label_prefix = "申请人" if "操作人:" in effective_remark or "操作人：" in effective_remark else "操作人"
+            effective_remark = append_operator_label(effective_remark, operator_name, prefix=label_prefix)
         fields[s.bitable_f_tx_remark] = effective_remark
         # 写入创建时间（毫秒时间戳），避免读回时因缺少该列而落入 epoch 0 兜底
         if s.bitable_f_tx_created:
@@ -1596,7 +1597,7 @@ class BitableRepository:
         start = max(page - 1, 0) * effective_size
         return txs[start : start + effective_size], total
 
-    async def list_all_transactions_parsed(self, *, limit: int = 2000) -> list[Transaction]:
+    async def list_all_transactions_parsed(self, *, limit: int | None = None) -> list[Transaction]:
         """从本地缓存加载流水（待归还等需全量扫描的场景）。"""
         s = self.settings
         materials = await self._load_materials()
@@ -1610,7 +1611,46 @@ class BitableRepository:
             self._build_transaction_from_record(rec, materials, locations) for rec in records
         ]
         txs.sort(key=lambda t: t.created_at, reverse=True)
-        return txs[:limit]
+        if limit is not None:
+            return txs[:limit]
+        return txs
+
+    async def get_transaction_by_id(self, transaction_id: str) -> Transaction | None:
+        s = self.settings
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        records = await self._list_all(s.bitable_table_transactions)
+        rec = next((item for item in records if item.get("record_id") == transaction_id), None)
+        if not rec:
+            return None
+        return self._build_transaction_from_record(rec, materials, locations)
+
+    async def get_transaction_operator_open_id(self, transaction_id: str) -> str | None:
+        s = self.settings
+        records = await self._list_all(s.bitable_table_transactions)
+        rec = next((item for item in records if item.get("record_id") == transaction_id), None)
+        if not rec:
+            return None
+        fields = rec.get("fields", {})
+        open_id = field_user_id(fields.get(s.bitable_f_tx_operator))
+        return open_id or None
+
+    async def find_request_by_transaction_id(self, transaction_id: str) -> StockRequest | None:
+        materials = await self._load_materials()
+        locations = await self._load_locations()
+        records = await self._list_all(self.settings.bitable_table_requests)
+        rec = next(
+            (
+                item
+                for item in records
+                if field_text(item.get("fields", {}).get(self.settings.bitable_f_request_transaction))
+                == transaction_id
+            ),
+            None,
+        )
+        if not rec:
+            return None
+        return self._parse_request(rec, materials, locations)
 
     def _require_requests_table(self) -> None:
         if not self.settings.bitable_table_requests:
@@ -1842,9 +1882,9 @@ class BitableRepository:
         if req.status != StockRequestStatus.PENDING:
             raise ValueError("request_already_reviewed")
 
-        approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
         requester_open_id = req.requester_open_id or ""
         if req.type == StockRequestType.INBOUND:
+            approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
             target_location_id = location_id or req.location_id
             if not target_location_id or target_location_id not in locations:
                 raise ValueError("location_required_for_inbound_approval")
@@ -1874,6 +1914,14 @@ class BitableRepository:
                 out_row,
                 out_column,
                 slots_enabled=self._slots_enabled(),
+            )
+            approval_note = format_approved_outbound_remark(
+                req.remark,
+                return_required=req.return_required,
+                return_due_at=req.return_due_at,
+                row=out_row,
+                column=out_column,
+                approver_name=approver_name,
             )
             tx = await self.apply_outbound(
                 req.material_id,
@@ -2110,52 +2158,6 @@ class BitableRepository:
             location_id=location_id,
             location_name=locations.get(location_id, Location(id=location_id, code="", name=location_id)).name,
             quantity=-qty,
-            operator=operator_name,
-            remark=remark,
-            created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),
-        )
-
-    async def apply_disposition_audit(
-        self,
-        material_id: str,
-        location_id: str,
-        operator_open_id: str,
-        operator_name: str,
-        remark: str,
-    ) -> Transaction:
-        """写入结案审计流水，不修改库存。"""
-        if not await self.get_material(material_id):
-            raise ValueError("material_not_found")
-        locations = await self._load_locations()
-        if location_id not in locations:
-            raise ValueError("location_not_found")
-
-        s = self.settings
-        tx_fields = self._build_tx_fields(
-            s.bitable_v_tx_outbound,
-            material_id,
-            location_id,
-            0,
-            operator_open_id,
-            operator_name,
-            remark,
-        )
-        tx_rec = await self.client.create_record(s.bitable_table_transactions, tx_fields)
-        self._upsert_cached_record(
-            s.bitable_table_transactions,
-            tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields),
-        )
-        material = (await self._load_materials())[material_id]
-        loc = locations[location_id]
-        tx_record = tx_rec if tx_rec.get("fields") else self._cached_record(tx_rec.get("record_id", ""), tx_fields)
-        return Transaction(
-            id=tx_rec.get("record_id", "tx_disposition"),
-            type=TransactionType.OUTBOUND,
-            material_id=material_id,
-            material_name=material.name,
-            location_id=location_id,
-            location_name=loc.name,
-            quantity=0,
             operator=operator_name,
             remark=remark,
             created_at=self._parse_transaction_created_at(tx_record, tx_record.get("fields", {})),

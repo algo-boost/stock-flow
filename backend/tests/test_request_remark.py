@@ -1,7 +1,12 @@
 from datetime import date
 
 from app.models import StockRequestCreate, StockRequestType
-from app.utils.request_remark import format_outbound_remark, format_request_remark, parse_request_remark
+from app.utils.request_remark import (
+    format_approved_outbound_remark,
+    format_outbound_remark,
+    format_request_remark,
+    parse_request_remark,
+)
 
 
 def test_format_outbound_remark_not_required():
@@ -57,3 +62,42 @@ def test_format_outbound_remark_empty_note():
     assert remark == "测试"
     assert return_required is True
     assert return_due_at == date(2026, 6, 30)
+
+
+def test_format_approved_outbound_remark_includes_return_plan():
+    encoded = format_approved_outbound_remark(
+        "需要2个大喵电机做关节测试",
+        return_required=True,
+        return_due_at=date(2026, 7, 15),
+        row=1,
+        column=2,
+        approver_name="管理员",
+    )
+    remark, row, column, return_required, return_due_at = parse_request_remark(encoded)
+    assert remark == "需要2个大喵电机做关节测试"
+    assert row == 1
+    assert column == 2
+    assert return_required is True
+    assert return_due_at == date(2026, 7, 15)
+
+
+def test_format_approved_outbound_remark_without_due_date():
+    encoded = format_approved_outbound_remark(
+        "临时借用",
+        return_required=True,
+        approver_name="管理员",
+    )
+    remark, _, _, return_required, return_due_at = parse_request_remark(encoded)
+    assert remark == "临时借用"
+    assert return_required is True
+    assert return_due_at is None
+
+
+def test_parse_request_remark_with_inline_operator_before_pipe_metadata():
+    remark = "测试；操作人: 管理员 | 格位:2:4 | 需归还：2026-07-08"
+    note, row, column, return_required, return_due_at = parse_request_remark(remark)
+    assert note == "测试"
+    assert row == 2
+    assert column == 4
+    assert return_required is True
+    assert return_due_at == date(2026, 7, 8)

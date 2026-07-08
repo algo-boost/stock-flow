@@ -1,17 +1,18 @@
-$envFile = "C:\stock-flow\stock-flow\backend\.env"
-$tunnelLog = "$env:USERPROFILE\tunnel-err.txt"
+$root = $PSScriptRoot
+$envFile = Join-Path $root "backend\.env"
+$tunnelLog = Join-Path $env:USERPROFILE "tunnel-err.txt"
 
-# 1. Backend (conda python)
+# 1. Backend
 Write-Host "[1/3] Backend :8000" -ForegroundColor Cyan
 $b = Start-Process -FilePath "python" `
   -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000" `
-  -WorkingDirectory "C:\stock-flow\stock-flow\backend" -PassThru
+  -WorkingDirectory (Join-Path $root "backend") -PassThru
 
 # 2. Frontend
 Write-Host "[2/3] Frontend :5173" -ForegroundColor Cyan
 $f = Start-Process -FilePath "npx.cmd" `
   -ArgumentList "vite","--host","127.0.0.1" `
-  -WorkingDirectory "C:\stock-flow\stock-flow\frontend" -PassThru
+  -WorkingDirectory (Join-Path $root "frontend") -PassThru
 
 # 3. Tunnel - capture URL from stderr
 Write-Host "[3/3] Tunnel" -ForegroundColor Cyan
@@ -33,11 +34,14 @@ for ($i=0; $i -lt 15; $i++) {
     if ($url) { break }
 }
 
-if ($url) {
+if ($url -and (Test-Path $envFile)) {
     Write-Host "URL: $url" -ForegroundColor Green
-    ($envFile | ForEach-Object { (Get-Content $_ -Raw) -replace 'FEISHU_REDIRECT_URI=.*', "FEISHU_REDIRECT_URI=$url" -replace 'CORS_ORIGINS=.*', "CORS_ORIGINS=$url" }) | Set-Content $envFile -NoNewline
+    (Get-Content $envFile -Raw) `
+      -replace 'FEISHU_REDIRECT_URI=.*', "FEISHU_REDIRECT_URI=$url" `
+      -replace 'CORS_ORIGINS=.*', "CORS_ORIGINS=$url" |
+      Set-Content $envFile -NoNewline
     Write-Host ".env updated" -ForegroundColor Green
-} else {
+} elseif (-not $url) {
     Write-Host "URL not found!" -ForegroundColor Red
 }
 

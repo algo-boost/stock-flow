@@ -138,6 +138,25 @@ def test_borrow_detected_when_remark_has_approval_suffix():
     assert pending[0].material_name == "测试物料"
 
 
+def test_borrow_detected_when_operator_label_before_pipe_metadata():
+    txs = [
+        _tx(
+            tx_id="tx_out",
+            tx_type=TransactionType.OUTBOUND,
+            material_id="mat_01",
+            qty=-3,
+            operator="张工",
+            remark="测试；操作人: 管理员 | 格位:2:4 | 需归还：2026-07-08",
+            created_at=datetime(2026, 7, 7, 11, 18, tzinfo=timezone.utc),
+        )
+    ]
+    pending = compute_pending_returns(txs, today=date(2026, 7, 7))
+    assert len(pending) == 1
+    assert pending[0].quantity == 3
+    assert pending[0].borrower == "张工"
+    assert pending[0].return_due_at == date(2026, 7, 8)
+
+
 def test_return_inbound_with_approval_suffix_only_in_raw_remark():
     t0 = datetime(2026, 6, 20, 9, 0, tzinfo=timezone.utc)
     t1 = datetime(2026, 6, 20, 10, 0, tzinfo=timezone.utc)

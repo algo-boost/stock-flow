@@ -573,6 +573,35 @@ def test_user_request_approved_by_admin_creates_history():
     assert any(tx["id"] == approved["transaction_id"] and tx["operator"] == "研发用户" for tx in txs)
 
 
+def test_approved_outbound_with_return_required_lists_pending_return():
+    create_resp = client.post(
+        "/api/requests",
+        headers=HEADERS_USER,
+        json={
+            "type": "出库",
+            "material_id": "mat_realsense",
+            "location_id": "loc_01",
+            "qty": 1,
+            "idempotency_key": "test-request-pending-return-001",
+            "note": "项目申请领用",
+            "return_required": True,
+            "return_due_at": "2026-07-15",
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["data"]["request_id"]
+
+    approve_resp = client.post(f"/api/requests/{request_id}/approve", headers=HEADERS_ADMIN)
+    assert approve_resp.status_code == 200
+
+    pending_resp = client.get("/api/returns/pending?borrower=研发用户", headers=HEADERS_ADMIN)
+    assert pending_resp.status_code == 200
+    items = pending_resp.json()["data"]
+    assert len(items) == 1
+    assert items[0]["quantity"] == 1
+    assert items[0]["return_due_at"] == "2026-07-15"
+
+
 def test_user_inbound_request_without_location_approved_by_admin():
     create_resp = client.post(
         "/api/requests",
@@ -1049,7 +1078,7 @@ def test_admin_overview_contains_statistics():
     assert "pending_requests_list" in data
 
 
-def test_direct_close_clears_pending_return():
+def test_staging_inventory_lists_staging_location_only():
     client.post(
         "/api/outbound",
         headers=HEADERS_KEEPER,
@@ -1057,30 +1086,19 @@ def test_direct_close_clears_pending_return():
             "material_id": "mat_realsense",
             "location_id": "loc_01",
             "qty": 1,
-            "idempotency_key": "closure-out-001",
-            "note": "借用测试",
+            "idempotency_key": "proxy-return-out-001",
+            "note": "代张工借用",
             "return_required": True,
-            "return_due_at": "2026-07-01",
+            "return_due_at": "2026-07-15",
+            "applicant_open_id": "user_zhang",
+            "applicant_name": "张工",
         },
     )
-    pending = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN).json()["data"]
-    assert len(pending) == 1
-    source_tx_id = pending[0]["source_tx_id"]
-
-    close_resp = client.post(
-        "/api/returns/close",
-        headers=HEADERS_ADMIN,
-        json={
-            "source_tx_id": source_tx_id,
-            "quantity": 1,
-            "disposition_type": "已消耗",
-            "note": "装机交付",
-        },
-    )
-    assert close_resp.status_code == 200
-
-    cleared = client.get("/api/returns/pending?borrower=库管员", headers=HEADERS_ADMIN).json()["data"]
-    assert cleared == []
+    pending = client.get("/api/returns/pending?borrower=张工", headers=HEADERS_ADMIN)
+    assert pending.status_code == 200
+    items = pending.json()["data"]
+    assert len(items) == 1
+    assert items[0]["borrower"] == "张工"
 
 
 def test_staging_inventory_lists_staging_location_only():

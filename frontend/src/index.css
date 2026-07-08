@@ -1500,6 +1500,38 @@ button.staging-item:active {
   margin-bottom: 8px;
 }
 
+.request-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.request-item-top .request-item-header {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.request-menu-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  margin: -2px -4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--sf-radius-xs);
+  background: #f2f3f5;
+  color: var(--sf-text-secondary);
+  cursor: pointer;
+}
+
+.request-menu-btn:active {
+  background: #e5e6eb;
+}
+
 .request-title {
   font-size: 15px;
   font-weight: 600;

@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.utils.request_remark import format_approved_outbound_remark
 from app.models import (
     Category,
     CategoryCreate,
@@ -706,6 +707,18 @@ class MockStore:
         start = max(page - 1, 0) * effective_size
         return txs[start : start + effective_size], total
 
+    def list_all_transactions(self) -> list[Transaction]:
+        return list(self.transactions.values())
+
+    def get_transaction(self, transaction_id: str) -> Transaction | None:
+        return self.transactions.get(transaction_id)
+
+    def find_request_by_transaction_id(self, transaction_id: str) -> StockRequest | None:
+        for req in self.requests.values():
+            if req.transaction_id == transaction_id:
+                return req
+        return None
+
     def create_request(
         self,
         payload: StockRequestCreate,
@@ -788,8 +801,8 @@ class MockStore:
         if req.status != StockRequestStatus.PENDING:
             raise ValueError("request_already_reviewed")
 
-        approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
         if req.type == StockRequestType.INBOUND:
+            approval_note = f"{req.remark or ''}；审批人：{approver_name}".strip("；")
             target_location_id = location_id or req.location_id
             if not target_location_id or target_location_id not in self.locations:
                 raise ValueError("location_required_for_inbound_approval")
@@ -815,6 +828,14 @@ class MockStore:
                 req.quantity,
                 out_row,
                 out_column,
+            )
+            approval_note = format_approved_outbound_remark(
+                req.remark,
+                return_required=req.return_required,
+                return_due_at=req.return_due_at,
+                row=out_row,
+                column=out_column,
+                approver_name=approver_name,
             )
             tx = self.apply_outbound(
                 req.material_id,
@@ -994,36 +1015,6 @@ class MockStore:
                 update={"row": row, "column": column, "last_updated": now}
             )
         return self.inventory[new_key]
-
-    def apply_disposition_audit(
-        self,
-        material_id: str,
-        location_id: str,
-        operator: str,
-        remark: str,
-    ) -> Transaction:
-        if material_id not in self.materials:
-            raise ValueError("material_not_found")
-        if location_id not in self.locations:
-            raise ValueError("location_not_found")
-        material = self.materials[material_id]
-        loc = self.locations[location_id]
-        now = _utcnow()
-        tx_id = f"tx_disp_{len(self.transactions) + 1:03d}"
-        tx = Transaction(
-            id=tx_id,
-            type=TransactionType.OUTBOUND,
-            material_id=material_id,
-            material_name=material.name,
-            location_id=location_id,
-            location_name=loc.name,
-            quantity=0,
-            operator=operator,
-            remark=remark,
-            created_at=now,
-        )
-        self.transactions[tx_id] = tx
-        return tx
 
     def apply_transfer(
         self,

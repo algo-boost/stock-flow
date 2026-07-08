@@ -186,62 +186,11 @@ class PendingReturn(BaseModel):
     overdue: bool = False
 
 
-class DispositionType(str, Enum):
-    CONSUMED = "已消耗"
-    LOST = "已丢失"
-    SCRAPPED = "已报废"
-
-
-class DispositionStatus(str, Enum):
-    PENDING = "待确认"
-    APPROVED = "已确认"
-    REJECTED = "已拒绝"
-
-
-class LoanClosureRequest(BaseModel):
-    id: str
-    source_tx_id: str
-    material_id: str
-    material_name: str | None = None
-    location_id: str
-    location_name: str | None = None
-    quantity: int
-    disposition_type: DispositionType
-    status: DispositionStatus
-    requester_open_id: str
-    requester_name: str
-    approver_open_id: str | None = None
-    approver_name: str | None = None
-    note: str | None = None
-    reject_reason: str | None = None
-    disposition_tx_id: str | None = None
-    created_at: datetime
-    reviewed_at: datetime | None = None
-
-
 class StagingInventoryItem(InventoryItem):
     material_name: str | None = None
     material_code: str | None = None
     unit: str | None = None
     location_type: str | None = None
-
-
-class LoanClosureCreate(BaseModel):
-    source_tx_id: str = Field(min_length=1, max_length=128)
-    quantity: int = Field(gt=0, le=10000)
-    disposition_type: DispositionType
-    note: str | None = Field(default=None, max_length=500)
-
-
-class LoanClosureReject(BaseModel):
-    reason: str = Field(min_length=1, max_length=500)
-
-
-class LoanClosureDirect(BaseModel):
-    source_tx_id: str = Field(min_length=1, max_length=128)
-    quantity: int = Field(gt=0, le=10000)
-    disposition_type: DispositionType
-    note: str | None = Field(default=None, max_length=500)
 
 
 class StockRequest(BaseModel):

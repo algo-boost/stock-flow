@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:user": "vite --mode user --host 127.0.0.1 --port 5174",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",

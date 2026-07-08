@@ -13,10 +13,7 @@ import type {
   AdminOverview,
   AdminSystem,
   Category,
-  DispositionStatus,
-  DispositionType,
   InventoryItem,
-  LoanClosureRequest,
   MaterialDetail,
   Location,
   Material,
@@ -598,51 +595,6 @@ export function listPendingReturns(borrower?: string) {
 
 export function listStagingInventory() {
   return request<StagingInventoryItem[]>("/inventory/staging");
-}
-
-export function listClosureRequests(opts?: { status?: DispositionStatus }) {
-  const params = new URLSearchParams();
-  if (opts?.status) params.set("status", opts.status);
-  const qs = params.toString();
-  return request<LoanClosureRequest[]>(`/returns/closure-requests${qs ? `?${qs}` : ""}`);
-}
-
-export function createClosureRequest(payload: {
-  source_tx_id: string;
-  quantity: number;
-  disposition_type: DispositionType;
-  note?: string;
-}) {
-  return request<LoanClosureRequest>("/returns/closure-requests", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function approveClosureRequest(id: string) {
-  return request<LoanClosureRequest>(`/returns/closure-requests/${id}/approve`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  });
-}
-
-export function rejectClosureRequest(id: string, reason: string) {
-  return request<LoanClosureRequest>(`/returns/closure-requests/${id}/reject`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export function directCloseBorrow(payload: {
-  source_tx_id: string;
-  quantity: number;
-  disposition_type: DispositionType;
-  note?: string;
-}) {
-  return request<{ transaction_id: string }>("/returns/close", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
 }
 
 export function postInbound(payload: {

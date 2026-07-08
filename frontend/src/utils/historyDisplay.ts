@@ -1,5 +1,7 @@
-const SYSTEM_REMARK_LABEL = /(?:^|；)\s*(?:申请人|审批人|操作人):\s*[^；]+/g;
-const SYSTEM_LABEL_TAIL = /(?:；|^)\s*(?:审批人|操作人|申请人)\s*[:：]\s*[^；]+$/;
+const SYSTEM_LABEL_VALUE = "[^；|]+";
+const SYSTEM_REMARK_LABEL = new RegExp(`(?:^|；)\\s*(?:申请人|审批人|操作人)\\s*[:：]\\s*${SYSTEM_LABEL_VALUE}`, "g");
+const SYSTEM_LABEL_TAIL = new RegExp(`(?:；|^)\\s*(?:审批人|操作人|申请人)\\s*[:：]\\s*${SYSTEM_LABEL_VALUE}$`);
+const INLINE_SYSTEM_LABEL = new RegExp(`(?:；|^)\\s*(?:审批人|操作人|申请人)\\s*[:：]\\s*${SYSTEM_LABEL_VALUE}`);
 
 function stripSystemLabelsForParse(remark: string): string {
   let text = remark.trim();
@@ -82,7 +84,7 @@ export function parsePipeRemark(remark: string | null | undefined): ParsedPipeRe
     if (!changed) break;
   }
 
-  const note = cleanSystemRemarkLabels(text);
+  const note = cleanSystemRemarkLabels(text.replace(INLINE_SYSTEM_LABEL, "").replace(/^；+|；+$/g, "").trim());
   const slot = row != null && column != null ? `${row} 行 ${column} 列` : null;
   return { note, slot, returnPlan, approver };
 }
