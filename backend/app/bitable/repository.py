@@ -1490,8 +1490,9 @@ class BitableRepository:
         }
         if s.bitable_f_tx_created:
             fields[s.bitable_f_tx_created] = now_ms
-        if not self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id):
-            effective_remark = append_operator_label(effective_remark, operator_name)
+        self._maybe_set_user_field(fields, s.bitable_f_tx_operator, operator_open_id)
+        # 始终在备注中记录操作人姓名，确保 SQLite 本地缓存也能解析出操作人
+        effective_remark = append_operator_label(effective_remark, operator_name)
         fields[s.bitable_f_tx_remark] = effective_remark
         return fields
 

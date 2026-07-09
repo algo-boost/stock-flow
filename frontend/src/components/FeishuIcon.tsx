@@ -30,7 +30,9 @@ export type FeishuIconName =
   | "refresh"
   | "plus"
   | "chevron-right"
-  | "trash";
+  | "trash"
+  | "upload"
+  | "download";
 
 type IconDef = (props: { className?: string }) => JSX.Element;
 
@@ -222,6 +224,18 @@ const ICONS: Record<FeishuIconName, IconDef> = {
   trash: (p) => (
     <Svg {...p}>
       <path {...stroke} d="M4 7h16M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M7 7l.7 11.5A1.5 1.5 0 0 0 9.2 20h5.6a1.5 1.5 0 0 0 1.5-1.5L17 7" />
+    </Svg>
+  ),
+  upload: (p) => (
+    <Svg {...p}>
+      <path {...stroke} d="M12 16V4M7 9l5-5 5 5" />
+      <path {...stroke} d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" />
+    </Svg>
+  ),
+  download: (p) => (
+    <Svg {...p}>
+      <path {...stroke} d="M12 4v12M7 11l5 5 5-5" />
+      <path {...stroke} d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" />
     </Svg>
   ),
 };

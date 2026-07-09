@@ -342,14 +342,26 @@ async def sqlite_cache_status(
 
 @router.post("/bitable-sync/push")
 async def push_bitable_sync(
-    _user: User = Depends(require_roles(Role.KEEPER, Role.ADMIN)),
+    _user: User = Depends(require_roles(Role.ADMIN)),
     service: InventoryService = Depends(get_service),
 ):
-    """立即将 SQLite outbox 推送到飞书 Bitable。"""
+    """立即将 SQLite outbox 推送到飞书 Bitable（本地 → 飞书）。"""
     if not service.repo:
         return success({"message": "mock 模式无需同步"})
-    data = await service.repo.push_outbox_to_bitable(limit=200)
-    return success({"message": "出站同步完成", **data})
+    data = await service.repo.push_outbox_to_bitable(limit=500)
+    return success({"message": "本地数据已推送到飞书", **data})
+
+
+@router.post("/bitable-sync/pull")
+async def pull_bitable_sync(
+    _user: User = Depends(require_roles(Role.ADMIN)),
+    service: InventoryService = Depends(get_service),
+):
+    """立即从飞书 Bitable 拉取数据到本地缓存（飞书 → 本地）。"""
+    if not service.repo:
+        return success({"message": "mock 模式无需同步"})
+    data = await service.repo.refresh_core_tables(smart=False)
+    return success({"message": "飞书数据已同步到本地", **data})
 
 
 @router.post("/sqlite-backup")

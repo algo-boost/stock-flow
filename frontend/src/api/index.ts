@@ -382,6 +382,30 @@ export function refreshBitableCache() {
   });
 }
 
+// ── 飞书 ↔ 本地 双向同步（仅 ADMIN） ──
+
+export function pushToFeishu() {
+  return request<{
+    message: string;
+    processed?: number;
+    failed?: number;
+    pending?: number;
+  }>("/admin/bitable-sync/push", {
+    method: "POST",
+  });
+}
+
+export function pullFromFeishu() {
+  return request<{
+    message: string;
+    tables?: Record<string, number>;
+    refreshed?: string[];
+    failed?: Record<string, string>;
+  }>("/admin/bitable-sync/pull", {
+    method: "POST",
+  });
+}
+
 // ── SQLite 本地缓存同步 ──
 
 export function syncSqliteCache() {

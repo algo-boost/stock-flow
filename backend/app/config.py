@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # SQLite 优先：先写本地，异步同步 Bitable（不破坏已有 Bitable 记录）
     sqlite_first_enabled: bool = True
     # outbox 后台同步间隔（秒）
-    bitable_sync_interval_seconds: int = 5
+    bitable_sync_interval_seconds: int = 1800
     # 旧：定时全量从 Bitable 拉取；sqlite_first 下建议关闭，改用手动 reconcile
     sqlite_cache_sync_interval: int = 0
 
