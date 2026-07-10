@@ -1494,10 +1494,9 @@ class BitableRepository:
         s = self.settings
         effective_remark = remark or ""
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        # 将短码转为飞书单选字段对应的中文选项值
-        tx_label = normalize_tx_type(tx_type)
+        # tx_type 是 Bitable 单选字段，直接用配置的短码值（in/out/transfer）
         fields: dict[str, Any] = {
-            s.bitable_f_tx_type: tx_label,
+            s.bitable_f_tx_type: tx_type,
             s.bitable_f_tx_material: write_link(material_id),
             s.bitable_f_tx_location: write_link(location_id),
             s.bitable_f_tx_quantity: qty,

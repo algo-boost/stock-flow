@@ -55,6 +55,7 @@ def _append_link_ids(ids: list[str], item: Any) -> None:
 
 
 def field_link_ids(value: Any) -> list[str]:
+    """提取关联记录 ID 列表。仅处理明确的关联格式，不把普通文本误判为 link。"""
     if not value:
         return []
     ids: list[str] = []
@@ -65,7 +66,8 @@ def field_link_ids(value: Any) -> list[str]:
     if isinstance(value, dict):
         _append_link_ids(ids, value)
         return ids
-    if isinstance(value, str):
+    # 只有以 "rec" 开头的字符串才可能是 Bitable record_id，普通文本不是
+    if isinstance(value, str) and value.startswith("rec"):
         return [value]
     return []
 
@@ -152,26 +154,47 @@ def resolve_person_name(
     return default
 
 
+def _extract_bitable_text(val: Any) -> str | None:
+    """从 Bitable 文本字段格式 [{"text":"..."}] 中提取纯文本。"""
+    if isinstance(val, list) and val:
+        first = val[0]
+        if isinstance(first, dict) and "text" in first:
+            return first["text"]
+    if isinstance(val, dict) and "text" in val:
+        return val["text"]
+    return None
+
+
 def prepare_fields_for_bitable_write(fields: dict[str, Any]) -> dict[str, Any]:
     """将 SQLite 缓存字段转为 Bitable Open API 可写入格式。"""
     out: dict[str, Any] = {}
     for key, val in fields.items():
         if val is None or val == "":
             continue
+        # 1. 关联字段
         link_ids = field_link_ids(val)
         if link_ids:
             out[key] = link_ids
             continue
+        # 2. 人员字段
         user_id = field_user_id(val)
         if user_id and isinstance(val, (list, dict)):
             out[key] = write_user(user_id)
             continue
+        # 3. Bitable 文本格式 [{"text":"..."}] → 提取纯文本
+        text_val = _extract_bitable_text(val)
+        if text_val is not None:
+            out[key] = text_val
+            continue
+        # 4. 布尔
         if isinstance(val, bool):
             out[key] = val
             continue
+        # 5. 数字
         if isinstance(val, (int, float)) and not isinstance(val, bool):
             out[key] = int(val) if isinstance(val, float) and val == int(val) else val
             continue
+        # 6. 纯文本字符串
         if isinstance(val, str):
             stripped = val.strip()
             if stripped.replace(".", "", 1).isdigit():
@@ -179,7 +202,12 @@ def prepare_fields_for_bitable_write(fields: dict[str, Any]) -> dict[str, Any]:
                 continue
             out[key] = val
             continue
+        # 7. 数字数组
         if isinstance(val, list) and val and isinstance(val[0], (int, float)):
+            out[key] = val
+            continue
+        # 8. 字符串数组 / dict 数组等复杂类型 → 原样传递
+        if isinstance(val, (dict, list)):
             out[key] = val
             continue
     return out
