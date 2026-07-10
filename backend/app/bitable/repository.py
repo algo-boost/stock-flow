@@ -1562,6 +1562,11 @@ class BitableRepository:
             mid = field_link_id(fields.get(s.bitable_f_inventory_material))
             lid = field_link_id(fields.get(s.bitable_f_inventory_location))
             if not mid or not lid:
+                logger.warning(
+                    "跳过不完整的库存记录 record_id=%s 缺少 %s",
+                    rec.get("record_id", "?"),
+                    "material" if not mid else "location",
+                )
                 continue
             row, column = self._read_inventory_slot(fields)
             key = self._inv_key(mid, lid, row, column)

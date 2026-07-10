@@ -62,7 +62,7 @@ class BitableSyncService:
         next_status = "pending" if status != "local_only" else "local_only"
         self._sqlite.upsert_one(table_id, record, sync_status=next_status)
         if status != "local_only":
-            self._sqlite.enqueue_outbox("update", table_id, record_id, fields)
+            self._sqlite.enqueue_outbox("update", table_id, record_id, merged_fields)
             self.request_sync()
         return record
 
@@ -180,7 +180,12 @@ class BitableSyncService:
             return
         result = await self.client.update_record(table_id, record_id, write_fields)
         if result.get("fields"):
-            merged = merge_bitable_field_values(result["fields"], write_fields)
+            # 用本地完整记录兜底，防止 Bitable 返回不完整数据导致关联字段丢失
+            safe_base = dict(row.get("fields", {}))
+            merged = merge_bitable_field_values(
+                merge_bitable_field_values(safe_base, result["fields"]),
+                write_fields,
+            )
             self._sqlite.upsert_one(
                 table_id,
                 {
