@@ -51,6 +51,10 @@ class BitableSyncService:
     async def update_local(self, table_id: str, record_id: str, fields: dict[str, Any]) -> dict[str, Any]:
         existing = self._sqlite.get_record(table_id, record_id) or {"record_id": record_id, "fields": {}}
         merged_fields = merge_bitable_field_values(existing.get("fields", {}), fields)
+        logger.info(
+            "[update_local] table=%s record_id=%s incoming_keys=%s merged_keys=%s",
+            table_id[-8:], record_id[-12:], list(fields.keys()), list(merged_fields.keys()),
+        )
         now_ms = int(time.time() * 1000)
         record = {
             "record_id": record_id,

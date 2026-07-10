@@ -1518,6 +1518,10 @@ class BitableRepository:
                 inv_fields[s.bitable_f_inventory_column] = column
         if key in inv_records:
             record_id = inv_records[key]["record_id"]
+            logger.info(
+                "[库存写入] 更新记录 key=%s record_id=%s qty=%s fields_keys=%s",
+                key, record_id, qty, list(inv_fields.keys()),
+            )
             await self._gw_update(
                 s.bitable_table_inventory,
                 record_id,
@@ -1532,6 +1536,10 @@ class BitableRepository:
 
         inv_fields[s.bitable_f_inventory_material] = write_link(material_id)
         inv_fields[s.bitable_f_inventory_location] = write_link(location_id)
+        logger.warning(
+            "[库存写入] key 未命中，将创建新记录 key=%s qty=%s",
+            key, qty,
+        )
         inv_rec = await self._gw_create(s.bitable_table_inventory, inv_fields)
         record_id = inv_rec.get("record_id", "")
         self._upsert_cached_record(
@@ -1673,6 +1681,10 @@ class BitableRepository:
     ) -> list[InventoryItem]:
         locations = await self._load_locations()
         inv_records = await self._load_inventory_records()
+        logger.info(
+            "[list_inventory] 加载 %d 条库存记录 filter(material=%s, location=%s)",
+            len(inv_records), material_id, location_id,
+        )
         all_items: list[InventoryItem] = []
         for key, rec in inv_records.items():
             if material_id and key_material_id(key) != material_id:
@@ -1684,6 +1696,7 @@ class BitableRepository:
             if qty <= 0:
                 continue
             all_items.append(self._inventory_item_from_record(key, rec, locations))
+        logger.info("[list_inventory] 返回 %d 条", len(all_items))
         return all_items
 
     async def get_transactions(self, material_id: str, limit: int) -> list[Transaction]:
@@ -2270,6 +2283,11 @@ class BitableRepository:
             available = inv_map.get(key, 0)
             raise ValueError(f"insufficient_stock:{available}")
         current = field_number(inv_records[key]["fields"].get(s.bitable_f_inventory_quantity))
+        logger.info(
+            "[出库] material=%s location=%s slot=(%s,%s) current=%s qty=%s record_id=%s",
+            material_id, location_id, out_row, out_column, current, qty,
+            inv_records[key].get("record_id", "?"),
+        )
         if current < qty:
             raise ValueError(f"insufficient_stock:{current}")
 
