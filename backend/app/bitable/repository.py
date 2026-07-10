@@ -113,7 +113,8 @@ class BitableRepository:
         if self._sqlite_first():
             rec = await self._sync_service().create_local(table_id, fields)
             normalized = self._normalize_bitable_record(rec)
-            self._upsert_cached_record(table_id, normalized)
+            # create_local 已写入 SQLite，这里仅更新内存缓存
+            self._upsert_cached_memory_only(table_id, normalized)
             return normalized
         rec = await self.client.create_record(table_id, fields)
         return await self._cache_record_after_write(table_id, rec, write_fields=fields)
@@ -122,7 +123,8 @@ class BitableRepository:
         if self._sqlite_first():
             rec = await self._sync_service().update_local(table_id, record_id, fields)
             normalized = self._normalize_bitable_record(rec)
-            self._upsert_cached_record(table_id, normalized)
+            # update_local 已写入 SQLite，这里仅更新内存缓存
+            self._upsert_cached_memory_only(table_id, normalized)
             return normalized
         rec = await self.client.update_record(table_id, record_id, fields)
         cached = rec if rec.get("fields") else self._cached_record(record_id, fields)
@@ -332,6 +334,12 @@ class BitableRepository:
                 _TABLE_CACHE.pop((app_token, table_id), None)
                 _TABLE_INFLIGHT.pop((app_token, table_id), None)
 
+    def _upsert_cached_memory_only(self, table_id: str, record: dict[str, Any]) -> None:
+        """仅更新内存缓存，不写 SQLite（sqlite_first 模式下 SQLite 已由 sync service 写入）。"""
+        if not table_id or not record.get("record_id"):
+            return
+        self._merge_into_memory_cache(table_id, record)
+
     def _upsert_cached_record(self, table_id: str, record: dict[str, Any]) -> None:
         """写操作成功后同步更新表级缓存 + SQLite。"""
         if not table_id or not record.get("record_id"):
@@ -339,6 +347,10 @@ class BitableRepository:
         # 同步到 SQLite
         self._sync_sqlite_upsert(table_id, record)
         # 更新内存缓存
+        self._merge_into_memory_cache(table_id, record)
+
+    def _merge_into_memory_cache(self, table_id: str, record: dict[str, Any]) -> None:
+        """将记录合并到 _TABLE_CACHE 内存缓存。"""
         cache_key = (self.settings.bitable_app_token, table_id)
         cached = _TABLE_CACHE.get(cache_key)
         if not cached:
@@ -1522,16 +1534,15 @@ class BitableRepository:
                 "[库存写入] 更新记录 key=%s record_id=%s qty=%s fields_keys=%s",
                 key, record_id, qty, list(inv_fields.keys()),
             )
-            await self._gw_update(
+            # _gw_update 已处理 SQLite 写入 + 缓存更新，返回完整记录
+            full_record = await self._gw_update(
                 s.bitable_table_inventory,
                 record_id,
                 inv_fields,
             )
-            self._upsert_cached_record(
-                s.bitable_table_inventory,
-                self._cached_record(record_id, inv_fields),
-            )
-            inv_records[key] = self._cached_record(record_id, inv_fields)
+            # 使用完整记录更新内存字典，避免丢失关联字段
+            inv_records[key] = full_record
+            self._verify_inventory_fields(record_id, full_record.get("fields", {}))
             return record_id
 
         inv_fields[s.bitable_f_inventory_material] = write_link(material_id)
@@ -1542,12 +1553,26 @@ class BitableRepository:
         )
         inv_rec = await self._gw_create(s.bitable_table_inventory, inv_fields)
         record_id = inv_rec.get("record_id", "")
-        self._upsert_cached_record(
-            s.bitable_table_inventory,
-            inv_rec if inv_rec.get("fields") else self._cached_record(record_id, inv_fields),
-        )
-        inv_records[key] = self._cached_record(record_id, inv_fields)
+        # _gw_create 已处理缓存，直接用返回的完整记录
+        inv_records[key] = inv_rec if inv_rec.get("fields") else self._cached_record(record_id, inv_fields)
         return record_id
+
+    def _verify_inventory_fields(self, record_id: str, fields: dict[str, Any]) -> None:
+        """写入后验证库存记录关键字段不丢失。"""
+        s = self.settings
+        mid = field_link_id(fields.get(s.bitable_f_inventory_material))
+        lid = field_link_id(fields.get(s.bitable_f_inventory_location))
+        qty_raw = fields.get(s.bitable_f_inventory_quantity)
+        if not mid or not lid:
+            logger.error(
+                "[库存写入] ⚠️ 写入后记录丢失关联字段！record_id=%s mid=%s lid=%s fields_keys=%s",
+                record_id, mid, lid, list(fields.keys()),
+            )
+        if qty_raw is None:
+            logger.error(
+                "[库存写入] ⚠️ 写入后记录丢失数量字段！record_id=%s fields_keys=%s",
+                record_id, list(fields.keys()),
+            )
 
     async def _load_inventory_map(self) -> dict[InventoryKey, int]:
         return self._inventory_map_from_records(await self._load_inventory_records())
