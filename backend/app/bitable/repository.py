@@ -1650,11 +1650,8 @@ class BitableRepository:
             }
             if column is not None:
                 inv_fields[s.bitable_f_inventory_column] = column
+            # _gw_update 已处理 SQLite 写入 + 缓存，无需再用部分字段覆盖
             await self._gw_update(s.bitable_table_inventory, old_record_id, inv_fields)
-            self._upsert_cached_record(
-                s.bitable_table_inventory,
-                self._cached_record(old_record_id, inv_fields),
-            )
         elif new_key in inv_records:
             target_rec = inv_records[new_key]
             target_id = target_rec.get("record_id", "")
@@ -1676,11 +1673,8 @@ class BitableRepository:
             }
             if column is not None:
                 inv_fields[s.bitable_f_inventory_column] = column
+            # _gw_update 已处理 SQLite 写入 + 缓存，无需再用部分字段覆盖
             await self._gw_update(s.bitable_table_inventory, old_record_id, inv_fields)
-            self._upsert_cached_record(
-                s.bitable_table_inventory,
-                self._cached_record(old_record_id, inv_fields),
-            )
 
         self._invalidate_table_cache(s.bitable_table_inventory)
         items = await self.get_inventory_for_material(material_id)
