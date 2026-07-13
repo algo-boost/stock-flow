@@ -2134,11 +2134,8 @@ class BitableRepository:
             s.bitable_f_request_location: write_link(target_location_id),
         }
         self._maybe_set_user_field(fields, s.bitable_f_request_approver, approver_open_id)
-        updated_rec = await self._gw_update(s.bitable_table_requests, request_id, fields)
-        self._upsert_cached_record(
-            s.bitable_table_requests,
-            updated_rec if updated_rec.get("fields") else self._cached_record(request_id, fields),
-        )
+        await self._gw_update(s.bitable_table_requests, request_id, fields)
+        # _gw_update 已处理 SQLite 写入 + 内存缓存更新，无需再调用 _upsert_cached_record
         return req.model_copy(
             update={
                 "status": StockRequestStatus.APPROVED,
@@ -2182,11 +2179,8 @@ class BitableRepository:
                 approver_name,
                 prefix="审批人",
             )
-        updated_rec = await self._gw_update(s.bitable_table_requests, request_id, fields)
-        self._upsert_cached_record(
-            s.bitable_table_requests,
-            updated_rec if updated_rec.get("fields") else self._cached_record(request_id, fields),
-        )
+        await self._gw_update(s.bitable_table_requests, request_id, fields)
+        # _gw_update 已处理 SQLite 写入 + 内存缓存更新，无需再调用 _upsert_cached_record
         return req.model_copy(
             update={
                 "status": StockRequestStatus.REJECTED,
@@ -2778,14 +2772,24 @@ class BitableRepository:
         )
 
     def _sync_sqlite_upsert(self, table_id: str, record: dict[str, Any]) -> None:
-        """单条写入 SQLite（写操作后同步调用）。"""
+        """单条写入 SQLite（写操作后同步调用）。
+
+        保留已有的 sync_status，特别是 pending 状态不能被覆盖为 synced，
+        防止 outbox 尚未推送到 Bitable 时被后续 import 覆盖。
+        """
         if not table_id or not record.get("record_id"):
             return
         if not self._sqlite_enabled():
             return
         try:
             from app.bitable.sqlite_cache import get_sqlite_cache
-            get_sqlite_cache().upsert_one(table_id, self._normalize_bitable_record(record))
+            sqlite = get_sqlite_cache()
+            normalized = self._normalize_bitable_record(record)
+            # 保留已有的 pending 状态，防止被默认 synced 覆盖
+            existing_status = sqlite.get_sync_status(table_id, normalized["record_id"])
+            if existing_status == "pending" and not normalized.get("sync_status"):
+                normalized["sync_status"] = "pending"
+            sqlite.upsert_one(table_id, normalized)
         except Exception:
             pass
 
