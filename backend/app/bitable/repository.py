@@ -1994,12 +1994,13 @@ class BitableRepository:
         }
         if payload.location_id:
             fields[s.bitable_f_request_location] = write_link(payload.location_id)
-        if not self._maybe_set_user_field(fields, s.bitable_f_request_requester, requester_open_id):
-            fields[s.bitable_f_request_remark] = append_operator_label(
-                fields[s.bitable_f_request_remark],
-                requester_name,
-                prefix="申请人",
-            )
+        self._maybe_set_user_field(fields, s.bitable_f_request_requester, requester_open_id)
+        # 始终在备注中记录申请人姓名，确保人员字段仅含 id 时也能解析（与交易记录 _build_tx_fields 保持一致）
+        fields[s.bitable_f_request_remark] = append_operator_label(
+            fields[s.bitable_f_request_remark],
+            requester_name,
+            prefix="申请人",
+        )
 
         rec = await self._gw_create(s.bitable_table_requests, fields)
         self._upsert_cached_record(
